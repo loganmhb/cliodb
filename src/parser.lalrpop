@@ -1,4 +1,4 @@
-use datalog;
+use datalog::ast as datalog;
 
 grammar;
 
