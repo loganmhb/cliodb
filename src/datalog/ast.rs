@@ -2,7 +2,7 @@
 // (e.g. ?a) or a string literal.
 #[derive(Debug)]
 pub enum Var {
-    Unbound(String),
+    Symbol(String),
     StringLit(String)
 }
 
