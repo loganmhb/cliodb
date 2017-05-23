@@ -1,0 +1,20 @@
+use datalog;
+
+grammar;
+
+pub Query: datalog::Query =
+    "find" <find_var:Var> "where" <c:Clause> => {
+        let mut clauses = Vec::new();
+        clauses.push(c);
+        datalog::Query::new(find_var, clauses)
+    };
+
+Attribute: String = <name:r"[a-z_0-9:]+"> => name.to_owned();
+
+Var: datalog::Var = {
+    <unbound:r"\?[a-z_0-9]+"> => datalog::Var::Unbound(unbound.to_owned()),
+    <lit:r#""([^"]*)""#> => datalog::Var::StringLit(lit.to_owned())
+};
+
+Clause: datalog::Clause = "(" <e:Var> <a:Attribute> <v:Var> ")" =>
+    datalog::Clause::new(e, a, v);

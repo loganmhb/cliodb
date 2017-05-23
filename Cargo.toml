@@ -1,0 +1,12 @@
+[package]
+name = "logos"
+version = "0.1.0"
+authors = ["Logan Buckley <logan.buckley@gmail.com>"]
+build = "build.rs"
+
+[build-dependencies]
+lalrpop = "0.13.0"
+
+[dependencies]
+lalrpop-util = "0.13.0"
+regex = "0.2.1"
