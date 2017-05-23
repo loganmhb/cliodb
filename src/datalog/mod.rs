@@ -1,9 +1,16 @@
 pub mod ast;
+mod query;
 
 // # Initial pass
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
 struct QueryResult;
+
+enum Value {
+    String(String),
+    Integer(i64),
+    Ref(u64)
+}
 
 trait Database {
     fn add(&mut self, fact: &Fact);
