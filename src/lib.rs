@@ -2,6 +2,9 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
+#[macro_use]
+extern crate lazy_static;
+
 use std::collections::HashMap;
 
 // # Initial pass
@@ -23,6 +26,14 @@ impl<T: Into<String>> From<T> for Value {
         Value::String(x.into())
     }
 }
+
+
+impl From<Entity> for Value {
+    fn from(x: Entity) -> Self {
+        Value::Entity(x.into())
+    }
+}
+
 
 #[derive(Debug)]
 enum Term<T> {
@@ -64,7 +75,8 @@ impl Query {
     }
 }
 
-type Entity = u64;
+#[derive(Debug, PartialEq, Clone, Copy)]
+struct Entity(u64);
 
 #[derive(Debug)]
 struct Clause {
@@ -132,14 +144,16 @@ impl Database for InMemoryLog {
 
     // NOTE: find not actually used/doing anything!
     fn query(&self, Query { find: find, clauses }: Query) -> QueryResult {
-        // find ?a where (?a name "Bob")
 
         let mut result = vec![];
 
+
         for fact in &self.facts {
-            let mut env = HashMap::new();
+            // NOTE: while it looks like multiple clauses are supported, they aren't really.
+            let mut env: HashMap<Var, Value> = HashMap::new();
             let mut sat = true;
 
+            // find ?b where (?a name Bob) (?b parent ?a)
             for &Clause { entity: ref e, attribute: ref a, value: ref v } in &clauses {
                 match *e {
                     Term::Bound(entity) => {
@@ -149,6 +163,7 @@ impl Database for InMemoryLog {
                         }
                     }
                     Term::Unbound(ref var) => {
+
                         env.insert((*var).clone(), Value::Entity(fact.entity));
                     }
                 }
@@ -193,74 +208,105 @@ mod test {
 
     use super::*;
 
+
+    lazy_static! {
+        static ref DB: InMemoryLog = {
+            let mut db = InMemoryLog::new();
+            let facts = vec![Fact::new(Entity(0), "name", "Bob"),
+                             Fact::new(Entity(1), "name", "John"),
+                             Fact::new(Entity(2), "Hello", "World"),
+                             Fact::new(Entity(1), "parent", Entity(0))];
+
+            for fact in facts {
+                db.add(fact);
+            }
+
+            db
+        };
+    }
+
+
     #[test]
     fn test_insertion() {
-        let fact = Fact::new(0, "name", "Bob");
+        let fact = Fact::new(Entity(0), "name", "Bob");
         let mut db = InMemoryLog::new();
         db.add(fact);
         let inserted = db.into_iter().take(1).nth(0).unwrap();
-        assert!(inserted.entity == 0);
+        assert!(inserted.entity == Entity(0));
         assert!(inserted.attribute == "name");
         assert!(inserted.value == "Bob".into());
     }
 
+
+
     #[test]
     fn test_query() {
-        let mut db = InMemoryLog::new();
-        let facts = vec![Fact::new(0, "name", "Bob"),
-                         Fact::new(1, "name", "John"),
-                         Fact::new(2, "Hello", "World")];
-
-        for fact in facts {
-            db.add(fact);
-        }
-
         // find ?a where (?a name "Bob")
-        helper(&db,
+        helper(&*DB,
                Query::new(vec![Var::new("a")],
                           vec![Clause::new(Term::Unbound("a".into()),
                                            Term::Bound("name".into()),
                                            Term::Bound("Bob".into()))]),
-               QueryResult(vec![iter::once((Var::new("a"), Value::Entity(0))).collect()]));
+               QueryResult(vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
+    }
 
-
+    #[test]
+    fn test_query2() {
         // find ?a where (0 name ?a)
-        helper(&db,
+        helper(&*DB,
                Query::new(vec![Var::new("a")],
-                          vec![Clause::new(Term::Bound(0),
+                          vec![Clause::new(Term::Bound(Entity(0)),
                                            Term::Bound("name".into()),
                                            Term::Unbound("a".into()))]),
                QueryResult(vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
 
-
+    }
+    #[test]
+    fn test_query3() {
         // find ?a where (1 ?a "John")
-        helper(&db,
+        helper(&*DB,
                Query::new(vec![Var::new("a")],
-                          vec![Clause::new(Term::Bound(1),
+                          vec![Clause::new(Term::Bound(Entity(1)),
                                            Term::Unbound("a".into()),
                                            Term::Bound("John".into()))]),
                QueryResult(vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
+    }
 
+    #[test]
+    fn test_query4() {
         // find ?a ?b where (?a name ?b)
-        helper(&db,
+        helper(&*DB,
                Query::new(vec![Var::new("a"), Var::new("b")],
                           vec![Clause::new(Term::Unbound("a".into()),
                                            Term::Bound("name".into()),
                                            Term::Unbound("b".into()))]),
-               QueryResult(vec![vec![(Var::new("a"), Value::Entity(0)),
+               QueryResult(vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
                                     .into_iter()
                                     .collect(),
-                                vec![(Var::new("a"), Value::Entity(1)),
+                                vec![(Var::new("a"), Value::Entity(Entity(1))),
                                      (Var::new("b"), Value::String("John".into()))]
                                     .into_iter()
                                     .collect()]));
-
     }
 
-    fn helper<DB: Database>(db: &DB, query: Query, expected: QueryResult) {
+    #[test]
+    fn test_query5() {
+        // find ?b where (?a name Bob) (?b parent ?a)
+        helper(&*DB,
+               Query::new(vec![Var::new("a")],
+                          vec![Clause::new(Term::Unbound("a".into()),
+                                           Term::Bound("name".into()),
+                                           Term::Bound("Bob".into())),
+                               Clause::new(Term::Unbound("b".into()),
+                                           Term::Bound("parent".into()),
+                                           Term::Unbound("a".into()))]),
+               QueryResult(vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
+    }
+
+    fn helper<D: Database>(db: &D, query: Query, expected: QueryResult) {
         let result = db.query(query);
         assert_eq!(expected, result);
     }
