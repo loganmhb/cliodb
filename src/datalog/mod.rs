@@ -1,20 +1,66 @@
-pub mod ast;
 mod query;
+
+use std::collections::HashMap;
 
 // # Initial pass
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
-struct QueryResult;
 
+
+struct QueryResult;
+type NewQueryResult = Result<Vec<HashMap<String, Value>>, String>;
+
+#[derive(Debug)]
 enum Value {
     String(String),
     Integer(i64),
     Ref(u64)
 }
 
+// For now, something in a variable position can be either an unbound variable
+// (e.g. ?a) or a string literal.
+#[derive(Debug)]
+pub enum Var {
+    Symbol(String),
+    StringLit(String)
+}
+
+#[derive(Debug)]
+pub enum Term<T> {
+    Bound(T),
+    Unbound(String)
+}
+
+#[derive(Debug)]
+pub struct Clause {
+    entity: Term<u64>,
+    // FIXME: attributes should also be allowed to be Vars
+    attribute: Term<String>,
+    value: Term<Value>
+}
+
+impl Clause {
+    pub fn new(e: Term<u64>, a: Term<String>, v: Term<Value>) -> Clause {
+        Clause { entity: e, attribute: a, value: v}
+    }
+}
+
+// A query looks like `find ?var where (?var <attribute> <value>)`
+#[derive(Debug)]
+pub struct Query {
+    find: Var,
+    clauses: Vec<Clause>
+}
+
+impl Query {
+    pub fn new(find: Var, clauses: Vec<Clause>) -> Query {
+        Query { find: find, clauses: clauses }
+    }
+}
+
 trait Database {
     fn add(&mut self, fact: &Fact);
-    fn query(&self, query: ast::Query) -> QueryResult;
+    fn query(&self, query: Query) -> QueryResult;
 }
 
 #[derive(Debug, PartialEq, Clone)]
@@ -55,7 +101,7 @@ impl Database for InMemoryLog {
         self.facts.push((*fact).clone());
     }
 
-    fn query(&self, query: ast::Query) -> QueryResult {
+    fn query(&self, query: Query) -> QueryResult {
         QueryResult
     }
 }
