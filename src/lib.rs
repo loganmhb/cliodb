@@ -137,69 +137,141 @@ impl IntoIterator for InMemoryLog {
     }
 }
 
+type Env = HashMap<Var, Value>;
+
 impl Database for InMemoryLog {
     fn add(&mut self, fact: Fact) {
         self.facts.push(fact);
     }
 
     // NOTE: find not actually used/doing anything!
-    fn query(&self, Query { find: find, clauses }: Query) -> QueryResult {
+    fn query(&self, query: Query) -> QueryResult {
+        assert!(!query.clauses.is_empty());
 
+        #[derive(Default)]
+        struct State {
+            env: Env,
+            fact_idx: usize,
+            clause_idx: usize,
+        }
+
+        let initial_state = State::default();
         let mut result = vec![];
 
+        let mut stack = vec![initial_state];
 
-        for fact in &self.facts {
-            // NOTE: while it looks like multiple clauses are supported, they aren't really.
-            let mut env: HashMap<Var, Value> = HashMap::new();
-            let mut sat = true;
-
-            // find ?b where (?a name Bob) (?b parent ?a)
-            for &Clause { entity: ref e, attribute: ref a, value: ref v } in &clauses {
-                match *e {
-                    Term::Bound(entity) => {
-                        if fact.entity != entity {
-                            sat = false;
-                            break;
-                        }
-                    }
-                    Term::Unbound(ref var) => {
-
-                        env.insert((*var).clone(), Value::Entity(fact.entity));
-                    }
+        while let Some(mut state) = stack.pop() {
+            let clause = match query.clauses.get(state.clause_idx) {
+                Some(clause) => clause,
+                _ => {
+                    result.push(state.env.clone());
+                    continue;
                 }
+            };
 
-                match *a {
-                    Term::Bound(ref attr) => {
-                        if fact.attribute != *attr {
-                            sat = false;
-                            break;
-                        }
-                    }
-                    Term::Unbound(ref var) => {
-                        env.insert((*var).clone(), Value::String(fact.attribute.clone()));
-                    }
+            let fact = match self.facts.get(state.fact_idx) {
+                Some(fact) => fact,
+                _ => {
+                    continue;
                 }
+            };
 
-                match *v {
-                    Term::Bound(ref val) => {
-                        if fact.value != *val {
-                            sat = false;
-                            break;
-                        }
-                    }
-                    Term::Unbound(ref var) => {
-                        env.insert((*var).clone(), fact.value.clone());
-                    }
+            match unify(&state.env, &clause, &fact) {
+                Ok(new_env) => {
+                    let new_state = State {
+                        env: new_env,
+                        fact_idx: 0,
+                        clause_idx: state.clause_idx + 1,
+                    };
+                    state.fact_idx += 1;
+                    stack.push(state);
+                    stack.push(new_state);
+                }
+                _ => {
+                    state.fact_idx += 1;
+                    stack.push(state);
                 }
             }
 
-            if sat {
-                result.push(env);
-            }
         }
+
+        let result = result.into_iter()
+            .map(|solution| {
+                solution.into_iter().filter(|&(ref k, _)| query.find.contains(&k)).collect()
+            })
+            .collect();
 
         QueryResult(result)
     }
+}
+
+fn unify(env: &Env, clause: &Clause, fact: &Fact) -> Result<Env, ()> {
+    let mut new_info = HashMap::new();
+
+    match clause.entity {
+        Term::Bound(ref e) => {
+            if *e != fact.entity {
+                return Err(());
+            }
+        }
+        Term::Unbound(ref var) => {
+            match env.get(var) {
+                Some(e) => {
+                    if *e != Value::Entity(fact.entity) {
+                        return Err(());
+                    }
+                }
+                _ => {
+                    new_info.insert((*var).clone(), Value::Entity(fact.entity));
+                }
+            }
+        }
+    }
+
+    match clause.attribute {
+        Term::Bound(ref a) => {
+            if *a != fact.attribute {
+                return Err(());
+            }
+        }
+        Term::Unbound(ref var) => {
+            match env.get(var) {
+                Some(e) => {
+                    if *e != Value::String(fact.attribute.clone()) {
+                        return Err(());
+                    }
+                }
+                _ => {
+                    new_info.insert((*var).clone(), Value::String(fact.attribute.clone()));
+                }
+            }
+        }
+    }
+
+    match clause.value {
+        Term::Bound(ref v) => {
+            if *v != fact.value {
+                return Err(());
+            }
+        }
+        Term::Unbound(ref var) => {
+            match env.get(var) {
+                Some(e) => {
+                    if *e != fact.value {
+                        return Err(());
+                    }
+                }
+                _ => {
+                    new_info.insert((*var).clone(), fact.value.clone());
+                }
+            }
+        }
+    }
+
+    let mut env = env.clone();
+    env.extend(new_info);
+
+    Ok(env)
 }
 
 #[cfg(test)]
@@ -296,7 +368,7 @@ mod test {
     fn test_query5() {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&*DB,
-               Query::new(vec![Var::new("a")],
+               Query::new(vec![Var::new("b")],
                           vec![Clause::new(Term::Unbound("a".into()),
                                            Term::Bound("name".into()),
                                            Term::Bound("Bob".into())),
