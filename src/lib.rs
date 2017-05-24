@@ -36,6 +36,12 @@ struct Var {
     name: String,
 }
 
+impl Var {
+    fn new<T: Into<String>>(name: T) -> Var {
+        Var { name: name.into() }
+    }
+}
+
 impl<T: Into<String>> From<T> for Var {
     fn from(x: T) -> Self {
         Var { name: x.into() }
@@ -45,12 +51,12 @@ impl<T: Into<String>> From<T> for Var {
 // A query looks like `find ?var where (?var <attribute> <value>)`
 #[derive(Debug)]
 struct Query {
-    find: Var,
+    find: Vec<Var>,
     clauses: Vec<Clause>,
 }
 
 impl Query {
-    fn new(find: Var, clauses: Vec<Clause>) -> Query {
+    fn new(find: Vec<Var>, clauses: Vec<Clause>) -> Query {
         Query {
             find: find,
             clauses: clauses,
@@ -124,7 +130,8 @@ impl Database for InMemoryLog {
         self.facts.push(fact);
     }
 
-    fn query(&self, Query { find, clauses }: Query) -> QueryResult {
+    // NOTE: find not actually used/doing anything!
+    fn query(&self, Query { find: find, clauses }: Query) -> QueryResult {
         // find ?a where (?a name "Bob")
 
         let mut result = vec![];
@@ -200,7 +207,9 @@ mod test {
     #[test]
     fn test_query() {
         let mut db = InMemoryLog::new();
-        let facts = vec![Fact::new(0, "name", "Bob"), Fact::new(1, "name", "John")];
+        let facts = vec![Fact::new(0, "name", "Bob"),
+                         Fact::new(1, "name", "John"),
+                         Fact::new(2, "Hello", "World")];
 
         for fact in facts {
             db.add(fact);
@@ -208,38 +217,51 @@ mod test {
 
         // find ?a where (?a name "Bob")
         helper(&db,
-               Query::new(Var { name: "a".into() },
+               Query::new(vec![Var::new("a")],
                           vec![Clause::new(Term::Unbound("a".into()),
                                            Term::Bound("name".into()),
                                            Term::Bound("Bob".into()))]),
-               QueryResult(vec![iter::once((Var { name: "a".into() }, Value::Entity(0)))
-                                    .collect()]));
+               QueryResult(vec![iter::once((Var::new("a"), Value::Entity(0))).collect()]));
 
 
         // find ?a where (0 name ?a)
-        helper(&db, Query::new(Var { name: "a".into() },
-                               vec![Clause::new(Term::Bound(0),
-                                                Term::Bound("name".into()),
-                                                Term::Unbound("a".into()))]),
-        QueryResult(vec![iter::once((Var { name: "a".into() }, Value::String("Bob".into())))
+        helper(&db,
+               Query::new(vec![Var::new("a")],
+                          vec![Clause::new(Term::Bound(0),
+                                           Term::Bound("name".into()),
+                                           Term::Unbound("a".into()))]),
+               QueryResult(vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
 
-        
+
         // find ?a where (1 ?a "John")
-        helper(&db, Query::new(Var { name: "a".into() },
-                               vec![Clause::new(Term::Bound(1),
-                                                Term::Unbound("a".into()),
-                                                Term::Bound("John".into()),
-                               )]),
-        QueryResult(vec![iter::once((Var { name: "a".into() }, Value::String("name".into())))
+        helper(&db,
+               Query::new(vec![Var::new("a")],
+                          vec![Clause::new(Term::Bound(1),
+                                           Term::Unbound("a".into()),
+                                           Term::Bound("John".into()))]),
+               QueryResult(vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
 
+        // find ?a ?b where (?a name ?b)
+        helper(&db,
+               Query::new(vec![Var::new("a"), Var::new("b")],
+                          vec![Clause::new(Term::Unbound("a".into()),
+                                           Term::Bound("name".into()),
+                                           Term::Unbound("b".into()))]),
+               QueryResult(vec![vec![(Var::new("a"), Value::Entity(0)),
+                                     (Var::new("b"), Value::String("Bob".into()))]
+                                    .into_iter()
+                                    .collect(),
+                                vec![(Var::new("a"), Value::Entity(1)),
+                                     (Var::new("b"), Value::String("John".into()))]
+                                    .into_iter()
+                                    .collect()]));
 
     }
 
     fn helper<DB: Database>(db: &DB, query: Query, expected: QueryResult) {
         let result = db.query(query);
         assert_eq!(expected, result);
-
     }
 }
