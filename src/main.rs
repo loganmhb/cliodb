@@ -2,7 +2,7 @@ use std::io;
 use std::io::prelude::*;
 
 extern crate logos;
-use logos::parser::parse_Query;
+//use logos::parser::parse_Query;
 
 
 fn main() {
@@ -15,6 +15,6 @@ fn main() {
         let mut input = String::new();
         stdin.lock().read_line(&mut input).unwrap();
         println!("Input: '{}'", input);
-        println!("{:?}", parse_Query(&input).unwrap());
+//        println!("{:?}", parse_Query(&input).unwrap());
     }
 }
