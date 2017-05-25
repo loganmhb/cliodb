@@ -144,7 +144,6 @@ impl Database for InMemoryLog {
         self.facts.push(fact);
     }
 
-    // NOTE: find not actually used/doing anything!
     fn query(&self, query: Query) -> QueryResult {
         assert!(!query.clauses.is_empty());
 
