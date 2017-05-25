@@ -312,7 +312,7 @@ mod test {
 
 
     #[test]
-    fn test_query() {
+    fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
         helper(&*DB,
                Query::new(vec![Var::new("a")],
@@ -323,7 +323,7 @@ mod test {
     }
 
     #[test]
-    fn test_query2() {
+    fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
         helper(&*DB,
                Query::new(vec![Var::new("a")],
@@ -335,7 +335,7 @@ mod test {
 
     }
     #[test]
-    fn test_query3() {
+    fn test_query_unknown_attribute() {
         // find ?a where (1 ?a "John")
         helper(&*DB,
                Query::new(vec![Var::new("a")],
@@ -347,7 +347,7 @@ mod test {
     }
 
     #[test]
-    fn test_query4() {
+    fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
         helper(&*DB,
                Query::new(vec![Var::new("a"), Var::new("b")],
@@ -365,7 +365,7 @@ mod test {
     }
 
     #[test]
-    fn test_query5() {
+    fn test_query_explicit_join() {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&*DB,
                Query::new(vec![Var::new("b")],
@@ -376,6 +376,23 @@ mod test {
                                            Term::Bound("parent".into()),
                                            Term::Unbound("a".into()))]),
                QueryResult(vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
+    }
+
+    #[test]
+    fn test_query_implicit_join() {
+        // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
+        helper(&*DB,
+               Query::new(vec![Var::new("c")],
+                          vec![Clause::new(Term::Unbound("a".into()),
+                                           Term::Bound("name".into()),
+                                           Term::Bound("Bob".into())),
+                               Clause::new(Term::Unbound("b".into()),
+                                           Term::Bound("name".into()),
+                                           Term::Unbound("c".into())),
+                               Clause::new(Term::Unbound("b".into()),
+                                           Term::Bound("parent".into()),
+                                           Term::Unbound("a".into()))]),
+               QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into()))).collect()]));
     }
 
     fn helper<D: Database>(db: &D, query: Query, expected: QueryResult) {
