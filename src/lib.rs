@@ -1,6 +1,7 @@
-
 #![allow(dead_code)]
 #![allow(unused_variables)]
+
+extern crate combine;
 
 #[macro_use]
 extern crate lazy_static;
@@ -14,7 +15,7 @@ use std::collections::HashMap;
 #[derive(Debug, PartialEq)]
 struct QueryResult(Vec<HashMap<Var, Value>>);
 
-#[derive(Debug, PartialEq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum Value {
     String(String),
     Integer(i64),
@@ -27,15 +28,13 @@ impl<T: Into<String>> From<T> for Value {
     }
 }
 
-
 impl From<Entity> for Value {
     fn from(x: Entity) -> Self {
         Value::Entity(x.into())
     }
 }
 
-
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 enum Term<T> {
     Bound(T),
     Unbound(Var),
@@ -60,7 +59,7 @@ impl<T: Into<String>> From<T> for Var {
 }
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
-#[derive(Debug)]
+#[derive(Debug, PartialEq)]
 struct Query {
     find: Vec<Var>,
     clauses: Vec<Clause>,
@@ -75,10 +74,10 @@ impl Query {
     }
 }
 
-#[derive(Debug, PartialEq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 struct Entity(u64);
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq)]
 struct Clause {
     entity: Term<Entity>,
     attribute: Term<String>,
@@ -116,6 +115,71 @@ impl Fact {
         }
     }
 }
+
+
+//// Parser
+use combine::char::{spaces, string, char, letter, digit};
+use combine::primitives::Stream;
+use combine::{Parser, ParseError, many1, between, none_of, eof};
+
+fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item = char> {
+    // Lexers for ignoring spaces following tokens
+    let lex_char = |c| char(c).skip(spaces());
+    let lex_string = |s| string(s).skip(spaces());
+
+    // Variables and literals
+    let free_var = || {
+        char('?')
+            .and(many1(letter()))
+            .map(|x| x.1)
+            .map(|name: String| Var { name })
+    }; // don't care about the ?
+
+    let string_lit =
+        between(char('"'),
+                char('"'),
+                many1(none_of("\"".chars()))).map(|s| Value::String(s));
+    // FIXME: Number literals should be able to be entities or just integers; this
+    // probably requires a change to the types/maybe change to the unification system.
+    let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
+
+    let entity = || number_lit();
+    let attribute = many1(letter()).map(|x| x);
+    let value = string_lit.or(number_lit().map(|e| Value::Entity(e)));
+
+    // There is probably a way to DRY these out but I couldn't satisfy the type checker.
+    let entity_term = free_var()
+        .map(|x| Term::Unbound(x))
+        .or(entity().map(|x| Term::Bound(x)))
+        .skip(spaces());
+    let attribute_term = free_var()
+        .map(|x| Term::Unbound(x))
+        .or(attribute.map(|x| Term::Bound(x)))
+        .skip(spaces());
+    let value_term = free_var()
+        .map(|x| Term::Unbound(x))
+        .or(value.map(|x| Term::Bound(x)))
+        .skip(spaces());
+
+    // Clause structure
+    let clause_contents = (entity_term, attribute_term, value_term);
+    let clause = between(lex_char('('), lex_char(')'), clause_contents)
+        .map(|(e, a, v)| Clause::new(e, a, v));
+    let find_spec = lex_string("find");
+    let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
+
+    let mut query = find_spec.and(where_spec)
+        // FIXME: add find vars
+        .map(|x| Query{find: vec![], clauses: x.1})
+        .and(eof())
+        .map(|x| x.0);
+    let result = query.parse(input);
+    match result {
+        Ok((q, _)) => Ok(q),
+        Err(err) => Err(err),
+    }
+}
+
 
 #[derive(Debug)]
 struct InMemoryLog {
@@ -280,6 +344,16 @@ mod test {
 
     use super::*;
 
+    #[test]
+    fn test_parse_query() {
+        assert_eq!(parse_query("find where (?a name \"Bob\")").unwrap(),
+                   Query {
+                       find: vec![],
+                       clauses: vec![Clause::new(Term::Unbound("a".into()),
+                                                 Term::Bound("name".into()),
+                                                 Term::Bound(Value::String("Bob".into())))],
+                   })
+    }
 
     lazy_static! {
         static ref DB: InMemoryLog = {
@@ -356,12 +430,12 @@ mod test {
                                            Term::Unbound("b".into()))]),
                QueryResult(vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
-                                    .into_iter()
-                                    .collect(),
+                                        .into_iter()
+                                        .collect(),
                                 vec![(Var::new("a"), Value::Entity(Entity(1))),
                                      (Var::new("b"), Value::String("John".into()))]
-                                    .into_iter()
-                                    .collect()]));
+                                        .into_iter()
+                                        .collect()]));
     }
 
     #[test]
@@ -392,7 +466,8 @@ mod test {
                                Clause::new(Term::Unbound("b".into()),
                                            Term::Bound("parent".into()),
                                            Term::Unbound("a".into()))]),
-               QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into()))).collect()]));
+               QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into())))
+                                    .collect()]));
     }
 
     fn helper<D: Database>(db: &D, query: Query, expected: QueryResult) {
