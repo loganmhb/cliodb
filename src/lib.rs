@@ -131,8 +131,9 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
     let free_var = || {
         char('?')
             .and(many1(letter()))
+            .skip(spaces())
             .map(|x| x.1)
-            .map(|name: String| Var { name })
+            .map(|name: String| Var::new(name) )
     }; // don't care about the ?
 
     let string_lit =
@@ -165,12 +166,16 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
     let clause_contents = (entity_term, attribute_term, value_term);
     let clause = between(lex_char('('), lex_char(')'), clause_contents)
         .map(|(e, a, v)| Clause::new(e, a, v));
-    let find_spec = lex_string("find");
-    let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
+    let find_spec = lex_string("find")
+        .and(many1(free_var()))
+        .map(|x| x.1);
+    let where_spec = lex_string("where")
+        .and(many1(clause))
+        .map(|x| x.1);
 
     let mut query = find_spec.and(where_spec)
         // FIXME: add find vars
-        .map(|x| Query{find: vec![], clauses: x.1})
+        .map(|x| Query{find: x.0, clauses: x.1})
         .and(eof())
         .map(|x| x.0);
     let result = query.parse(input);
@@ -346,9 +351,9 @@ mod test {
 
     #[test]
     fn test_parse_query() {
-        assert_eq!(parse_query("find where (?a name \"Bob\")").unwrap(),
+        assert_eq!(parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                    Query {
-                       find: vec![],
+                       find: vec![Var::new("a")],
                        clauses: vec![Clause::new(Term::Unbound("a".into()),
                                                  Term::Bound("name".into()),
                                                  Term::Bound(Value::String("Bob".into())))],
@@ -389,10 +394,7 @@ mod test {
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
         helper(&*DB,
-               Query::new(vec![Var::new("a")],
-                          vec![Clause::new(Term::Unbound("a".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Bound("Bob".into()))]),
+               parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                QueryResult(vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
     }
 
@@ -400,10 +402,7 @@ mod test {
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
         helper(&*DB,
-               Query::new(vec![Var::new("a")],
-                          vec![Clause::new(Term::Bound(Entity(0)),
-                                           Term::Bound("name".into()),
-                                           Term::Unbound("a".into()))]),
+               parse_query("find ?a where (0 name ?a)").unwrap(),
                QueryResult(vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
 
@@ -412,10 +411,7 @@ mod test {
     fn test_query_unknown_attribute() {
         // find ?a where (1 ?a "John")
         helper(&*DB,
-               Query::new(vec![Var::new("a")],
-                          vec![Clause::new(Term::Bound(Entity(1)),
-                                           Term::Unbound("a".into()),
-                                           Term::Bound("John".into()))]),
+               parse_query("find ?a where (1 ?a \"John\")").unwrap(),
                QueryResult(vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
     }
@@ -424,10 +420,7 @@ mod test {
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
         helper(&*DB,
-               Query::new(vec![Var::new("a"), Var::new("b")],
-                          vec![Clause::new(Term::Unbound("a".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Unbound("b".into()))]),
+               parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
                                         .into_iter()
@@ -442,13 +435,7 @@ mod test {
     fn test_query_explicit_join() {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&*DB,
-               Query::new(vec![Var::new("b")],
-                          vec![Clause::new(Term::Unbound("a".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Bound("Bob".into())),
-                               Clause::new(Term::Unbound("b".into()),
-                                           Term::Bound("parent".into()),
-                                           Term::Unbound("a".into()))]),
+               parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
                QueryResult(vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
     }
 
@@ -456,16 +443,7 @@ mod test {
     fn test_query_implicit_join() {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
         helper(&*DB,
-               Query::new(vec![Var::new("c")],
-                          vec![Clause::new(Term::Unbound("a".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Bound("Bob".into())),
-                               Clause::new(Term::Unbound("b".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Unbound("c".into())),
-                               Clause::new(Term::Unbound("b".into()),
-                                           Term::Bound("parent".into()),
-                                           Term::Unbound("a".into()))]),
+               parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)").unwrap(),
                QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into())))
                                     .collect()]));
     }
