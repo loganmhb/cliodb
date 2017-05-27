@@ -1,7 +1,10 @@
+<<<<<<< HEAD
+=======
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
 extern crate combine;
+>>>>>>> bd356c23afdfc4e79d3d94f5fba7917be2799b62
 
 #[macro_use]
 extern crate lazy_static;
@@ -213,7 +216,6 @@ impl Database for InMemoryLog {
         self.facts.push(fact);
     }
 
-    // NOTE: find not actually used/doing anything!
     fn query(&self, query: Query) -> QueryResult {
         assert!(!query.clauses.is_empty());
 
