@@ -1,13 +1,8 @@
 [package]
 authors = ["Logan Buckley <logan.buckley@gmail.com>"]
-build = "build.rs"
 name = "logos"
 version = "0.1.0"
 
-[build-dependencies]
-lalrpop = "0.13.0"
-
 [dependencies]
-lalrpop-util = "0.13.0"
+combine = "2.3.2"
 lazy_static = "0.2.8"
-regex = "0.2.1"
