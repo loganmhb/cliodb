@@ -1,10 +1,8 @@
-<<<<<<< HEAD
-=======
+
 #![allow(dead_code)]
 #![allow(unused_variables)]
 
 extern crate combine;
->>>>>>> bd356c23afdfc4e79d3d94f5fba7917be2799b62
 
 #[macro_use]
 extern crate lazy_static;
@@ -449,6 +447,7 @@ mod test {
                QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into())))
                                     .collect()]));
     }
+
 
     fn helper<D: Database>(db: &D, query: Query, expected: QueryResult) {
         let result = db.query(query);
