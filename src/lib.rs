@@ -3,6 +3,7 @@
 
 extern crate combine;
 
+#[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
 
@@ -19,7 +20,6 @@ struct QueryResult(Vec<HashMap<Var, Value>>);
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 enum Value {
     String(String),
-    Integer(i64),
     Entity(Entity),
 }
 
