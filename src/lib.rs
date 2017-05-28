@@ -44,10 +44,11 @@ enum Term<T> {
 
 impl<'a, T: PartialEq> Term<T> {
     fn satisfied_by(&self, val: &'a T) -> bool
-      where &'a T: PartialEq {
+        where &'a T: PartialEq
+    {
         match self {
             &Term::Bound(ref binding) => *val == *binding,
-            &Term::Unbound(_) => true
+            &Term::Unbound(_) => true,
         }
     }
 }
@@ -143,7 +144,9 @@ impl PartialOrd for AVE {
 
 impl Ord for AVE {
     fn cmp(&self, other: &AVE) -> std::cmp::Ordering {
-        self.0.attribute.cmp(&other.0.attribute)
+        self.0
+            .attribute
+            .cmp(&other.0.attribute)
             .then(self.0.value.cmp(&other.0.value))
             .then(self.0.entity.cmp(&other.0.entity))
     }
@@ -160,7 +163,9 @@ impl PartialOrd for AEV {
 
 impl Ord for AEV {
     fn cmp(&self, other: &AEV) -> std::cmp::Ordering {
-        self.0.attribute.cmp(&other.0.attribute)
+        self.0
+            .attribute
+            .cmp(&other.0.attribute)
             .then(self.0.entity.cmp(&other.0.entity))
             .then(self.0.value.cmp(&other.0.value))
     }
@@ -171,7 +176,9 @@ use combine::char::{spaces, string, char, letter, digit};
 use combine::primitives::Stream;
 use combine::{Parser, ParseError, many1, between, none_of, eof};
 
-fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item = char> {
+fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
+    where I: Stream<Item = char>
+{
     // Lexers for ignoring spaces following tokens
     let lex_char = |c| char(c).skip(spaces());
     let lex_string = |s| string(s).skip(spaces());
@@ -182,13 +189,11 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
             .and(many1(letter()))
             .skip(spaces())
             .map(|x| x.1)
-            .map(|name: String| Var::new(name) )
+            .map(|name: String| Var::new(name))
     }; // don't care about the ?
 
     let string_lit =
-        between(char('"'),
-                char('"'),
-                many1(none_of("\"".chars()))).map(|s| Value::String(s));
+        between(char('"'), char('"'), many1(none_of("\"".chars()))).map(|s| Value::String(s));
     // FIXME: Number literals should be able to be entities or just integers; this
     // probably requires a change to the types/maybe change to the unification system.
     let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
@@ -213,14 +218,11 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
 
     // Clause structure
     let clause_contents = (entity_term, attribute_term, value_term);
-    let clause = between(lex_char('('), lex_char(')'), clause_contents)
-        .map(|(e, a, v)| Clause::new(e, a, v));
-    let find_spec = lex_string("find")
-        .and(many1(free_var()))
-        .map(|x| x.1);
-    let where_spec = lex_string("where")
-        .and(many1(clause))
-        .map(|x| x.1);
+    let clause = between(lex_char('('), lex_char(')'), clause_contents).map(|(e, a, v)| {
+                                                                                Clause::new(e, a, v)
+                                                                            });
+    let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);
+    let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
 
     let mut query = find_spec.and(where_spec)
         // FIXME: add find vars
@@ -244,7 +246,7 @@ impl Clause {
                 if let Some(val) = env.get(&var) {
                     match *val {
                         Value::Entity(e) => Term::Bound(e),
-                        _ => unimplemented!()
+                        _ => unimplemented!(),
                     }
                 } else {
                     self.entity.clone()
@@ -258,7 +260,7 @@ impl Clause {
                 if let Some(val) = env.get(&var) {
                     match val {
                         &Value::String(ref s) => Term::Bound(s.to_owned()),
-                        _ => unimplemented!()
+                        _ => unimplemented!(),
                     }
                 } else {
                     self.attribute.clone()
@@ -285,7 +287,7 @@ impl Clause {
 struct InMemoryLog {
     eav: BTreeSet<Fact>,
     ave: BTreeSet<AVE>,
-    aev: BTreeSet<AEV>
+    aev: BTreeSet<AEV>,
 }
 
 use std::collections::range::RangeArgument;
@@ -301,6 +303,16 @@ impl RangeArgument<AEV> for AEV {
     }
 }
 
+impl RangeArgument<AVE> for AVE {
+    fn start(&self) -> Bound<&AVE> {
+        Bound::Included(&self)
+    }
+
+    fn end(&self) -> Bound<&AVE> {
+        Bound::Unbounded
+    }
+}
+
 impl InMemoryLog {
     fn new() -> InMemoryLog {
         InMemoryLog::default()
@@ -311,18 +323,31 @@ impl InMemoryLog {
         let expanded = clause.substitute(binding);
         match clause {
             // ?e a v => use the ave index
-            &Clause { entity: Term::Unbound(_),
-                      attribute: Term::Bound(ref a),
-                      value: Term::Bound(ref v)} => {
+            &Clause {
+                 entity: Term::Unbound(_),
+                 attribute: Term::Bound(ref a),
+                 value: Term::Bound(ref v),
+             } => {
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone());
-                self.aev.range(AEV(range_start)).map(|aev| &aev.0).collect()
-            },
-            // FIXME: Implement other optimized index uses.
-            _ => self.eav.iter().filter(|f| {
-                clause.entity.satisfied_by(&f.entity) &&
-                    clause.attribute.satisfied_by(&f.attribute) &&
-                    clause.value.satisfied_by(&f.value)
-            }).collect()
+                self.ave
+                    .range(AVE(range_start))
+                    .map(|ave| &ave.0)
+                    .take_while(|f| f.attribute == *a && f.value == *v)
+                    .collect()
+            }
+            // FIXME: Implement other optimized index use cases.
+
+            // Fallthrough case: just scan the EAV index. Correct but slow.
+            _ => {
+                self.eav
+                    .iter()
+                    .filter(|f| {
+                                clause.entity.satisfied_by(&f.entity) &&
+                                clause.attribute.satisfied_by(&f.attribute) &&
+                                clause.value.satisfied_by(&f.value)
+                            })
+                    .collect()
+            }
         }
     }
 }
@@ -354,7 +379,7 @@ impl Database for InMemoryLog {
                 for fact in self.facts_matching(clause, &binding) {
                     match unify(&binding, clause, &fact) {
                         Ok(new_env) => new_bindings.push(new_env),
-                        _ => continue
+                        _ => continue,
                     }
                 }
             }
@@ -362,10 +387,14 @@ impl Database for InMemoryLog {
             bindings = new_bindings;
         }
 
-        let result = bindings.into_iter()
+        let result = bindings
+            .into_iter()
             .map(|solution| {
-                solution.into_iter().filter(|&(ref k, _)| query.find.contains(&k)).collect()
-            })
+                     solution
+                         .into_iter()
+                         .filter(|&(ref k, _)| query.find.contains(&k))
+                         .collect()
+                 })
             .collect();
 
         QueryResult(result)
@@ -474,7 +503,6 @@ mod test {
         };
     }
 
-
     #[test]
     fn test_insertion() {
         let fact = Fact::new(Entity(0), "name", "Bob");
@@ -486,7 +514,14 @@ mod test {
         assert!(inserted.value == "Bob".into());
     }
 
-
+    #[test]
+    fn test_facts_matching() {
+        assert_eq!(DB.facts_matching(&Clause::new(Term::Unbound("e".into()),
+                                                  Term::Bound("name".into()),
+                                                  Term::Bound(Value::String("Bob".into()))),
+                                     &Binding::default()),
+                   vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))])
+    }
 
     #[test]
     fn test_query_unknown_entity() {
