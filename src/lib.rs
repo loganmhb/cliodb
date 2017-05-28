@@ -7,6 +7,7 @@ extern crate combine;
 extern crate lazy_static;
 
 use std::collections::HashMap;
+use std::collections::BTreeSet;
 
 // # Initial pass
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
@@ -15,7 +16,7 @@ use std::collections::HashMap;
 #[derive(Debug, PartialEq)]
 struct QueryResult(Vec<HashMap<Var, Value>>);
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 enum Value {
     String(String),
     Integer(i64),
@@ -74,7 +75,7 @@ impl Query {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 struct Entity(u64);
 
 #[derive(Debug, PartialEq, Eq)]
@@ -99,7 +100,10 @@ trait Database {
     fn query(&self, query: Query) -> QueryResult;
 }
 
-#[derive(Debug, PartialEq)]
+// FIXME: Eventually, facts should be orderable by any of EAVT, AVET,
+// VAET, TEAV for indexing purposes; this probably requires wrapper
+// structs.
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
 struct Fact {
     entity: Entity,
     attribute: String,
@@ -115,7 +119,6 @@ impl Fact {
         }
     }
 }
-
 
 //// Parser
 use combine::char::{spaces, string, char, letter, digit};
@@ -188,18 +191,18 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
 
 #[derive(Debug)]
 struct InMemoryLog {
-    facts: Vec<Fact>,
+    facts: BTreeSet<Fact>,
 }
 
 impl InMemoryLog {
     fn new() -> InMemoryLog {
-        InMemoryLog { facts: Vec::new() }
+        InMemoryLog { facts: BTreeSet::new() }
     }
 }
 
 impl IntoIterator for InMemoryLog {
     type Item = Fact;
-    type IntoIter = ::std::vec::IntoIter<Fact>;
+    type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
         self.facts.into_iter()
@@ -210,60 +213,29 @@ type Env = HashMap<Var, Value>;
 
 impl Database for InMemoryLog {
     fn add(&mut self, fact: Fact) {
-        self.facts.push(fact);
+        self.facts.insert(fact);
     }
 
     fn query(&self, query: Query) -> QueryResult {
-        assert!(!query.clauses.is_empty());
+        let mut bindings = vec![HashMap::new()];
 
-        #[derive(Default)]
-        struct State {
-            env: Env,
-            fact_idx: usize,
-            clause_idx: usize,
-        }
+        for clause in &query.clauses {
+            let mut new_bindings = vec![];
 
-        let initial_state = State::default();
-        let mut result = vec![];
-
-        let mut stack = vec![initial_state];
-
-        while let Some(mut state) = stack.pop() {
-            let clause = match query.clauses.get(state.clause_idx) {
-                Some(clause) => clause,
-                _ => {
-                    result.push(state.env.clone());
-                    continue;
-                }
-            };
-
-            let fact = match self.facts.get(state.fact_idx) {
-                Some(fact) => fact,
-                _ => {
-                    continue;
-                }
-            };
-
-            match unify(&state.env, &clause, &fact) {
-                Ok(new_env) => {
-                    let new_state = State {
-                        env: new_env,
-                        fact_idx: 0,
-                        clause_idx: state.clause_idx + 1,
-                    };
-                    state.fact_idx += 1;
-                    stack.push(state);
-                    stack.push(new_state);
-                }
-                _ => {
-                    state.fact_idx += 1;
-                    stack.push(state);
+            for binding in bindings {
+                // FIXME: Don't check *all* the facts, only the ones that could match.
+                for fact in self.facts.iter() {
+                    match unify(&binding, clause, &fact) {
+                        Ok(new_env) => new_bindings.push(new_env),
+                        _ => continue
+                    }
                 }
             }
 
+            bindings = new_bindings;
         }
 
-        let result = result.into_iter()
+        let result = bindings.into_iter()
             .map(|solution| {
                 solution.into_iter().filter(|&(ref k, _)| query.find.contains(&k)).collect()
             })
