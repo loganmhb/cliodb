@@ -1,5 +1,6 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
+#![feature(collections_range)]
 
 extern crate combine;
 
@@ -35,10 +36,20 @@ impl From<Entity> for Value {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 enum Term<T> {
     Bound(T),
     Unbound(Var),
+}
+
+impl<'a, T: PartialEq> Term<T> {
+    fn satisfied_by(&self, val: &'a T) -> bool
+      where &'a T: PartialEq {
+        match self {
+            &Term::Bound(ref binding) => *val == *binding,
+            &Term::Unbound(_) => true
+        }
+    }
 }
 
 // A free [logic] variable
@@ -100,10 +111,10 @@ trait Database {
     fn query(&self, query: Query) -> QueryResult;
 }
 
-// FIXME: Eventually, facts should be orderable by any of EAVT, AVET,
-// VAET, TEAV for indexing purposes; this probably requires wrapper
-// structs.
-#[derive(Debug, PartialEq, Eq, PartialOrd, Ord)]
+// The Fact struct represents a fact in the database.
+// The derived ordering is used by the EAV index; other
+// indices use orderings provided by wrapper structs.
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 struct Fact {
     entity: Entity,
     attribute: String,
@@ -117,6 +128,41 @@ impl Fact {
             attribute: a.into(),
             value: v.into(),
         }
+    }
+}
+
+// Fact wrappers provide ordering for indexes.
+#[derive(PartialEq, Eq, Debug)]
+struct AVE(Fact);
+
+impl PartialOrd for AVE {
+    fn partial_cmp(&self, other: &AVE) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AVE {
+    fn cmp(&self, other: &AVE) -> std::cmp::Ordering {
+        self.0.attribute.cmp(&other.0.attribute)
+            .then(self.0.value.cmp(&other.0.value))
+            .then(self.0.entity.cmp(&other.0.entity))
+    }
+}
+
+#[derive(PartialEq, Eq, Debug)]
+struct AEV(Fact);
+
+impl PartialOrd for AEV {
+    fn partial_cmp(&self, other: &AEV) -> Option<std::cmp::Ordering> {
+        Some(self.cmp(other))
+    }
+}
+
+impl Ord for AEV {
+    fn cmp(&self, other: &AEV) -> std::cmp::Ordering {
+        self.0.attribute.cmp(&other.0.attribute)
+            .then(self.0.entity.cmp(&other.0.entity))
+            .then(self.0.value.cmp(&other.0.value))
     }
 }
 
@@ -188,15 +234,96 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>> where I: Stream<Item
     }
 }
 
+type Binding = HashMap<Var, Value>;
 
-#[derive(Debug)]
+impl Clause {
+    fn substitute(&self, env: &Binding) -> Clause {
+        let entity = match &self.entity {
+            &Term::Bound(_) => self.entity.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    match *val {
+                        Value::Entity(e) => Term::Bound(e),
+                        _ => unimplemented!()
+                    }
+                } else {
+                    self.entity.clone()
+                }
+            }
+        };
+
+        let attribute = match &self.attribute {
+            &Term::Bound(_) => self.attribute.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    match val {
+                        &Value::String(ref s) => Term::Bound(s.to_owned()),
+                        _ => unimplemented!()
+                    }
+                } else {
+                    self.attribute.clone()
+                }
+            }
+        };
+
+        let value = match &self.value {
+            &Term::Bound(_) => self.value.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    Term::Bound(val.clone())
+                } else {
+                    self.value.clone()
+                }
+            }
+        };
+
+        Clause::new(entity, attribute, value)
+    }
+}
+
+#[derive(Debug, Default)]
 struct InMemoryLog {
-    facts: BTreeSet<Fact>,
+    eav: BTreeSet<Fact>,
+    ave: BTreeSet<AVE>,
+    aev: BTreeSet<AEV>
+}
+
+use std::collections::range::RangeArgument;
+use std::collections::Bound;
+
+impl RangeArgument<AEV> for AEV {
+    fn start(&self) -> Bound<&AEV> {
+        Bound::Included(&self)
+    }
+
+    fn end(&self) -> Bound<&AEV> {
+        Bound::Unbounded
+    }
 }
 
 impl InMemoryLog {
     fn new() -> InMemoryLog {
-        InMemoryLog { facts: BTreeSet::new() }
+        InMemoryLog::default()
+    }
+
+    // Efficiently retrieve facts matching a clause
+    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
+        let expanded = clause.substitute(binding);
+        match clause {
+            // ?e a v => use the ave index
+            &Clause { entity: Term::Unbound(_),
+                      attribute: Term::Bound(ref a),
+                      value: Term::Bound(ref v)} => {
+                let range_start = Fact::new(Entity(0), a.clone(), v.clone());
+                self.aev.range(AEV(range_start)).map(|aev| &aev.0).collect()
+            },
+            // FIXME: Implement other optimized index uses.
+            _ => self.eav.iter().filter(|f| {
+                clause.entity.satisfied_by(&f.entity) &&
+                    clause.attribute.satisfied_by(&f.attribute) &&
+                    clause.value.satisfied_by(&f.value)
+            }).collect()
+        }
     }
 }
 
@@ -205,15 +332,16 @@ impl IntoIterator for InMemoryLog {
     type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
 
     fn into_iter(self) -> Self::IntoIter {
-        self.facts.into_iter()
+        self.eav.into_iter()
     }
 }
 
-type Env = HashMap<Var, Value>;
 
 impl Database for InMemoryLog {
     fn add(&mut self, fact: Fact) {
-        self.facts.insert(fact);
+        self.eav.insert(fact.clone());
+        self.ave.insert(AVE(fact.clone()));
+        self.aev.insert(AEV(fact.clone()));
     }
 
     fn query(&self, query: Query) -> QueryResult {
@@ -223,8 +351,7 @@ impl Database for InMemoryLog {
             let mut new_bindings = vec![];
 
             for binding in bindings {
-                // FIXME: Don't check *all* the facts, only the ones that could match.
-                for fact in self.facts.iter() {
+                for fact in self.facts_matching(clause, &binding) {
                     match unify(&binding, clause, &fact) {
                         Ok(new_env) => new_bindings.push(new_env),
                         _ => continue
@@ -245,7 +372,7 @@ impl Database for InMemoryLog {
     }
 }
 
-fn unify(env: &Env, clause: &Clause, fact: &Fact) -> Result<Env, ()> {
+fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
     let mut new_info = HashMap::new();
 
     match clause.entity {
