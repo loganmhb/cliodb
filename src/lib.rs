@@ -98,7 +98,38 @@ impl Clause {
 
 trait Database {
     fn add(&mut self, fact: Fact);
-    fn query(&self, query: Query) -> QueryResult;
+    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact>;
+
+    fn query(&self, query: Query) -> QueryResult {
+        let mut bindings = vec![HashMap::new()];
+
+        for clause in &query.clauses {
+            let mut new_bindings = vec![];
+
+            for binding in bindings {
+                for fact in self.facts_matching(clause, &binding) {
+                    match unify(&binding, clause, &fact) {
+                        Ok(new_env) => new_bindings.push(new_env),
+                        _ => continue,
+                    }
+                }
+            }
+
+            bindings = new_bindings;
+        }
+
+        let result = bindings
+            .into_iter()
+            .map(|solution| {
+                     solution
+                         .into_iter()
+                         .filter(|&(ref k, _)| query.find.contains(&k))
+                         .collect()
+                 })
+            .collect();
+
+        QueryResult(result)
+    }
 }
 
 // The Fact struct represents a fact in the database.
@@ -316,8 +347,25 @@ impl InMemoryLog {
     fn new() -> InMemoryLog {
         InMemoryLog::default()
     }
+}
 
-    // Efficiently retrieve facts matching a clause
+impl IntoIterator for InMemoryLog {
+    type Item = Fact;
+    type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
+
+    fn into_iter(self) -> Self::IntoIter {
+        self.eav.into_iter()
+    }
+}
+
+
+impl Database for InMemoryLog {
+    fn add(&mut self, fact: Fact) {
+        self.eav.insert(fact.clone());
+        self.ave.insert(AVE(fact.clone()));
+        self.aev.insert(AEV(fact.clone()));
+    }
+
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
         fn satisfied_by<'a, T: PartialEq>(term: &Term<T>, val: &'a T) -> bool
             where &'a T: PartialEq
@@ -370,55 +418,8 @@ impl InMemoryLog {
             }
         }
     }
-}
-
-impl IntoIterator for InMemoryLog {
-    type Item = Fact;
-    type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
-
-    fn into_iter(self) -> Self::IntoIter {
-        self.eav.into_iter()
-    }
-}
 
 
-impl Database for InMemoryLog {
-    fn add(&mut self, fact: Fact) {
-        self.eav.insert(fact.clone());
-        self.ave.insert(AVE(fact.clone()));
-        self.aev.insert(AEV(fact.clone()));
-    }
-
-    fn query(&self, query: Query) -> QueryResult {
-        let mut bindings = vec![HashMap::new()];
-
-        for clause in &query.clauses {
-            let mut new_bindings = vec![];
-
-            for binding in bindings {
-                for fact in self.facts_matching(clause, &binding) {
-                    match unify(&binding, clause, &fact) {
-                        Ok(new_env) => new_bindings.push(new_env),
-                        _ => continue,
-                    }
-                }
-            }
-
-            bindings = new_bindings;
-        }
-
-        let result = bindings
-            .into_iter()
-            .map(|solution| {
-                     solution
-                         .into_iter()
-                         .filter(|&(ref k, _)| query.find.contains(&k))
-                         .collect()
-                 })
-            .collect();
-
-        QueryResult(result)
-    }
 }
 
 fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
