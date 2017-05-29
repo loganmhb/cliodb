@@ -42,8 +42,6 @@ enum Term<T> {
     Unbound(Var),
 }
 
-
-
 // A free [logic] variable
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
 struct Var {
@@ -284,6 +282,16 @@ struct InMemoryLog {
 use std::collections::range::RangeArgument;
 use std::collections::Bound;
 
+impl RangeArgument<Fact> for Fact {
+    fn start(&self) -> Bound<&Fact> {
+        Bound::Included(&self)
+    }
+
+    fn end(&self) -> Bound<&Fact> {
+        Bound::Unbounded
+    }
+}
+
 impl RangeArgument<AEV> for AEV {
     fn start(&self) -> Bound<&AEV> {
         Bound::Included(&self)
@@ -335,8 +343,20 @@ impl InMemoryLog {
                     .take_while(|f| f.attribute == *a && f.value == *v)
                     .collect()
             }
-            // FIXME: Implement other optimized index use cases.
-
+            // e a ?v => use the eav index
+            &Clause {
+                 entity: Term::Bound(ref e),
+                 attribute: Term::Bound(ref a),
+                 value: Term::Unbound(_)
+             } => {
+                // Value::String("") is the lowest-sorted value
+                let range_start = Fact::new(e.clone(), a.clone(), Value::String("".into()));
+                self.eav
+                    .range(range_start)
+                    .take_while(|f| f.entity == *e && f.attribute == *a)
+                    .collect()
+            }
+            // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
                 self.eav
