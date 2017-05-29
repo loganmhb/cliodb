@@ -42,16 +42,7 @@ enum Term<T> {
     Unbound(Var),
 }
 
-impl<'a, T: PartialEq> Term<T> {
-    fn satisfied_by(&self, val: &'a T) -> bool
-        where &'a T: PartialEq
-    {
-        match self {
-            &Term::Bound(ref binding) => *val == *binding,
-            &Term::Unbound(_) => true,
-        }
-    }
-}
+
 
 // A free [logic] variable
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
@@ -320,6 +311,15 @@ impl InMemoryLog {
 
     // Efficiently retrieve facts matching a clause
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
+        fn satisfied_by<'a, T: PartialEq>(term: &Term<T>, val: &'a T) -> bool
+            where &'a T: PartialEq
+        {
+            match term {
+                &Term::Bound(ref binding) => *val == *binding,
+                &Term::Unbound(_) => true,
+            }
+        }
+
         let expanded = clause.substitute(binding);
         match clause {
             // ?e a v => use the ave index
@@ -342,9 +342,9 @@ impl InMemoryLog {
                 self.eav
                     .iter()
                     .filter(|f| {
-                                clause.entity.satisfied_by(&f.entity) &&
-                                clause.attribute.satisfied_by(&f.attribute) &&
-                                clause.value.satisfied_by(&f.value)
+                                satisfied_by(&clause.entity, &f.entity) &&
+                                satisfied_by(&clause.attribute, &f.attribute) &&
+                                satisfied_by(&clause.value, &f.value)
                             })
                     .collect()
             }
