@@ -367,15 +367,6 @@ impl Database for InMemoryLog {
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
-        fn satisfied_by<'a, T: PartialEq>(term: &Term<T>, val: &'a T) -> bool
-            where &'a T: PartialEq
-        {
-            match term {
-                &Term::Bound(ref binding) => *val == *binding,
-                &Term::Unbound(_) => true,
-            }
-        }
-
         let expanded = clause.substitute(binding);
         match clause {
             // ?e a v => use the ave index
@@ -409,17 +400,11 @@ impl Database for InMemoryLog {
             _ => {
                 self.eav
                     .iter()
-                    .filter(|f| {
-                                satisfied_by(&clause.entity, &f.entity) &&
-                                satisfied_by(&clause.attribute, &f.attribute) &&
-                                satisfied_by(&clause.value, &f.value)
-                            })
+                    .filter(|f| unify(&binding, &clause, &f).is_ok())
                     .collect()
             }
         }
     }
-
-
 }
 
 fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
