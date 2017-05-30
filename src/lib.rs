@@ -2,6 +2,7 @@
 #![allow(unused_variables)]
 #![feature(collections_range)]
 
+#[macro_use]
 extern crate combine;
 
 #[cfg(test)]
@@ -11,7 +12,6 @@ extern crate lazy_static;
 use std::collections::HashMap;
 use std::collections::BTreeSet;
 
-// # Initial pass
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
 
@@ -74,6 +74,18 @@ impl Query {
             clauses: clauses,
         }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+struct Tx {
+    items: Vec<TxItem>
+}
+
+#[derive(Debug, PartialEq, Eq)]
+enum TxItem {
+    Addition(Fact),
+    Retraction(Fact),
+    NewEntity(HashMap<String, Value>)
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
@@ -219,7 +231,7 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
     let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
 
     let entity = || number_lit();
-    let attribute = many1(letter()).map(|x| x);
+    let attribute = many1(letter());
     let value = string_lit.or(number_lit().map(|e| Value::Entity(e)));
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
@@ -253,6 +265,47 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
     match result {
         Ok((q, _)) => Ok(q),
         Err(err) => Err(err),
+    }
+}
+
+fn parse_tx<I>(input: I) -> Result<Tx, ParseError<I>>
+    where I: Stream<Item = char> {
+
+// FIXME: how to share these closures?
+    let lex_string = |s| string(s).skip(spaces());
+    let lex_char = |c| char(c).skip(spaces());
+
+
+    let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
+    let string_lit = ||
+        between(char('"'), char('"'), many1(none_of("\"".chars()))).map(|s| Value::String(s));
+
+    let entity = || number_lit()
+        .skip(spaces());
+    let attribute = || many1(letter())
+        .skip(spaces());
+    let value = || string_lit().or(number_lit().map(|e| Value::Entity(e)))
+        .skip(spaces());
+
+    let fact = || between(lex_char('('), lex_char(')'), (entity(), attribute(), value()))
+        .map(|f| Fact::new(f.0, f.1, f.2));
+    let attr_pair = || (attribute(), value());
+    let new_entity = || between(lex_char('{'), lex_char('}'), many1::<HashMap<_, _>, _>(attr_pair()))
+        .map(|x| TxItem::NewEntity(x));
+
+    let addition = || lex_string("add")
+        .and(fact().map(|i| TxItem::Addition(i))).map(|x| x.1);
+    let retraction = || lex_string("retract")
+        .and(fact().map(|i| TxItem::Retraction(i))).map(|x| x.1);
+
+    let tx_item = || choice!(addition(), retraction(), new_entity());
+    let tx = || {
+        many1::<Vec<_>, _>(tx_item()).map(|tx| Tx { items: tx}).and(eof()).map(|x| x.0)
+    };
+
+    match tx().parse(input) {
+        Ok((t, _)) => Ok(t),
+        Err(e) => Err(e)
     }
 }
 
@@ -491,6 +544,12 @@ mod test {
                                                  Term::Bound("name".into()),
                                                  Term::Bound(Value::String("Bob".into())))],
                    })
+    }
+
+    #[test]
+    fn test_parse_tx() {
+        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(), Tx { items: vec![TxItem::Addition(Fact::new(Entity(0), "name", Value::String("Bob".into())))]});
+        parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
 
     lazy_static! {
