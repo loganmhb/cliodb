@@ -9,16 +9,20 @@ use combine::{Parser, ParseError, many1, between, none_of, eof};
 pub enum Input {
     Query(Query),
     Tx(Tx),
+    SampleDb,
+    Dump,
 }
 
-pub fn parse_input<'a, I>(input: I) -> Result<Input, ParseError<I>>
-    where I: combine::Stream<Item = char> + 'a
+pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
+    where I: combine::Stream<Item = char>
 {
-    choice!(query_parser().map(Input::Query), tx_parser().map(Input::Tx)).parse(input).map(|(r, _)| r)
+    choice!(query_parser().map(Input::Query), tx_parser().map(Input::Tx), sample_db_parser(), dump_parser())
+        .parse(input)
+        .map(|(r, _)| r)
 }
 
-pub fn parse_query<'a, I>(input: I) -> Result<Query, ParseError<I>>
-    where I: Stream<Item = char> + 'a
+pub fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
+    where I: Stream<Item = char>
 {
     query_parser().parse(input).map(|(r, _)| r)
 }
@@ -29,6 +33,17 @@ pub fn parse_tx<I>(input: I) -> Result<Tx, ParseError<I>>
     tx_parser().parse(input).map(|(r, _)| r)
 }
 
+fn sample_db_parser<I>() -> impl Parser<Input = I, Output = Input>
+    where I: combine::Stream<Item = char>
+{
+    lex_string("test").and(eof()).map(|_| Input::SampleDb)
+}
+
+fn dump_parser<I>() -> impl Parser<Input = I, Output = Input>
+    where I: combine::Stream<Item = char>
+{
+    lex_string("dump").and(eof()).map(|_| Input::Dump)
+}
 
 fn free_var<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = Var> {
     char('?')

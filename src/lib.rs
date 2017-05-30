@@ -9,6 +9,7 @@ extern crate combine;
 #[macro_use]
 extern crate lazy_static;
 
+use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::collections::BTreeSet;
 
@@ -21,6 +22,12 @@ pub use parser::*;
 
 #[derive(Debug, PartialEq)]
 pub struct QueryResult(Vec<HashMap<Var, Value>>);
+
+impl Display for QueryResult {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        writeln!(f, "{:#?}", self)
+    }
+}
 
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum Value {

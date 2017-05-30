@@ -20,12 +20,30 @@ fn main() {
                 }
 
                 match parse_input(&*line) {
-                    Ok(Input::Query(q)) => println!("{:#?}", db.query(q)),
+                    Ok(Input::Query(q)) => println!("{}", db.query(q)),
                     Ok(Input::Tx(tx)) => db.transact(tx),
-                    Err(e) => println!("Oh no! {}", e)
+                    Ok(Input::SampleDb) => {
+                        db = InMemoryLog::new();
+
+                        let sample = [r#"add (0 name "Bob")"#,
+                                      r#"add (1 name "John")"#,
+                                      r#"add (0 parent 1)"#,
+                                      r#"add (2 name "Hello")"#];
+
+                        for tx in sample.into_iter().map(|l| parse_tx(*l).unwrap()) {
+                            db.transact(tx);
+                        }
+                    }
+                    Ok(Input::Dump) => {
+                        println!("{}",
+                                 db.query(parse_query("find ?ent ?att ?val where (?ent ?att \
+                                                       ?val)")
+                                     .unwrap()))
+                    }
+                    Err(e) => println!("Oh no! {}", e),
                 };
-            },
-            Err(e) => println!("Error! {:?}", e.description())
+            }
+            Err(e) => println!("Error! {:?}", e.description()),
         }
     }
 }
