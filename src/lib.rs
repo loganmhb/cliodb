@@ -1,5 +1,4 @@
-#![allow(dead_code)]
-#![allow(unused_variables)]
+
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 
@@ -12,6 +11,10 @@ extern crate lazy_static;
 
 use std::collections::HashMap;
 use std::collections::BTreeSet;
+
+pub mod parser;
+
+pub use parser::*;
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -79,14 +82,14 @@ impl Query {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Tx {
-    items: Vec<TxItem>
+    items: Vec<TxItem>,
 }
 
 #[derive(Debug, PartialEq, Eq)]
 enum TxItem {
     Addition(Fact),
     Retraction(Fact),
-    NewEntity(HashMap<String, Value>)
+    NewEntity(HashMap<String, Value>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
@@ -118,7 +121,7 @@ pub trait Database {
             match item {
                 TxItem::Addition(f) => self.add(f),
                 // TODO Implement retractions + new entities
-                _ => unimplemented!()
+                _ => unimplemented!(),
             }
         }
     }
@@ -141,14 +144,12 @@ pub trait Database {
             bindings = new_bindings;
         }
 
-        let result = bindings
-            .into_iter()
+        let result = bindings.into_iter()
             .map(|solution| {
-                     solution
-                         .into_iter()
-                         .filter(|&(ref k, _)| query.find.contains(&k))
-                         .collect()
-                 })
+                solution.into_iter()
+                    .filter(|&(ref k, _)| query.find.contains(&k))
+                    .collect()
+            })
             .collect();
 
         QueryResult(result)
@@ -211,133 +212,6 @@ impl Ord for AEV {
             .cmp(&other.0.attribute)
             .then(self.0.entity.cmp(&other.0.entity))
             .then(self.0.value.cmp(&other.0.value))
-    }
-}
-
-//// Parser
-use combine::char::{spaces, string, char, letter, digit};
-use combine::primitives::Stream;
-use combine::{Parser, ParseError, many1, between, none_of, eof};
-
-pub enum Input {
-    Query(Query),
-    Tx(Tx)
-}
-
-pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
-    where I: combine::Stream<Item = char>
-{
-    // TODO reimplement this as a parser rather than using result combinators
-    parse_query(input.clone())
-        .and_then(|i| Ok(Input::Query(i)))
-        .or_else(|_| parse_tx(input)
-                 .and_then(|tx| Ok(Input::Tx(tx))))
-}
-
-
-pub fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
-    where I: Stream<Item = char>
-{
-    // Variables and literals
-    let free_var = || {
-        char('?')
-            .and(many1(letter()))
-            .skip(spaces())
-            .map(|x| x.1)
-            .map(|name: String| Var::new(name))
-    }; // don't care about the ?
-
-    let string_lit =
-        between(char('"'), char('"'), many1(none_of("\"".chars()))).map(|s| Value::String(s));
-    // FIXME: Number literals should be able to be entities or just integers; this
-    // probably requires a change to the types/maybe change to the unification system.
-    let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
-
-    let entity = || number_lit();
-    let attribute = many1(letter());
-    let value = string_lit.or(number_lit().map(|e| Value::Entity(e)));
-
-    // There is probably a way to DRY these out but I couldn't satisfy the type checker.
-    let entity_term = free_var()
-        .map(|x| Term::Unbound(x))
-        .or(entity().map(|x| Term::Bound(x)))
-        .skip(spaces());
-    let attribute_term = free_var()
-        .map(|x| Term::Unbound(x))
-        .or(attribute.map(|x| Term::Bound(x)))
-        .skip(spaces());
-    let value_term = free_var()
-        .map(|x| Term::Unbound(x))
-        .or(value.map(|x| Term::Bound(x)))
-        .skip(spaces());
-
-    // Clause structure
-    let clause_contents = (entity_term, attribute_term, value_term);
-    let clause = between(lex_char('('), lex_char(')'), clause_contents).map(|(e, a, v)| {
-                                                                                Clause::new(e, a, v)
-                                                                            });
-    let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);
-    let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
-
-    let mut query = find_spec.and(where_spec)
-        // FIXME: add find vars
-        .map(|x| Query{find: x.0, clauses: x.1})
-        .and(eof())
-        .map(|x| x.0);
-    let result = query.parse(input);
-    match result {
-        Ok((q, _)) => Ok(q),
-        Err(err) => Err(err),
-    }
-}
-
-fn lex_string<I>(s: &'static str) -> impl Parser<Input = I>
-    where I: Stream<Item = char>
-{
-    string(s).skip(spaces())
-}
-
-fn lex_char<I>(c: char) -> impl Parser<Input = I>
-    where I: Stream<Item = char>
-{
-    char(c).skip(spaces())
-}
-
-fn parse_tx<I>(input: I) -> Result<Tx, ParseError<I>>
-    where I: Stream<Item = char> {
-
-// FIXME: how to share these closures?
-
-    let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
-    let string_lit = ||
-        between(char('"'), char('"'), many1(none_of("\"".chars()))).map(|s| Value::String(s));
-
-    let entity = || number_lit()
-        .skip(spaces());
-    let attribute = || many1(letter())
-        .skip(spaces());
-    let value = || string_lit().or(number_lit().map(|e| Value::Entity(e)))
-        .skip(spaces());
-
-    let fact = || between(lex_char('('), lex_char(')'), (entity(), attribute(), value()))
-        .map(|f| Fact::new(f.0, f.1, f.2));
-    let attr_pair = || (attribute(), value());
-    let new_entity = || between(lex_char('{'), lex_char('}'), many1::<HashMap<_, _>, _>(attr_pair()))
-        .map(|x| TxItem::NewEntity(x));
-
-    let addition = || lex_string("add")
-        .and(fact().map(|i| TxItem::Addition(i))).map(|x| x.1);
-    let retraction = || lex_string("retract")
-        .and(fact().map(|i| TxItem::Retraction(i))).map(|x| x.1);
-
-    let tx_item = || choice!(addition(), retraction(), new_entity());
-    let tx = || {
-        many1::<Vec<_>, _>(tx_item()).map(|tx| Tx { items: tx}).and(eof()).map(|x| x.0)
-    };
-
-    match tx().parse(input) {
-        Ok((t, _)) => Ok(t),
-        Err(e) => Err(e)
     }
 }
 
@@ -453,31 +327,27 @@ impl Database for InMemoryLog {
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
         let expanded = clause.substitute(binding);
-        match clause {
+        match expanded {
             // ?e a v => use the ave index
-            &Clause {
-                 entity: Term::Unbound(_),
-                 attribute: Term::Bound(ref a),
-                 value: Term::Bound(ref v),
-             } => {
+            Clause { entity: Term::Unbound(_),
+                     attribute: Term::Bound(a),
+                     value: Term::Bound(v) } => {
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone());
                 self.ave
                     .range(AVE(range_start))
                     .map(|ave| &ave.0)
-                    .take_while(|f| f.attribute == *a && f.value == *v)
+                    .take_while(|f| f.attribute == *a && f.value == v)
                     .collect()
             }
             // e a ?v => use the eav index
-            &Clause {
-                 entity: Term::Bound(ref e),
-                 attribute: Term::Bound(ref a),
-                 value: Term::Unbound(_)
-             } => {
+            Clause { entity: Term::Bound(e),
+                     attribute: Term::Bound(a),
+                     value: Term::Unbound(_) } => {
                 // Value::String("") is the lowest-sorted value
                 let range_start = Fact::new(e.clone(), a.clone(), Value::String("".into()));
                 self.eav
                     .range(range_start)
-                    .take_while(|f| f.entity == *e && f.attribute == *a)
+                    .take_while(|f| f.entity == e && f.attribute == *a)
                     .collect()
             }
             // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
@@ -580,7 +450,12 @@ mod test {
 
     #[test]
     fn test_parse_tx() {
-        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(), Tx { items: vec![TxItem::Addition(Fact::new(Entity(0), "name", Value::String("Bob".into())))]});
+        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
+                   Tx {
+                       items: vec![TxItem::Addition(Fact::new(Entity(0),
+                                                              "name",
+                                                              Value::String("Bob".into())))],
+                   });
         parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
 
@@ -653,12 +528,12 @@ mod test {
                parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
-                                        .into_iter()
-                                        .collect(),
+                                    .into_iter()
+                                    .collect(),
                                 vec![(Var::new("a"), Value::Entity(Entity(1))),
                                      (Var::new("b"), Value::String("John".into()))]
-                                        .into_iter()
-                                        .collect()]));
+                                    .into_iter()
+                                    .collect()]));
     }
 
     #[test]
