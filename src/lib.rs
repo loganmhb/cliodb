@@ -2,6 +2,8 @@
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 
+extern crate itertools;
+
 #[macro_use]
 extern crate combine;
 
@@ -9,11 +11,14 @@ extern crate combine;
 #[macro_use]
 extern crate lazy_static;
 
+use itertools::*;
+
 use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::collections::BTreeSet;
 
 pub mod parser;
+mod print_table;
 
 pub use parser::*;
 
@@ -21,11 +26,24 @@ pub use parser::*;
 // Attributes and values are both just strings. There are no transactions or histories.
 
 #[derive(Debug, PartialEq)]
-pub struct QueryResult(Vec<HashMap<Var, Value>>);
+pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);
 
 impl Display for QueryResult {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        writeln!(f, "{:#?}", self)
+        use std::iter::repeat;
+        let col_names = self.0.iter().map(|v| &*v.name);
+        let aligns = repeat(print_table::Alignment::Center).take(col_names.len());
+        let mut rows = vec![];
+        
+        for row_ht in &self.1 {
+            let mut row = vec![];
+            for var in &self.0 {
+                row.push(format!("{}", row_ht[var]));
+            }
+            rows.push(row);
+        }
+
+        writeln!(f, "{:?}", print_table::debug_table("Result", col_names, aligns, rows))
     }
 }
 
@@ -33,6 +51,15 @@ impl Display for QueryResult {
 pub enum Value {
     String(String),
     Entity(Entity),
+}
+
+impl Display for Value {
+    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
+        write!(f, "{}", match *self {
+            Value::Entity(e) => format!("{}", e.0),
+            Value::String(ref s) => format!("{:?}", s),
+        })
+    }
 }
 
 impl<T: Into<String>> From<T> for Value {
@@ -159,7 +186,7 @@ pub trait Database {
             })
             .collect();
 
-        QueryResult(result)
+        QueryResult(query.find, result)
     }
 }
 
@@ -507,7 +534,7 @@ mod test {
         // find ?a where (?a name "Bob")
         helper(&*DB,
                parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-               QueryResult(vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
+               QueryResult(vec![Var::new("a")], vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
     }
 
     #[test]
@@ -515,7 +542,7 @@ mod test {
         // find ?a where (0 name ?a)
         helper(&*DB,
                parse_query("find ?a where (0 name ?a)").unwrap(),
-               QueryResult(vec![iter::once((Var::new("a"), Value::String("Bob".into())))
+               QueryResult(vec![Var::new("a")], vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
 
     }
@@ -524,7 +551,7 @@ mod test {
         // find ?a where (1 ?a "John")
         helper(&*DB,
                parse_query("find ?a where (1 ?a \"John\")").unwrap(),
-               QueryResult(vec![iter::once((Var::new("a"), Value::String("name".into())))
+               QueryResult(vec![Var::new("a")], vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
     }
 
@@ -533,7 +560,7 @@ mod test {
         // find ?a ?b where (?a name ?b)
         helper(&*DB,
                parse_query("find ?a ?b where (?a name ?b)").unwrap(),
-               QueryResult(vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
+               QueryResult(vec![Var::new("a"), Var::new("b")], vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
                                     .into_iter()
                                     .collect(),
@@ -548,7 +575,7 @@ mod test {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&*DB,
                parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
-               QueryResult(vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
+               QueryResult(vec![Var::new("b")], vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
     }
 
     #[test]
@@ -556,7 +583,7 @@ mod test {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
         helper(&*DB,
                parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)").unwrap(),
-               QueryResult(vec![iter::once((Var::new("c"), Value::String("John".into())))
+               QueryResult(vec![Var::new("c")], vec![iter::once((Var::new("c"), Value::String("John".into())))
                                     .collect()]));
     }
 
