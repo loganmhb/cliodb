@@ -17,10 +17,10 @@ use std::collections::BTreeSet;
 // Attributes and values are both just strings. There are no transactions or histories.
 
 #[derive(Debug, PartialEq)]
-struct QueryResult(Vec<HashMap<Var, Value>>);
+pub struct QueryResult(Vec<HashMap<Var, Value>>);
 
 #[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-enum Value {
+pub enum Value {
     String(String),
     Entity(Entity),
 }
@@ -45,7 +45,7 @@ enum Term<T> {
 
 // A free [logic] variable
 #[derive(Debug, Hash, PartialEq, Eq, Clone)]
-struct Var {
+pub struct Var {
     name: String,
 }
 
@@ -63,7 +63,7 @@ impl<T: Into<String>> From<T> for Var {
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
 #[derive(Debug, PartialEq)]
-struct Query {
+pub struct Query {
     find: Vec<Var>,
     clauses: Vec<Clause>,
 }
@@ -78,7 +78,7 @@ impl Query {
 }
 
 #[derive(Debug, PartialEq, Eq)]
-struct Tx {
+pub struct Tx {
     items: Vec<TxItem>
 }
 
@@ -90,10 +90,10 @@ enum TxItem {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-struct Entity(u64);
+pub struct Entity(u64);
 
 #[derive(Debug, PartialEq, Eq)]
-struct Clause {
+pub struct Clause {
     entity: Term<Entity>,
     attribute: Term<String>,
     value: Term<Value>,
@@ -109,9 +109,18 @@ impl Clause {
     }
 }
 
-trait Database {
+pub trait Database {
     fn add(&mut self, fact: Fact);
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact>;
+
+    fn transact(&mut self, tx: Tx) {
+        for item in tx.items {
+            match item {
+                TxItem::Addition(f) => self.add(f),
+                _ => unimplemented!()
+            }
+        }
+    }
 
     fn query(&self, query: Query) -> QueryResult {
         let mut bindings = vec![HashMap::new()];
@@ -149,7 +158,7 @@ trait Database {
 // The derived ordering is used by the EAV index; other
 // indices use orderings provided by wrapper structs.
 #[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
-struct Fact {
+pub struct Fact {
     entity: Entity,
     attribute: String,
     value: Value,
@@ -209,7 +218,22 @@ use combine::char::{spaces, string, char, letter, digit};
 use combine::primitives::Stream;
 use combine::{Parser, ParseError, many1, between, none_of, eof};
 
-fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
+pub enum Input {
+    Query(Query),
+    Tx(Tx)
+}
+
+pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
+    where I: combine::Stream<Item = char>
+{
+    parse_query(input.clone())
+        .and_then(|i| Ok(Input::Query(i)))
+        .or_else(|_| parse_tx(input)
+                 .and_then(|tx| Ok(Input::Tx(tx))))
+}
+
+
+pub fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
     where I: Stream<Item = char>
 {
     // Variables and literals
@@ -363,7 +387,7 @@ impl Clause {
 }
 
 #[derive(Debug, Default)]
-struct InMemoryLog {
+pub struct InMemoryLog {
     eav: BTreeSet<Fact>,
     ave: BTreeSet<AVE>,
     aev: BTreeSet<AEV>,
@@ -403,7 +427,7 @@ impl RangeArgument<AVE> for AVE {
 }
 
 impl InMemoryLog {
-    fn new() -> InMemoryLog {
+    pub fn new() -> InMemoryLog {
         InMemoryLog::default()
     }
 }

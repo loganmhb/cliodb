@@ -2,19 +2,31 @@ use std::io;
 use std::io::prelude::*;
 
 extern crate logos;
-//use logos::parser::parse_Query;
+extern crate rustyline;
 
+use logos::*;
+use std::error::Error;
 
 fn main() {
     println!("Hello, world!");
-    let stdin = io::stdin();
+    let mut rl = rustyline::Editor::<()>::new();
+    let mut db = InMemoryLog::new();
     loop {
-        print!("> ");
-        io::stdout().flush().unwrap();
+        let readline = rl.readline("> ");
+        match readline {
+            Ok(line) => {
+                if line == "quit" {
+                    break;
+                }
 
+                match parse_input(&*line) {
+                    Ok(Input::Query(q)) => println!("{:#?}", db.query(q)),
+                    Ok(Input::Tx(tx)) => db.transact(tx),
+                    Err(e) => println!("Oh no! {}", e)
+                };
+            },
+            Err(e) => println!("Error! {:?}", e.description())
+        }
         let mut input = String::new();
-        stdin.lock().read_line(&mut input).unwrap();
-        println!("Input: '{}'", input);
-//        println!("{:?}", parse_Query(&input).unwrap());
     }
 }
