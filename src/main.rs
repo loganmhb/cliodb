@@ -1,10 +1,9 @@
-use std::io;
-use std::io::prelude::*;
 
 extern crate logos;
 extern crate rustyline;
 
 use logos::*;
+
 use std::error::Error;
 
 fn main() {
@@ -28,6 +27,5 @@ fn main() {
             },
             Err(e) => println!("Error! {:?}", e.description())
         }
-        let mut input = String::new();
     }
 }
