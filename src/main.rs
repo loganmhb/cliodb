@@ -8,6 +8,7 @@ use logos::*;
 use std::error::Error;
 
 fn main() {
+    // TODO print usage e.g. `quit` command
     println!("Hello, world!");
     let mut rl = rustyline::Editor::<()>::new();
     let mut db = InMemoryLog::new();

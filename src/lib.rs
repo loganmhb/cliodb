@@ -117,6 +117,7 @@ pub trait Database {
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => self.add(f),
+                // TODO Implement retractions + new entities
                 _ => unimplemented!()
             }
         }
@@ -226,6 +227,7 @@ pub enum Input {
 pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
     where I: combine::Stream<Item = char>
 {
+    // TODO reimplement this as a parser rather than using result combinators
     parse_query(input.clone())
         .and_then(|i| Ok(Input::Query(i)))
         .or_else(|_| parse_tx(input)
