@@ -1,6 +1,7 @@
 #![allow(dead_code)]
 #![allow(unused_variables)]
 #![feature(collections_range)]
+#![feature(conservative_impl_trait)]
 
 #[macro_use]
 extern crate combine;
@@ -211,10 +212,6 @@ use combine::{Parser, ParseError, many1, between, none_of, eof};
 fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
     where I: Stream<Item = char>
 {
-    // Lexers for ignoring spaces following tokens
-    let lex_char = |c| char(c).skip(spaces());
-    let lex_string = |s| string(s).skip(spaces());
-
     // Variables and literals
     let free_var = || {
         char('?')
@@ -268,13 +265,22 @@ fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
     }
 }
 
+fn lex_string<I>(s: &'static str) -> impl Parser<Input = I>
+    where I: Stream<Item = char>
+{
+    string(s).skip(spaces())
+}
+
+fn lex_char<I>(c: char) -> impl Parser<Input = I>
+    where I: Stream<Item = char>
+{
+    char(c).skip(spaces())
+}
+
 fn parse_tx<I>(input: I) -> Result<Tx, ParseError<I>>
     where I: Stream<Item = char> {
 
 // FIXME: how to share these closures?
-    let lex_string = |s| string(s).skip(spaces());
-    let lex_char = |c| char(c).skip(spaces());
-
 
     let number_lit = || many1(digit()).map(|n: String| Entity(n.parse().unwrap()));
     let string_lit = ||
