@@ -1,4 +1,3 @@
-
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
@@ -25,7 +24,9 @@ pub mod string_ref;
 pub use parser::*;
 pub use string_ref::StringRef;
 
+mod index;
 mod print_table;
+
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
 
@@ -636,6 +637,7 @@ mod tests {
     // Don't run on 'cargo test', only 'cargo bench'
     #[cfg(not(debug_assertions))]
     #[bench]
+    #[ignore]
     fn large_db_simple(b: &mut Bencher) {
         use std::io::{stdout, Write};
         println!();
