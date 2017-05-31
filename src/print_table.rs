@@ -1,14 +1,15 @@
 
+
 use itertools::*;
 
 use std::cmp::max;
-use std::fmt::{self, Debug, Formatter};
+use std::fmt::{self, Display, Formatter};
 
 pub fn debug_table<A, B, C, D, E, F, G>(name: A,
                                         column_names: B,
                                         column_alignments: D,
                                         rows: E)
-                                        -> Box<Debug>
+                                        -> impl Display
     where A: Into<String>,
           B: IntoIterator<Item = C>,
           C: Into<String>,
@@ -17,46 +18,42 @@ pub fn debug_table<A, B, C, D, E, F, G>(name: A,
           F: IntoIterator<Item = G>,
           G: Into<String>
 {
+
+
     let name = name.into();
-    let col_names = column_names.into_iter().map(Into::into).collect_vec();
-    let col_align = column_alignments.into_iter().collect_vec();
-
-    assert_eq!(col_names.len(), col_align.len());
-
-    let mut col_widths = col_names.iter().map(String::len).collect_vec();
+    let col_names = column_names.into_iter().map(|name| name.into()).collect_vec();
+    let mut col_widths = col_names.iter().map(|name| name.len()).collect_vec();
     let rows = rows.into_iter().map(|r| r.into_iter().map(Into::into).collect_vec()).collect_vec();
+    let col_align = column_alignments.into_iter().take(col_names.len()).collect_vec();
 
     for row in rows.iter() {
         assert_eq!(col_widths.len(), row.len());
 
-        for (i, x) in row.iter().enumerate() {
-            col_widths[i] = max(col_widths[i], x.len());
+        for (row, col_width) in zip(row, col_widths.iter_mut()) {
+            *col_width = max(*col_width, row.len());
         }
     }
 
     let header = format!("| {} |",
-                         col_names.into_iter()
-                                  .enumerate()
-                                  .map(|(i, s)| format!("{:^1$}", s, col_widths[i]))
-                                  .join(" | "));
+                         zip(col_names, &col_widths)
+                             .map(|(name, width)| format!("{:^1$}", name, width))
+                             .join(" | "));
 
     let sep = header.chars()
-                    .map(|c| {
-                        match c {
-                            '|' => "+",
-                            _ => "-",
-                        }
-                    })
-                    .join("");
+        .map(|c| match c {
+            '|' => "+",
+            _ => "-",
+        })
+        .join("");
 
-    Box::new(TablePrinter {
+    TablePrinter {
         name: name,
         header: header,
         sep: sep,
         col_widths: col_widths,
         col_align: col_align,
         rows: rows,
-    })
+    }
 }
 
 #[derive(Clone, Copy)]
@@ -78,28 +75,25 @@ struct TablePrinter {
 impl TablePrinter {
     fn fmt_row(&self, row: &[String]) -> String {
         format!("| {} |",
-                row.iter()
-                   .enumerate()
-                   .map(|(i, s)| {
-                       match self.col_align[i] {
-                           Alignment::Left => format!("{:<1$}", s, self.col_widths[i]),
-                           Alignment::Center => format!("{:^1$}", s, self.col_widths[i]),
-                           Alignment::Right => format!("{:>1$}", s, self.col_widths[i]),
-                       }
-                   })
-                   .join(" | "))
+                izip!(row, &self.col_align, &self.col_widths)
+                    .map(|(r, a, w)| match *a {
+                        Alignment::Left => format!("{:<1$}", r, w),
+                        Alignment::Center => format!("{:^1$}", r, w),
+                        Alignment::Right => format!("{:>1$}", r, w),
+                    })
+                    .join(" | "))
     }
 }
 
-impl Debug for TablePrinter {
+impl Display for TablePrinter {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        try!(writeln!(f, "{}:", self.name));
-        try!(writeln!(f, "{}", self.sep));
-        try!(writeln!(f, "{}", self.header));
-        try!(writeln!(f, "{}", self.sep));
+        writeln!(f, "{}:", self.name)?;
+        writeln!(f, "{}", self.sep)?;
+        writeln!(f, "{}", self.header)?;
+        writeln!(f, "{}", self.sep)?;
 
         for row in self.rows.iter() {
-            try!(writeln!(f, "{}", self.fmt_row(&*row)));
+            writeln!(f, "{}", self.fmt_row(&*row))?;
         }
 
         writeln!(f, "{}", self.sep)
