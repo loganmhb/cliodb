@@ -8,7 +8,6 @@ extern crate itertools;
 #[macro_use]
 extern crate combine;
 
-#[cfg(test)]
 #[macro_use]
 extern crate lazy_static;
 
@@ -20,10 +19,13 @@ use std::collections::BTreeSet;
 use std::iter;
 
 pub mod parser;
-mod index;
-mod print_table;
+pub mod string_ref;
 
 pub use parser::*;
+pub use string_ref::StringRef;
+
+mod index;
+mod print_table;
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -47,9 +49,9 @@ impl Display for QueryResult {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Copy)]
 pub enum Value {
-    String(String),
+    String(StringRef),
     Entity(Entity),
 }
 
@@ -64,7 +66,9 @@ impl Display for Value {
     }
 }
 
-impl<T: Into<String>> From<T> for Value {
+impl<T> From<T> for Value
+    where T: Into<StringRef>
+{
     fn from(x: T) -> Self {
         Value::String(x.into())
     }
@@ -76,25 +80,25 @@ impl From<Entity> for Value {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Term<T> {
     Bound(T),
     Unbound(Var),
 }
 
 // A free [logic] variable
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
+#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct Var {
-    name: String,
+    name: StringRef,
 }
 
 impl Var {
-    fn new<T: Into<String>>(name: T) -> Var {
-        Var { name: name.into() }
+    fn new<T: Into<StringRef>>(name: T) -> Var {
+        Var::from(name)
     }
 }
 
-impl<T: Into<String>> From<T> for Var {
+impl<T: Into<StringRef>> From<T> for Var {
     fn from(x: T) -> Self {
         Var { name: x.into() }
     }
@@ -125,21 +129,21 @@ pub struct Tx {
 enum TxItem {
     Addition(Fact),
     Retraction(Fact),
-    NewEntity(HashMap<String, Value>),
+    NewEntity(HashMap<StringRef, Value>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Entity(u64);
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub struct Clause {
     entity: Term<Entity>,
-    attribute: Term<String>,
+    attribute: Term<StringRef>,
     value: Term<Value>,
 }
 
 impl Clause {
-    fn new(e: Term<Entity>, a: Term<String>, v: Term<Value>) -> Clause {
+    fn new(e: Term<Entity>, a: Term<StringRef>, v: Term<Value>) -> Clause {
         Clause {
             entity: e,
             attribute: a,
@@ -195,15 +199,15 @@ pub trait Database {
 // The Fact struct represents a fact in the database.
 // The derived ordering is used by the EAV index; other
 // indices use orderings provided by wrapper structs.
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy)]
 pub struct Fact {
     entity: Entity,
-    attribute: String,
+    attribute: StringRef,
     value: Value,
 }
 
 impl Fact {
-    fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V) -> Fact {
+    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V) -> Fact {
         Fact {
             entity: e,
             attribute: a.into(),
@@ -274,7 +278,7 @@ impl Clause {
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match val {
-                        &Value::String(ref s) => Term::Bound(s.to_owned()),
+                        &Value::String(s) => Term::Bound(s),
                         _ => unimplemented!(),
                     }
                 } else {
@@ -356,9 +360,9 @@ impl IntoIterator for InMemoryLog {
 
 impl Database for InMemoryLog {
     fn add(&mut self, fact: Fact) {
-        self.eav.insert(fact.clone());
-        self.ave.insert(AVE(fact.clone()));
-        self.aev.insert(AEV(fact.clone()));
+        self.eav.insert(fact);
+        self.ave.insert(AVE(fact));
+        self.aev.insert(AEV(fact));
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
@@ -372,7 +376,7 @@ impl Database for InMemoryLog {
                 self.ave
                     .range(AVE(range_start))
                     .map(|ave| &ave.0)
-                    .take_while(|f| f.attribute == *a && f.value == v)
+                    .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
             }
             // e a ?v => use the eav index
@@ -383,7 +387,7 @@ impl Database for InMemoryLog {
                 let range_start = Fact::new(e.clone(), a.clone(), Value::String("".into()));
                 self.eav
                     .range(range_start)
-                    .take_while(|f| f.entity == e && f.attribute == *a)
+                    .take_while(|f| f.entity == e && f.attribute == a)
                     .collect()
             }
             // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
@@ -522,7 +526,7 @@ mod tests {
         db.add(fact);
         let inserted = db.into_iter().take(1).nth(0).unwrap();
         assert!(inserted.entity == Entity(0));
-        assert!(inserted.attribute == "name");
+        assert!(&*inserted.attribute == "name");
         assert!(inserted.value == "Bob".into());
     }
 
@@ -630,14 +634,25 @@ mod tests {
         b.iter(|| DB.query(&query));
     }
 
+    // Don't run on 'cargo test', only 'cargo bench'
+    #[cfg(not(debug_assertions))]
     #[bench]
     #[ignore]
     fn large_db_simple(b: &mut Bencher) {
+        use std::io::{stdout, Write};
+        println!();
+
         let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
 
         let mut db = InMemoryLog::new();
+        let n = 10_000_000;
 
-        for i in 0..10_000_000 {
+        for i in 0..n {
+            if i % (n / 100) == 0 {
+                print!("\rBuilding: {}%", ((i as f32) / (n as f32) * 100.0) as i32);
+                stdout().flush().unwrap();
+            }
+
             let a = if i % 23 < 10 {
                 "name"
             } else {
@@ -647,6 +662,8 @@ mod tests {
 
             db.add(Fact::new(Entity(i), a, v));
         }
+
+        println!("\nQuerying...");
 
         b.iter(|| db.query(&query));
     }
