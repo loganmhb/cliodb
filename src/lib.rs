@@ -632,11 +632,20 @@ mod tests {
 
     #[bench]
     fn large_db_simple(b: &mut Bencher) {
+        use std::io::{stdout, Write};
+        println!();
+
         let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
 
         let mut db = InMemoryLog::new();
+        let n = 10_000_000;
 
-        for i in 0..10_000_000 {
+        for i in 0..n {
+            if i % (n / 100) == 0 {
+                print!("\rBuilding: {}%", ((i as f32) / (n as f32) * 100.0) as i32);
+                stdout().flush().unwrap();
+            }
+
             let a = if i % 23 < 10 {
                 "name"
             } else {
@@ -646,6 +655,8 @@ mod tests {
 
             db.add(Fact::new(Entity(i), a, v));
         }
+
+        println!("\nQuerying...");
 
         b.iter(|| db.query(&query));
     }
