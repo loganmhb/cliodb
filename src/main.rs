@@ -20,7 +20,7 @@ fn main() {
                 }
 
                 match parse_input(&*line) {
-                    Ok(Input::Query(q)) => println!("{}", db.query(q)),
+                    Ok(Input::Query(q)) => println!("{}", db.query(&q)),
                     Ok(Input::Tx(tx)) => db.transact(tx),
                     Ok(Input::SampleDb) => {
                         db = InMemoryLog::new();
@@ -36,7 +36,7 @@ fn main() {
                     }
                     Ok(Input::Dump) => {
                         println!("{}",
-                                 db.query(parse_query("find ?ent ?att ?val where (?ent ?att \
+                                 db.query(&parse_query("find ?ent ?att ?val where (?ent ?att \
                                                        ?val)")
                                      .unwrap()))
                     }

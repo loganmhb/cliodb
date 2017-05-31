@@ -1,6 +1,7 @@
 
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
+#![cfg_attr(test, feature(test))]
 
 #[macro_use]
 extern crate itertools;
@@ -41,6 +42,7 @@ impl Display for QueryResult {
 
         writeln!(f,
                  "{}",
+
                  print_table::debug_table("Result", col_names, aligns, rows))
     }
 }
@@ -160,7 +162,7 @@ pub trait Database {
         }
     }
 
-    fn query(&self, query: Query) -> QueryResult {
+    fn query(&self, query: &Query) -> QueryResult {
         let mut bindings = vec![HashMap::new()];
 
         for clause in &query.clauses {
@@ -186,7 +188,7 @@ pub trait Database {
             })
             .collect();
 
-        QueryResult(query.find, result)
+        QueryResult(query.find.clone(), result)
     }
 }
 
@@ -465,8 +467,12 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
     Ok(env)
 }
 
+
 #[cfg(test)]
-mod test {
+mod tests {
+    extern crate test;
+    use self::test::{Bencher, black_box};
+
     use std::iter;
 
     use super::*;
@@ -533,7 +539,7 @@ mod test {
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
         helper(&*DB,
-               parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+               &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
     }
@@ -542,7 +548,7 @@ mod test {
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
         helper(&*DB,
-               parse_query("find ?a where (0 name ?a)").unwrap(),
+               &parse_query("find ?a where (0 name ?a)").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
@@ -552,7 +558,7 @@ mod test {
     fn test_query_unknown_attribute() {
         // find ?a where (1 ?a "John")
         helper(&*DB,
-               parse_query("find ?a where (1 ?a \"John\")").unwrap(),
+               &parse_query("find ?a where (1 ?a \"John\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
@@ -562,7 +568,7 @@ mod test {
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
         helper(&*DB,
-               parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+               &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![Var::new("a"), Var::new("b")],
                            vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
@@ -578,7 +584,7 @@ mod test {
     fn test_query_explicit_join() {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&*DB,
-               parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+               &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
                QueryResult(vec![Var::new("b")],
                            vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
     }
@@ -587,14 +593,60 @@ mod test {
     fn test_query_implicit_join() {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
         helper(&*DB,
-               parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)").unwrap(),
+               &parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
+                   .unwrap(),
                QueryResult(vec![Var::new("c")],
                            vec![iter::once((Var::new("c"), Value::String("John".into())))
                                     .collect()]));
     }
 
-    fn helper<D: Database>(db: &D, query: Query, expected: QueryResult) {
+    fn helper<D: Database>(db: &D, query: &Query, expected: QueryResult) {
         let result = db.query(query);
         assert_eq!(expected, result);
+    }
+
+    #[bench]
+    // Parse + run a query on a small db
+    fn parse_bench(b: &mut Bencher) {
+        // the implicit join query
+        let input = black_box(r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#);
+
+        b.iter(|| parse_query(input).unwrap());
+    }
+
+    #[bench]
+    // Parse + run a query on a small db
+    fn run_bench(b: &mut Bencher) {
+        // the implicit join query
+        let input = black_box(r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#);
+        let query = parse_query(input).unwrap();
+
+        helper(&*DB,
+               &query,
+               QueryResult(vec![Var::new("c")],
+                           vec![iter::once((Var::new("c"), Value::String("John".into())))
+                                    .collect()]));
+
+        b.iter(|| DB.query(&query));
+    }
+
+    #[bench]
+    fn large_db_simple(b: &mut Bencher) {
+        let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
+
+        let mut db = InMemoryLog::new();
+
+        for i in 0..10_000_000 {
+            let a = if i % 23 < 10 {
+                "name"
+            } else {
+                "random_attribute"
+            };
+            let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
+
+            db.add(Fact::new(Entity(i), a, v));
+        }
+
+        b.iter(|| db.query(&query));
     }
 }
