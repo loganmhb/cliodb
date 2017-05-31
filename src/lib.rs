@@ -2,7 +2,6 @@
 #![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
 
-#[macro_use]
 extern crate itertools;
 
 #[macro_use]
@@ -10,6 +9,8 @@ extern crate combine;
 
 #[macro_use]
 extern crate lazy_static;
+
+extern crate prettytable as pt;
 
 use itertools::*;
 
@@ -25,7 +26,6 @@ pub use parser::*;
 pub use string_ref::StringRef;
 
 mod index;
-mod print_table;
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -35,17 +35,41 @@ pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);
 
 impl Display for QueryResult {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        let col_names = self.0.iter().map(|v| &*v.name);
+        let num_columns = self.0.len();
+        let align = pt::format::Alignment::CENTER;
+        let mut titles: pt::row::Row = self.0.iter().map(|var| var.name).collect();
+        titles.iter_mut().foreach(|c| c.align(align));
 
-        let aligns = iter::repeat(print_table::Alignment::Center);
         let rows = self.1
             .iter()
-            .map(|row_ht| self.0.iter().map(|var| format!("{}", row_ht[var])).collect_vec());
+            .map(|row_ht| {
+                self.0
+                    .iter()
+                    .map(|var| format!("{}", row_ht[var]))
+                    .into()
+            })
+            .collect_vec();
 
-        writeln!(f,
-                 "{}",
+        let mut table = pt::Table::new();
+        table.set_titles(titles);
 
-                 print_table::debug_table("Result", col_names, aligns, rows))
+        table.set_format(*pt::format::consts::FORMAT_NO_LINESEP_WITH_TITLE);
+
+        if rows.is_empty() {
+            table.add_row(iter::repeat("").take(num_columns).collect());
+        }
+
+        for row in rows {
+            table.add_row(row);
+        }
+
+        for row in table.row_iter_mut() {
+            for cell in row.iter_mut() {
+                cell.align(align);
+            }
+        }
+
+        writeln!(f, "{}", table)
     }
 }
 
@@ -61,7 +85,7 @@ impl Display for Value {
                "{}",
                match *self {
                    Value::Entity(e) => format!("{}", e.0),
-                   Value::String(ref s) => format!("{:?}", s),
+                   Value::String(ref s) => format!("{}", s),
                })
     }
 }
