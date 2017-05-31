@@ -216,44 +216,48 @@ impl Fact {
     }
 }
 
-// Fact wrappers provide ordering for indexes.
-#[derive(PartialEq, Eq, Debug)]
-struct AVE(Fact);
+macro_rules! impl_range_arg {
+    ($name:ident) => {
+        impl RangeArgument<$name> for $name {
+            fn start(&self) -> Bound<&$name> {
+                Bound::Included(&self)
+            }
 
-impl PartialOrd for AVE {
-    fn partial_cmp(&self, other: &AVE) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
+            fn end(&self) -> Bound<&$name> {
+                Bound::Unbounded
+            }
+        }
+    };
 }
 
-impl Ord for AVE {
-    fn cmp(&self, other: &AVE) -> std::cmp::Ordering {
-        self.0
-            .attribute
-            .cmp(&other.0.attribute)
-            .then(self.0.value.cmp(&other.0.value))
-            .then(self.0.entity.cmp(&other.0.entity))
-    }
+macro_rules! index_wrapper {
+    ($name:ident; $i1:ident, $i2:ident, $i3:ident) => {
+        #[derive(PartialEq, Eq, Debug)]
+        struct $name(Fact);
+
+        impl PartialOrd for $name {
+            fn partial_cmp(&self, other: &$name) -> Option<std::cmp::Ordering> {
+                Some(self.cmp(other))
+            }
+        }
+
+        impl Ord for $name {
+            fn cmp(&self, other: &$name) -> std::cmp::Ordering {
+                let (this, other) = (&self.0, &other.0);
+                this.$i1
+                    .cmp(&other.$i1)
+                    .then(this.$i2.cmp(&other.$i2))
+                    .then(this.$i3.cmp(&other.$i3))
+            }
+        }
+
+        impl_range_arg!($name);
+    };
 }
 
-#[derive(PartialEq, Eq, Debug)]
-struct AEV(Fact);
-
-impl PartialOrd for AEV {
-    fn partial_cmp(&self, other: &AEV) -> Option<std::cmp::Ordering> {
-        Some(self.cmp(other))
-    }
-}
-
-impl Ord for AEV {
-    fn cmp(&self, other: &AEV) -> std::cmp::Ordering {
-        self.0
-            .attribute
-            .cmp(&other.0.attribute)
-            .then(self.0.entity.cmp(&other.0.entity))
-            .then(self.0.value.cmp(&other.0.value))
-    }
-}
+index_wrapper!(AVE; attribute, value, entity);
+index_wrapper!(AEV; attribute, entity, value);
+impl_range_arg!(Fact);
 
 type Binding = HashMap<Var, Value>;
 
@@ -311,36 +315,6 @@ pub struct InMemoryLog {
 
 use std::collections::range::RangeArgument;
 use std::collections::Bound;
-
-impl RangeArgument<Fact> for Fact {
-    fn start(&self) -> Bound<&Fact> {
-        Bound::Included(&self)
-    }
-
-    fn end(&self) -> Bound<&Fact> {
-        Bound::Unbounded
-    }
-}
-
-impl RangeArgument<AEV> for AEV {
-    fn start(&self) -> Bound<&AEV> {
-        Bound::Included(&self)
-    }
-
-    fn end(&self) -> Bound<&AEV> {
-        Bound::Unbounded
-    }
-}
-
-impl RangeArgument<AVE> for AVE {
-    fn start(&self) -> Bound<&AVE> {
-        Bound::Included(&self)
-    }
-
-    fn end(&self) -> Bound<&AVE> {
-        Bound::Unbounded
-    }
-}
 
 impl InMemoryLog {
     pub fn new() -> InMemoryLog {
@@ -637,18 +611,20 @@ mod tests {
     // Don't run on 'cargo test', only 'cargo bench'
     #[cfg(not(debug_assertions))]
     #[bench]
-    #[ignore]
     fn large_db_simple(b: &mut Bencher) {
         use std::io::{stdout, Write};
-        println!();
+
+        let quiet = ::std::env::var_os("QUIET").is_some();
+        if !quiet {
+            println!();
+        }
 
         let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
-
         let mut db = InMemoryLog::new();
         let n = 10_000_000;
 
         for i in 0..n {
-            if i % (n / 100) == 0 {
+            if !quiet && i % (n / 100) == 0 {
                 print!("\rBuilding: {}%", ((i as f32) / (n as f32) * 100.0) as i32);
                 stdout().flush().unwrap();
             }
@@ -663,7 +639,9 @@ mod tests {
             db.add(Fact::new(Entity(i), a, v));
         }
 
-        println!("\nQuerying...");
+        if !quiet {
+            println!("\nQuerying...");
+        }
 
         b.iter(|| db.query(&query));
     }
