@@ -1,4 +1,3 @@
-
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
@@ -21,6 +20,7 @@ use std::collections::BTreeSet;
 use std::iter;
 
 pub mod parser;
+mod index;
 mod print_table;
 
 pub use parser::*;
@@ -631,6 +631,7 @@ mod tests {
     }
 
     #[bench]
+    #[ignore]
     fn large_db_simple(b: &mut Bencher) {
         let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
 
