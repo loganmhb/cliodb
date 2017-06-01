@@ -1,5 +1,6 @@
 use std::rc::Rc;
 use std::fmt::Debug;
+use std::ops::RangeFrom;
 
 const KEY_CAPACITY: usize = 16;
 const LINK_CAPACITY: usize = KEY_CAPACITY + 1;
@@ -54,8 +55,68 @@ impl<T: Ord + Clone + Debug> Index<T> {
 
     fn iter(&self) -> Iter<T> {
         let mut stack = Vec::new();
-        stack.push((&self.root, 0, 0));
+        stack.push(IterState {
+                       node: &self.root,
+                       link_idx: 0,
+                       key_idx: 0,
+                   });
         Iter { stack: stack }
+    }
+
+    fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<T> {
+        let mut stack = vec![IterState {
+                                 node: &self.root,
+                                 link_idx: 0,
+                                 key_idx: 0,
+                             }];
+
+        // search for range.start
+        loop {
+            let state = stack.last().unwrap().clone();
+            match state {
+                IterState { node: &Node::Leaf { ref keys }, .. } => {
+                    match keys.binary_search(&range.start) {
+                        Ok(idx) | Err(idx) => {
+                            *stack.last_mut().unwrap() = IterState {
+                                key_idx: idx,
+                                ..state
+                            };
+                            return Iter { stack };
+                        }
+                    }
+                }
+                IterState {
+                    node: &Node::Directory {
+                        ref keys,
+                        ref links,
+                    },
+                    ..
+                } => {
+                    match keys.binary_search(&range.start) {
+                        Ok(idx) => {
+                            *stack.last_mut().unwrap() = IterState {
+                                key_idx: idx,
+                                link_idx: idx + 1,
+                                ..state
+                            };
+                            return Iter { stack };
+                        }
+                        Err(idx) => {
+                            *stack.last_mut().unwrap() = IterState {
+                                key_idx: idx,
+                                link_idx: idx,
+                                ..state
+                            };
+                            stack.push(IterState {
+                                           node: &links[idx],
+                                           key_idx: 0,
+                                           link_idx: 0,
+                                       });
+                        }
+                    }
+                }
+            }
+        }
     }
 }
 
@@ -76,7 +137,10 @@ impl<T: Clone + Ord + Debug> Clone for Node<T> {
     fn clone(&self) -> Node<T> {
         match self {
             &Node::Leaf { ref keys } => Node::Leaf { keys: clone_vec!(keys, KEY_CAPACITY) },
-            &Node::Directory { ref keys, ref links } => {
+            &Node::Directory {
+                ref keys,
+                ref links,
+            } => {
                 Node::Directory {
                     keys: clone_vec!(keys, KEY_CAPACITY),
                     links: clone_vec!(links, LINK_CAPACITY),
@@ -136,7 +200,10 @@ impl<T: Ord + Clone + Debug> Node<T> {
                 let right = Node::Leaf { keys: right_keys };
                 (left, sep.clone(), right)
             }
-            &Node::Directory { ref keys, ref links } => {
+            &Node::Directory {
+                ref keys,
+                ref links,
+            } => {
                 let (left_keys_slice, right_keys_and_sep) = keys.split_at(split_idx);
                 let (left_links_slice, right_links_slice) = links.split_at(split_idx + 1);
                 let (sep, right_keys_slice) = right_keys_and_sep.split_first().unwrap();
@@ -179,7 +246,10 @@ impl<T: Ord + Clone + Debug> Node<T> {
                     Insertion::NodeFull
                 }
             }
-            &Node::Directory { ref keys, ref links } => {
+            &Node::Directory {
+                ref keys,
+                ref links,
+            } => {
 
                 assert!(keys.len() + 1 == links.len());
 
@@ -198,9 +268,9 @@ impl<T: Ord + Clone + Debug> Node<T> {
                         new_links[idx] = Rc::new(new_child);
 
                         Insertion::Inserted(Node::Directory {
-                            keys: keys.clone(),
-                            links: new_links,
-                        })
+                                                keys: keys.clone(),
+                                                links: new_links,
+                                            })
                     }
                     Insertion::NodeFull => {
                         // Child needs to be split, if we have space
@@ -234,8 +304,15 @@ impl<T: Ord + Clone + Debug> Node<T> {
     }
 }
 
+#[derive(Copy, Clone)]
+struct IterState<'a, T: 'a + Ord + Clone + Debug> {
+    node: &'a Node<T>,
+    link_idx: usize,
+    key_idx: usize,
+}
+
 struct Iter<'a, T: 'a + Ord + Clone + Debug> {
-    stack: Vec<(&'a Node<T>, usize, usize)>,
+    stack: Vec<IterState<'a, T>>,
 }
 
 impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
@@ -248,25 +325,56 @@ impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
             };
 
             match context {
-                (&Node::Leaf { ref keys }, link_idx, key_idx) => {
+                IterState {
+                    node: &Node::Leaf { ref keys },
+                    link_idx,
+                    key_idx,
+                } => {
                     if key_idx < keys.len() {
                         let res = &keys[key_idx];
-                        self.stack.push((context.0, link_idx, key_idx + 1));
+                        self.stack
+                            .push(IterState {
+                                      node: context.node,
+                                      link_idx,
+                                      key_idx: key_idx + 1,
+                                  });
                         return Some(res);
                     } else {
                         continue; // keep looking for a stack frame that will yield something
                     }
                 }
-                (&Node::Directory { ref links, ref keys }, link_idx, key_idx) => {
+                IterState {
+                    node: &Node::Directory {
+                        ref links,
+                        ref keys,
+                    },
+                    link_idx,
+                    key_idx,
+                } => {
                     // If link idx == key idx, push the child and continue.
                     // otherwise, yield the key idx and bump it.
                     if link_idx == key_idx {
-                        self.stack.push((context.0, link_idx + 1, key_idx));
-                        self.stack.push((&*links[link_idx], 0, 0));
+                        self.stack
+                            .push(IterState {
+                                      node: context.node,
+                                      link_idx: link_idx + 1,
+                                      key_idx,
+                                  });
+                        self.stack
+                            .push(IterState {
+                                      node: &*links[link_idx],
+                                      link_idx: 0,
+                                      key_idx: 0,
+                                  });
                         continue;
                     } else if key_idx < keys.len() {
                         let res = &keys[key_idx];
-                        self.stack.push((context.0, link_idx, key_idx + 1));
+                        self.stack
+                            .push(IterState {
+                                      node: context.node,
+                                      link_idx,
+                                      key_idx: key_idx + 1,
+                                  });
                         return Some(res);
                     } else {
                         // This node is done, so we don't re-push its stack frame.
@@ -283,12 +391,16 @@ mod tests {
     extern crate test;
     use self::test::Bencher;
 
+    use itertools::*;
     use super::*;
 
     fn enumerate_node<T: Clone + Ord + ::std::fmt::Debug>(node: &Node<T>) -> Vec<T> {
         match node {
             &Node::Leaf { ref keys } => keys.clone(),
-            &Node::Directory { ref links, ref keys } => {
+            &Node::Directory {
+                ref links,
+                ref keys,
+            } => {
                 let mut result = vec![];
                 for i in 0..keys.len() {
                     result.extend_from_slice(&enumerate_node(&links[i]));
@@ -324,14 +436,28 @@ mod tests {
                    range.collect::<Vec<usize>>());
     }
 
+    #[test]
+    fn test_range_iter() {
+        let mut idx = Index::new();
+        let full_range = 0usize..10_000;
+        let range = 1457usize..;
+
+        for i in full_range.clone() {
+            idx = idx.insert(i);
+        }
+
+        assert_equal(idx.iter_range_from(range.clone()).cloned(),
+                     range.start..full_range.end);
+    }
+
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
         let mut tree = Index::new();
         let mut n = 0usize;
         b.iter(|| {
-            tree = tree.insert(n);
-            n += 1;
-        });
+                   tree = tree.insert(n);
+                   n += 1;
+               });
     }
 
     #[bench]
@@ -339,9 +465,9 @@ mod tests {
         let mut tree = Index::new();
         let mut n = 0usize;
         b.iter(|| {
-            tree = tree.insert(n);
-            n = (n + 1) % 512;
-        });
+                   tree = tree.insert(n);
+                   n = (n + 1) % 512;
+               });
 
     }
 
@@ -356,7 +482,7 @@ mod tests {
         let mut iter = tree.iter();
 
         b.iter(|| if let None = iter.next() {
-            iter = tree.iter();
-        });
+                   iter = tree.iter();
+               });
     }
 }
