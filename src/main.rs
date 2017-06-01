@@ -1,4 +1,3 @@
-
 extern crate logos;
 extern crate rustyline;
 
@@ -8,7 +7,13 @@ use std::error::Error;
 
 fn main() {
     // TODO print usage e.g. `quit` command
-    println!("Hello, world!");
+    println!("
+logos
+Commands:
+  quit - exit the progam;
+  test - load sample data (overwrites your current DB!)
+  dump - display the contents of the DB as a table.
+");
     let mut rl = rustyline::Editor::<()>::new();
     let mut db = InMemoryLog::new();
     loop {
