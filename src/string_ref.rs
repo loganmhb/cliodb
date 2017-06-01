@@ -1,4 +1,6 @@
 
+
+
 use std::fmt::{self, Display, Debug, Formatter};
 use std::iter::FromIterator;
 use std::ops::Deref;
@@ -8,6 +10,15 @@ use std::collections::HashSet;
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Copy, Hash)]
 pub struct StringRef(&'static str);
 
+impl !Sync for StringRef {}
+impl !Send for StringRef {}
+
+impl StringRef {
+    pub fn address(&self) -> *const () {
+        self.0 as *const str as *const _
+    }
+}
+
 impl Display for StringRef {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", self.0)
@@ -16,10 +27,9 @@ impl Display for StringRef {
 
 impl Debug for StringRef {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.debug_tuple("StringRef").field(&self.0).field(&(self.0 as *const _)).finish()
+        write!(f, "{:?}", self.0)
     }
 }
-
 
 impl FromIterator<char> for StringRef {
     fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
@@ -43,11 +53,11 @@ impl<'a, T> From<T> for StringRef
         use std::cell::RefCell;
         use std::mem;
 
+        let val = other.into();
+
         thread_local! {
             static MAP: RefCell<HashSet<String>> = Default::default();
         }
-
-        let val = other.into();
 
         MAP.with(|map| {
             let mut map = map.borrow_mut();
@@ -58,6 +68,19 @@ impl<'a, T> From<T> for StringRef
 
             StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
         })
+
+        
+        // lazy_static! {
+        //     static ref MAP: Mutex<HashSet<String>> = Default::default();
+        // }
+
+        // let mut map = MAP.lock().unwrap();
+        
+        // if !map.contains(&*val) {
+        //     map.insert(val.clone().into_owned());
+        // }
+
+        // StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
     }
 }
 
@@ -74,7 +97,7 @@ mod tests {
         let a = StringRef::from(String::from("Hello"));
         let b = StringRef::from(String::from("Hello"));
 
-        assert_eq!(format!("{:?}", a), format!("{:?}", b));
+        assert_eq!(a.address(), b.address());
     }
 
     #[bench]
