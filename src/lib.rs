@@ -25,6 +25,7 @@ pub use parser::*;
 pub use string_ref::StringRef;
 
 mod index;
+use index::Index;
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -258,7 +259,7 @@ macro_rules! impl_range_arg {
 
 macro_rules! index_wrapper {
     ($name:ident; $i1:ident, $i2:ident, $i3:ident) => {
-        #[derive(PartialEq, Eq, Debug)]
+        #[derive(PartialEq, Eq, Debug, Clone, Copy)]
         struct $name(Fact);
 
         impl PartialOrd for $name {
@@ -332,11 +333,11 @@ impl Clause {
     }
 }
 
-#[derive(Debug, Default)]
+#[derive(Debug)]
 pub struct InMemoryLog {
-    eav: BTreeSet<Fact>,
-    ave: BTreeSet<AVE>,
-    aev: BTreeSet<AEV>,
+    eav: Index<Fact>,
+    ave: Index<AVE>,
+    aev: Index<AEV>,
 }
 
 use std::collections::range::RangeArgument;
@@ -344,25 +345,29 @@ use std::collections::Bound;
 
 impl InMemoryLog {
     pub fn new() -> InMemoryLog {
-        InMemoryLog::default()
+        InMemoryLog {
+            eav: Index::new(),
+            ave: Index::new(),
+            aev: Index::new(),
+        }
     }
 }
 
-impl IntoIterator for InMemoryLog {
-    type Item = Fact;
-    type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
+// impl IntoIterator for InMemoryLog {
+//     type Item = Fact;
+//     type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
 
-    fn into_iter(self) -> Self::IntoIter {
-        self.eav.into_iter()
-    }
-}
+//     fn into_iter(self) -> Self::IntoIter {
+//         self.eav.into_iter()
+//     }
+// }
 
 
 impl Database for InMemoryLog {
     fn add(&mut self, fact: Fact) {
-        self.eav.insert(fact);
-        self.ave.insert(AVE(fact));
-        self.aev.insert(AEV(fact));
+        self.eav = self.eav.insert(fact);
+        self.ave = self.ave.insert(AVE(fact));
+        self.aev = self.aev.insert(AEV(fact));
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
@@ -374,7 +379,7 @@ impl Database for InMemoryLog {
                      value: Term::Bound(v) } => {
                 let range_start = Fact::new(Entity(0), a, v);
                 self.ave
-                    .range(AVE(range_start))
+                    .iter_range_from(AVE(range_start)..)
                     .map(|ave| &ave.0)
                     .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
@@ -386,7 +391,7 @@ impl Database for InMemoryLog {
                 // Value::String("") is the lowest-sorted value
                 let range_start = Fact::new(e, a, Value::String("".into()));
                 self.eav
-                    .range(range_start)
+                    .iter_range_from(range_start..)
                     .take_while(|f| f.entity == e && f.attribute == a)
                     .collect()
             }
@@ -594,24 +599,24 @@ mod tests {
         parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
 
-    #[test]
-    fn test_insertion() {
-        let fact = Fact::new(Entity(0), "name", "Bob");
-        let mut db = InMemoryLog::new();
-        db.add(fact);
-        let inserted = db.into_iter().take(1).nth(0).unwrap();
-        assert!(inserted.entity == Entity(0));
-        assert!(&*inserted.attribute == "name");
-        assert!(inserted.value == "Bob".into());
-    }
+    // #[test]
+    // fn test_insertion() {
+    //     let fact = Fact::new(Entity(0), "name", "Bob");
+    //     let mut db = InMemoryLog::new();
+    //     db.add(fact);
+    //     let inserted = db.into_iter().take(1).nth(0).unwrap();
+    //     assert!(inserted.entity == Entity(0));
+    //     assert!(&*inserted.attribute == "name");
+    //     assert!(inserted.value == "Bob".into());
+    // }
 
     #[test]
     fn test_facts_matching() {
-        assert_eq!(test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
+        assert_eq!(vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))], 
+                   test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),
-                                            &Binding::default()),
-                   vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))])
+                                            &Binding::default()))
     }
 
     #[test]

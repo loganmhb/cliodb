@@ -18,16 +18,16 @@ macro_rules! clone_vec {
 }
 
 #[derive(Clone, Debug)]
-struct Index<T: Ord + Clone + Debug> {
+pub struct Index<T: Ord + Clone + Debug> {
     root: Node<T>,
 }
 
 impl<T: Ord + Clone + Debug> Index<T> {
-    fn new() -> Index<T> {
+    pub fn new() -> Index<T> {
         Index { root: Node::Leaf { keys: Vec::with_capacity(KEY_CAPACITY) } }
     }
 
-    fn insert(&self, item: T) -> Index<T> {
+    pub fn insert(&self, item: T) -> Index<T> {
         match self.root.insert(item.clone()) {
             Insertion::Duplicate => self.clone(),
             Insertion::Inserted(new_root) => Index { root: new_root },
@@ -53,7 +53,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
         }
     }
 
-    fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<T> {
         let mut stack = Vec::new();
         stack.push(IterState {
                        node: &self.root,
@@ -63,7 +63,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
         Iter { stack: stack }
     }
 
-    fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<T> {
+    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<T> {
         let mut stack = vec![IterState {
                                  node: &self.root,
                                  link_idx: 0,
