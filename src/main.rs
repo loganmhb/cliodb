@@ -31,10 +31,12 @@ Commands:
                     Ok(Input::SampleDb) => {
                         db = InMemoryLog::new();
 
-                        let sample = [r#"add (0 name "Bob")"#,
-                                      r#"add (1 name "John")"#,
-                                      r#"add (0 parent 1)"#,
-                                      r#"add (2 name "Hello")"#];
+                        let sample = [
+                            r#"add (0 name "Bob")"#,
+                            r#"add (1 name "John")"#,
+                            r#"add (0 parent 1)"#,
+                            r#"add (2 name "Hello")"#,
+                        ];
 
                         for tx in sample.into_iter().map(|l| parse_tx(*l).unwrap()) {
                             db.transact(tx);
@@ -44,7 +46,7 @@ Commands:
                         println!("{}",
                                  db.query(&parse_query("find ?ent ?att ?val where (?ent ?att \
                                                        ?val)")
-                                     .unwrap()))
+                                                   .unwrap()))
                     }
                     Err(e) => println!("Oh no! {}", e),
                 };

@@ -431,6 +431,7 @@ impl Database for InMemoryLog {
                 attribute: Term::Bound(a),
                 value: Term::Bound(v),
             } => {
+
                 let range_start = Fact::new(Entity(0), a, v, Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
@@ -602,6 +603,7 @@ mod tests {
     fn test_db() -> InMemoryLog {
         let mut db = InMemoryLog::new();
         let facts = vec![
+
             Hypothetical::new(Entity(0), "name", "Bob"),
             Hypothetical::new(Entity(1), "name", "John"),
             Hypothetical::new(Entity(2), "Hello", "World"),
@@ -783,6 +785,7 @@ mod tests {
         b.iter(|| {
                    let entity = Entity(e);
                    e += 1;
+
                    db.add(Fact::new(entity, a, Value::Entity(entity), Entity(0)));
                });
     }
