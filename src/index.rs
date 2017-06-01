@@ -181,7 +181,7 @@ impl<T: Ord + Clone + Debug> Node<T> {
                     Err(InsertError::NodeFull) => {
                         // Child needs to be split, if we have space
                         // for an extra link.
-                        if links.len() < capacity {
+                        if links.len() < capacity+1 {
                             let (left, sep, right) = child.split();
 
                             let mut new_keys = keys.clone();
@@ -209,6 +209,8 @@ impl<T: Ord + Clone + Debug> Node<T> {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+    use self::test::{Bencher};
 
     use super::*;
 
@@ -233,11 +235,31 @@ mod tests {
     #[test]
     fn test_leaf_insert() {
         let mut idx: Index<u64> = Index::new();
-        let range: ::std::ops::Range<u64> = 0..64;
+        let range: ::std::ops::Range<u64> = 0..(16*16+1);
         for i in range {
             idx = idx.insert(i);
         }
 
-        assert_eq!(enumerate_node(&idx.root), (0..64).collect::<Vec<_>>());
+        assert_eq!(enumerate_node(&idx.root), (0..(16*16+1)).collect::<Vec<_>>());
+    }
+
+    #[bench]
+    fn bench_insert_sequence(b: &mut Bencher) {
+        let mut tree = Index::new();
+        let mut n = 0usize;
+        b.iter(|| {
+            tree = tree.insert(n);
+            n += 1;
+        });
+    }
+
+    #[bench]
+    fn bench_insert_range(b: &mut Bencher) {
+        let mut tree = Index::new();
+        let mut n = 0usize;
+        b.iter(|| {
+            tree = tree.insert(n);
+            n  = (n + 1) % 512;
+        });
     }
 }
