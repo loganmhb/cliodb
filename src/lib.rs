@@ -41,12 +41,7 @@ impl Display for QueryResult {
 
         let rows = self.1
             .iter()
-            .map(|row_ht| {
-                self.0
-                    .iter()
-                    .map(|var| format!("{}", row_ht[var]))
-                    .into()
-            })
+            .map(|row_ht| self.0.iter().map(|var| format!("{}", row_ht[var])).into())
             .collect_vec();
 
         let mut table = pt::Table::new();
@@ -80,12 +75,10 @@ pub enum Value {
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f,
-               "{}",
-               match *self {
-                   Value::Entity(e) => format!("{}", e.0),
-                   Value::String(ref s) => format!("{}", s),
-               })
+        write!(f, "{}", match *self {
+            Value::Entity(e) => format!("{}", e.0),
+            Value::String(ref s) => format!("{}", s),
+        })
     }
 }
 
@@ -222,7 +215,8 @@ pub trait Database {
         }
 
         for binding in bindings.iter_mut() {
-            *binding = binding.iter()
+            *binding = binding
+                .iter()
                 .filter(|&(k, _)| query.find.contains(k))
                 .map(|(&var, &value)| (var, value))
                 .collect();
@@ -240,7 +234,7 @@ pub struct Fact {
     entity: Entity,
     attribute: StringRef,
     value: Value,
-    tx: Entity
+    tx: Entity,
 }
 
 // We need a struct to represent facts that may not be in the database,
@@ -251,7 +245,7 @@ pub struct Fact {
 struct Hypothetical {
     entity: Entity,
     attribute: StringRef,
-    value: Value
+    value: Value,
 }
 
 impl Hypothetical {
@@ -270,7 +264,7 @@ impl Fact {
             entity: e,
             attribute: a.into(),
             value: v.into(),
-            tx: tx
+            tx: tx,
         }
     }
 
@@ -279,16 +273,15 @@ impl Fact {
             tx: tx,
             entity: h.entity,
             attribute: h.attribute,
-            value: h.value
+            value: h.value,
         }
     }
 }
 
 impl PartialEq<Fact> for Hypothetical {
     fn eq(&self, other: &Fact) -> bool {
-        self.entity == other.entity &&
-            self.attribute == other.attribute &&
-            self.value == other.value
+        self.entity == other.entity && self.attribute == other.attribute &&
+        self.value == other.value
     }
 }
 
@@ -433,9 +426,11 @@ impl Database for InMemoryLog {
         let expanded = clause.substitute(binding);
         match expanded {
             // ?e a v => use the ave index
-            Clause { entity: Term::Unbound(_),
-                     attribute: Term::Bound(a),
-                     value: Term::Bound(v) } => {
+            Clause {
+                entity: Term::Unbound(_),
+                attribute: Term::Bound(a),
+                value: Term::Bound(v),
+            } => {
                 let range_start = Fact::new(Entity(0), a, v, Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
@@ -444,9 +439,11 @@ impl Database for InMemoryLog {
                     .collect()
             }
             // e a ?v => use the eav index
-            Clause { entity: Term::Bound(e),
-                     attribute: Term::Bound(a),
-                     value: Term::Unbound(_) } => {
+            Clause {
+                entity: Term::Bound(e),
+                attribute: Term::Bound(a),
+                value: Term::Unbound(_),
+            } => {
                 // Value::String("") is the lowest-sorted value
                 let range_start = Fact::new(e, a, Value::String("".into()), Entity(0));
                 self.eav
@@ -604,10 +601,12 @@ mod tests {
 
     fn test_db() -> InMemoryLog {
         let mut db = InMemoryLog::new();
-        let facts = vec![Hypothetical::new(Entity(0), "name", "Bob"),
-                         Hypothetical::new(Entity(1), "name", "John"),
-                         Hypothetical::new(Entity(2), "Hello", "World"),
-                         Hypothetical::new(Entity(1), "parent", Entity(0))];
+        let facts = vec![
+            Hypothetical::new(Entity(0), "name", "Bob"),
+            Hypothetical::new(Entity(1), "name", "John"),
+            Hypothetical::new(Entity(2), "Hello", "World"),
+            Hypothetical::new(Entity(1), "parent", Entity(0)),
+        ];
 
         db.transact(Tx { items: facts.iter().map(|x| TxItem::Addition(*x)).collect() });
 
@@ -639,9 +638,11 @@ mod tests {
         assert_eq!(parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                    Query {
                        find: vec![Var::new("a")],
-                       clauses: vec![Clause::new(Term::Unbound("a".into()),
-                                                 Term::Bound("name".into()),
-                                                 Term::Bound(Value::String("Bob".into())))],
+                       clauses: vec![
+            Clause::new(Term::Unbound("a".into()),
+                        Term::Bound("name".into()),
+                        Term::Bound(Value::String("Bob".into()))),
+        ],
                    })
     }
 
@@ -681,7 +682,9 @@ mod tests {
         // find ?a where (?a name "Bob")
         helper(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                QueryResult(vec![Var::new("a")],
-                           vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
+                           vec![
+            iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect(),
+        ]));
     }
 
     #[test]
@@ -689,8 +692,9 @@ mod tests {
         // find ?a where (0 name ?a)
         helper(&parse_query("find ?a where (0 name ?a)").unwrap(),
                QueryResult(vec![Var::new("a")],
-                           vec![iter::once((Var::new("a"), Value::String("Bob".into())))
-                                    .collect()]));
+                           vec![
+            iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
+        ]));
 
     }
 
@@ -699,8 +703,10 @@ mod tests {
         // find ?a where (1 ?a "John")
         helper(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
                QueryResult(vec![Var::new("a")],
-                           vec![iter::once((Var::new("a"), Value::String("name".into())))
-                                    .collect()]));
+                           vec![
+            iter::once((Var::new("a"), Value::String("name".into())))
+                .collect(),
+        ]));
     }
 
     #[test]
@@ -708,14 +714,20 @@ mod tests {
         // find ?a ?b where (?a name ?b)
         helper(&parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![Var::new("a"), Var::new("b")],
-                           vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
-                                     (Var::new("b"), Value::String("Bob".into()))]
-                                    .into_iter()
-                                    .collect(),
-                                vec![(Var::new("a"), Value::Entity(Entity(1))),
-                                     (Var::new("b"), Value::String("John".into()))]
-                                    .into_iter()
-                                    .collect()]));
+                           vec![
+            vec![
+                (Var::new("a"), Value::Entity(Entity(0))),
+                (Var::new("b"), Value::String("Bob".into())),
+            ]
+                    .into_iter()
+                    .collect(),
+            vec![
+                (Var::new("a"), Value::Entity(Entity(1))),
+                (Var::new("b"), Value::String("John".into())),
+            ]
+                    .into_iter()
+                    .collect(),
+        ]));
     }
 
     #[test]
@@ -723,17 +735,21 @@ mod tests {
         // find ?b where (?a name Bob) (?b parent ?a)
         helper(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
                QueryResult(vec![Var::new("b")],
-                           vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
+                           vec![
+            iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect(),
+        ]));
     }
 
     #[test]
     fn test_query_implicit_join() {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
         helper(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
-                   .unwrap(),
+                    .unwrap(),
                QueryResult(vec![Var::new("c")],
-                           vec![iter::once((Var::new("c"), Value::String("John".into())))
-                                    .collect()]));
+                           vec![
+            iter::once((Var::new("c"), Value::String("John".into())))
+                .collect(),
+        ]));
     }
 
     #[bench]
@@ -765,10 +781,10 @@ mod tests {
         let mut e = 0;
 
         b.iter(|| {
-            let entity = Entity(e);
-            e += 1;
-            db.add(Fact::new(entity, a, Value::Entity(entity), Entity(0)));
-        });
+                   let entity = Entity(e);
+                   e += 1;
+                   db.add(Fact::new(entity, a, Value::Entity(entity), Entity(0)));
+               });
     }
 
     // Don't run on 'cargo test', only 'cargo bench'
