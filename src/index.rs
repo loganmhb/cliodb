@@ -261,5 +261,6 @@ mod tests {
             tree = tree.insert(n);
             n  = (n + 1) % 512;
         });
+
     }
 }
