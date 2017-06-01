@@ -14,7 +14,6 @@ use itertools::*;
 
 use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
-use std::collections::BTreeSet;
 use std::iter;
 use std::mem;
 
@@ -179,12 +178,19 @@ impl Clause {
 pub trait Database {
     fn add(&mut self, fact: Fact);
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact>;
+    fn next_id(&self) -> u64;
 
     fn transact(&mut self, tx: Tx) {
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => self.add(f),
                 // TODO Implement retractions + new entities
+                TxItem::NewEntity(ht) => {
+                    let entity = Entity(self.next_id());
+                    for (k, v) in ht {
+                        self.add(Fact::new(entity, k, v))
+                    }
+                }
                 _ => unimplemented!(),
             }
         }
@@ -335,6 +341,7 @@ impl Clause {
 
 #[derive(Debug)]
 pub struct InMemoryLog {
+    next_id: u64,
     eav: Index<Fact>,
     ave: Index<AVE>,
     aev: Index<AEV>,
@@ -346,6 +353,7 @@ use std::collections::Bound;
 impl InMemoryLog {
     pub fn new() -> InMemoryLog {
         InMemoryLog {
+            next_id: 0,
             eav: Index::new(),
             ave: Index::new(),
             aev: Index::new(),
@@ -364,7 +372,15 @@ impl InMemoryLog {
 
 
 impl Database for InMemoryLog {
+    fn next_id(&self) -> u64 {
+        self.next_id
+    }
+
     fn add(&mut self, fact: Fact) {
+        if fact.entity.0 >= self.next_id {
+            self.next_id = fact.entity.0 + 1;
+        }
+
         self.eav = self.eav.insert(fact);
         self.ave = self.ave.insert(AVE(fact));
         self.aev = self.aev.insert(AEV(fact));
@@ -612,7 +628,7 @@ mod tests {
 
     #[test]
     fn test_facts_matching() {
-        assert_eq!(vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))], 
+        assert_eq!(vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))],
                    test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),
