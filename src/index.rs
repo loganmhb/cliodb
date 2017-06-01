@@ -311,7 +311,7 @@ struct IterState<'a, T: 'a + Ord + Clone + Debug> {
     key_idx: usize,
 }
 
-struct Iter<'a, T: 'a + Ord + Clone + Debug> {
+pub struct Iter<'a, T: 'a + Ord + Clone + Debug> {
     stack: Vec<IterState<'a, T>>,
 }
 
