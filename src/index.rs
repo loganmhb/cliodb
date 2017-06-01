@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::fmt::Debug;
 
-const KEY_CAPACITY: usize = 16;
+const KEY_CAPACITY: usize = 512;
 const LINK_CAPACITY: usize = KEY_CAPACITY + 1;
 
 // Cloning a vector doesn't preserve its capacity, which we rely on
@@ -23,11 +23,7 @@ struct Index<T: Ord + Clone + Debug> {
 
 impl<T: Ord + Clone + Debug> Index<T> {
     fn new() -> Index<T> {
-        Index {
-            root: Node::Leaf {
-                keys: Vec::with_capacity(KEY_CAPACITY),
-            },
-        }
+        Index { root: Node::Leaf { keys: Vec::with_capacity(KEY_CAPACITY) } }
     }
 
     fn insert(&self, item: T) -> Index<T> {
@@ -43,9 +39,65 @@ impl<T: Ord + Clone + Debug> Index<T> {
                 new_root_keys.push(sep);
                 Index {
                     root: Node::Directory {
-                        links: new_root_links,
-                        keys: new_root_keys,
-                    }.insert(item).unwrap()
+                            links: new_root_links,
+                            keys: new_root_keys,
+                        }
+                        .insert(item)
+                        .unwrap(),
+                }
+            }
+        }
+    }
+
+    fn iter(&self) -> Iter<T> {
+        let mut stack = Vec::new();
+        stack.push((&self.root, 0, 0));
+        Iter {
+            index: self,
+            stack: stack,
+        }
+    }
+}
+
+struct Iter<'a, T: 'a + Ord + Clone + Debug> {
+    index: &'a Index<T>,
+    stack: Vec<(&'a Node<T>, usize, usize)>,
+}
+
+impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
+    type Item = &'a T;
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let context = match self.stack.pop() {
+                Some(frame) => frame,
+                None => return None,
+            };
+
+            match context {
+                (&Node::Leaf { ref keys }, link_idx, key_idx) => {
+                    if key_idx < keys.len() {
+                        let res = &keys[key_idx];
+                        self.stack.push((context.0, link_idx, key_idx + 1));
+                        return Some(res);
+                    } else {
+                        continue; // keep looking for a stack frame that will yield something
+                    }
+                },
+                (&Node::Directory { ref links, ref keys }, link_idx, key_idx) => {
+                    // If link idx == key idx, push the child and continue.
+                    // otherwise, yield the key idx and bump it.
+                    if link_idx == key_idx {
+                        self.stack.push((context.0, link_idx+1, key_idx));
+                        self.stack.push((&*links[link_idx], 0, 0));
+                        continue;
+                    } else if key_idx < keys.len() {
+                        let res = &keys[key_idx];
+                        self.stack.push((context.0, link_idx, key_idx + 1));
+                        return Some(res);
+                    } else {
+                        // This node is done, so we don't re-push its stack frame.
+                        continue;
+                    }
                 }
             }
         }
@@ -58,25 +110,24 @@ enum Node<T: Ord + Clone + Debug> {
         keys: Vec<T>,
         links: Vec<Arc<Node<T>>>,
     },
-    Leaf {
-        keys: Vec<T>
-    },
+    Leaf { keys: Vec<T> },
 }
 
 // When a node is cloned, we need to make sure that cloned vectors
 // preserve their capacities again.
-// FIXME: Sharing references to vectors instead of cloning them might
+// FIXME: Sharing references (Arcs?) to vectors instead of cloning them might
 // render this unnecessary.
 impl<T: Clone + Ord + Debug> Clone for Node<T> {
     fn clone(&self) -> Node<T> {
         match self {
-            &Node::Leaf { ref keys } => {
-                Node::Leaf { keys: clone_vec!(keys, KEY_CAPACITY)}
-            },
-            &Node::Directory { ref keys, ref links } => {
+            &Node::Leaf { ref keys } => Node::Leaf { keys: clone_vec!(keys, KEY_CAPACITY) },
+            &Node::Directory {
+                 ref keys,
+                 ref links,
+             } => {
                 Node::Directory {
                     keys: clone_vec!(keys, KEY_CAPACITY),
-                    links: clone_vec!(links, LINK_CAPACITY)
+                    links: clone_vec!(links, LINK_CAPACITY),
                 }
             }
         }
@@ -89,24 +140,20 @@ enum InsertError {
 }
 
 impl<T: Ord + Clone + Debug> Node<T> {
-
     /// Returns the number of keys in the node. For directory nodes,
     /// the number of links is always one greater than the number of
     /// keys.
     fn size(&self) -> usize {
         match self {
             &Node::Leaf { ref keys } => keys.len(),
-            &Node::Directory {ref keys, ..} => keys.len(),
+            &Node::Directory { ref keys, .. } => keys.len(),
         }
     }
 
     fn capacity(&self) -> usize {
         match self {
             &Node::Leaf { ref keys } => keys.capacity(),
-            &Node::Directory {
-                 ref keys,
-                ..
-             } => keys.capacity(),
+            &Node::Directory { ref keys, .. } => keys.capacity(),
         }
     }
 
@@ -131,13 +178,9 @@ impl<T: Ord + Clone + Debug> Node<T> {
                 left_keys.extend_from_slice(left_keys_slice);
                 right_keys.extend_from_slice(right_keys_slice);
 
-                let left = Node::Leaf {
-                    keys: left_keys,
-                };
+                let left = Node::Leaf { keys: left_keys };
 
-                let right = Node::Leaf {
-                    keys: right_keys,
-                };
+                let right = Node::Leaf { keys: right_keys };
                 (left, sep.clone(), right)
             }
             &Node::Directory {
@@ -187,9 +230,7 @@ impl<T: Ord + Clone + Debug> Node<T> {
                     let mut new_keys = clone_vec!(keys, KEY_CAPACITY);
                     new_keys.insert(idx, item);
 
-                    Ok(Node::Leaf {
-                           keys: new_keys,
-                       })
+                    Ok(Node::Leaf { keys: new_keys })
                 } else {
                     Err(InsertError::NodeFull)
                 }
@@ -215,10 +256,10 @@ impl<T: Ord + Clone + Debug> Node<T> {
                         new_links[idx] = Arc::new(new_child);
 
                         Ok(Node::Directory {
-                            keys: keys.clone(),
-                            links: new_links
-                        })
-                    },
+                               keys: keys.clone(),
+                               links: new_links,
+                           })
+                    }
                     Err(InsertError::NodeFull) => {
                         // Child needs to be split, if we have space
                         // for an extra link.
@@ -234,9 +275,11 @@ impl<T: Ord + Clone + Debug> Node<T> {
                             new_links.insert(idx, Arc::new(left));
 
                             Ok(Node::Directory {
-                                   links: new_links,
-                                   keys: new_keys,
-                               }.insert(item).unwrap())
+                                       links: new_links,
+                                       keys: new_keys,
+                                   }
+                                   .insert(item)
+                                   .unwrap())
                         } else {
                             Err(InsertError::NodeFull)
                         }
@@ -250,16 +293,17 @@ impl<T: Ord + Clone + Debug> Node<T> {
 #[cfg(test)]
 mod tests {
     extern crate test;
-    use self::test::{Bencher};
+    use self::test::Bencher;
 
     use super::*;
 
     fn enumerate_node<T: Clone + Ord + ::std::fmt::Debug>(node: &Node<T>) -> Vec<T> {
         match node {
-            &Node::Leaf { ref keys } => {
-                keys.clone()
-            },
-            &Node::Directory { ref links, ref keys } => {
+            &Node::Leaf { ref keys } => keys.clone(),
+            &Node::Directory {
+                 ref links,
+                 ref keys,
+             } => {
                 let mut result = vec![];
                 for i in 0..keys.len() {
                     result.extend_from_slice(&enumerate_node(&links[i]));
@@ -275,12 +319,23 @@ mod tests {
     #[test]
     fn test_leaf_insert() {
         let mut idx: Index<u64> = Index::new();
-        let range: ::std::ops::Range<u64> = 0..(16*16+1);
+        let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i);
         }
 
-        assert_eq!(enumerate_node(&idx.root), (0..(16*16+1)).collect::<Vec<_>>());
+        assert_eq!(enumerate_node(&idx.root),
+                   (0..(16 * 16 + 1)).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_tree_iter() {
+        let mut idx: Index<usize> = Index::new();
+        let range = 0..65535;
+        for i in range.clone().rev().collect::<Vec<_>>() {
+            idx = idx.insert(i);
+        }
+        assert_eq!(idx.iter().cloned().collect::<Vec<_>>(), range.collect::<Vec<usize>>());
     }
 
     #[bench]
@@ -288,9 +343,9 @@ mod tests {
         let mut tree = Index::new();
         let mut n = 0usize;
         b.iter(|| {
-            tree = tree.insert(n);
-            n += 1;
-        });
+                   tree = tree.insert(n);
+                   n += 1;
+               });
     }
 
     #[bench]
@@ -298,9 +353,9 @@ mod tests {
         let mut tree = Index::new();
         let mut n = 0usize;
         b.iter(|| {
-            tree = tree.insert(n);
-            n  = (n + 1) % 512;
-        });
+                   tree = tree.insert(n);
+                   n = (n + 1) % 512;
+               });
 
     }
 }
