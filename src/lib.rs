@@ -1,3 +1,4 @@
+#![feature(optin_builtin_traits)]
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
@@ -7,9 +8,6 @@ extern crate itertools;
 #[macro_use]
 extern crate combine;
 
-#[macro_use]
-extern crate lazy_static;
-
 extern crate prettytable as pt;
 
 use itertools::*;
@@ -18,6 +16,7 @@ use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::collections::BTreeSet;
 use std::iter;
+use std::mem;
 
 pub mod parser;
 pub mod string_ref;
@@ -199,7 +198,11 @@ pub trait Database {
             for binding in bindings {
                 for fact in self.facts_matching(clause, &binding) {
                     match unify(&binding, clause, &fact) {
-                        Ok(new_env) => new_bindings.push(new_env),
+                        Ok(new_info) => {
+                            let mut new_env = binding.clone();
+                            new_env.extend(new_info);
+                            new_bindings.push(new_env)
+                        }
                         _ => continue,
                     }
                 }
@@ -208,15 +211,14 @@ pub trait Database {
             bindings = new_bindings;
         }
 
-        let result = bindings.into_iter()
-            .map(|solution| {
-                solution.into_iter()
-                    .filter(|&(ref k, _)| query.find.contains(&k))
-                    .collect()
-            })
-            .collect();
+        for binding in bindings.iter_mut() {
+            *binding = binding.iter()
+                .filter(|&(k, _)| query.find.contains(k))
+                .map(|(&var, &value)| (var, value))
+                .collect();
+        }
 
-        QueryResult(query.find.clone(), result)
+        QueryResult(query.find.clone(), bindings)
     }
 }
 
@@ -288,7 +290,7 @@ type Binding = HashMap<Var, Value>;
 impl Clause {
     fn substitute(&self, env: &Binding) -> Clause {
         let entity = match &self.entity {
-            &Term::Bound(_) => self.entity.clone(),
+            &Term::Bound(_) => self.entity,
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match *val {
@@ -296,13 +298,13 @@ impl Clause {
                         _ => unimplemented!(),
                     }
                 } else {
-                    self.entity.clone()
+                    self.entity
                 }
             }
         };
 
         let attribute = match &self.attribute {
-            &Term::Bound(_) => self.attribute.clone(),
+            &Term::Bound(_) => self.attribute,
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match val {
@@ -310,18 +312,18 @@ impl Clause {
                         _ => unimplemented!(),
                     }
                 } else {
-                    self.attribute.clone()
+                    self.attribute
                 }
             }
         };
 
         let value = match &self.value {
-            &Term::Bound(_) => self.value.clone(),
+            &Term::Bound(_) => self.value,
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
-                    Term::Bound(val.clone())
+                    Term::Bound(*val)
                 } else {
-                    self.value.clone()
+                    self.value
                 }
             }
         };
@@ -370,7 +372,7 @@ impl Database for InMemoryLog {
             Clause { entity: Term::Unbound(_),
                      attribute: Term::Bound(a),
                      value: Term::Bound(v) } => {
-                let range_start = Fact::new(Entity(0), a.clone(), v.clone());
+                let range_start = Fact::new(Entity(0), a, v);
                 self.ave
                     .range(AVE(range_start))
                     .map(|ave| &ave.0)
@@ -382,7 +384,7 @@ impl Database for InMemoryLog {
                      attribute: Term::Bound(a),
                      value: Term::Unbound(_) } => {
                 // Value::String("") is the lowest-sorted value
-                let range_start = Fact::new(e.clone(), a.clone(), Value::String("".into()));
+                let range_start = Fact::new(e, a, Value::String("".into()));
                 self.eav
                     .range(range_start)
                     .take_while(|f| f.entity == e && f.attribute == a)
@@ -400,8 +402,62 @@ impl Database for InMemoryLog {
     }
 }
 
-fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
-    let mut new_info = HashMap::new();
+#[derive(Copy, Clone, Default)]
+struct SmallBinding([Option<(Var, Value)>; 3]);
+struct IntoIter {
+    data: [(Var, Value); 3],
+    len: u8,
+    idx: u8,
+}
+
+impl Iterator for IntoIter {
+    type Item = (Var, Value);
+    fn next(&mut self) -> Option<Self::Item> {
+        use std::ptr;
+        if self.idx < self.len {
+            let ret = unsafe {
+                let ptr = &self.data as *const _;
+                ptr::read(ptr.offset(self.idx as isize))
+            };
+            self.idx += 1;
+            Some(ret)
+        } else {
+            None
+        }
+    }
+}
+
+impl IntoIterator for SmallBinding {
+    type Item = <IntoIter as Iterator>::Item;
+    type IntoIter = IntoIter;
+    fn into_iter(self) -> Self::IntoIter {
+        // Safe because data will never be read past len, where it is initialized
+        let mut data: [(Var, Value); 3] = unsafe { mem::uninitialized() };
+        let mut len = 0;
+
+        for item in self.0.into_iter() {
+            if let Some(value) = *item {
+                data[len] = value;
+                len += 1;
+            }
+        }
+
+        IntoIter {
+            data: data,
+            len: len as u8,
+            idx: 0,
+        }
+    }
+}
+
+unsafe fn _assert_small_binding_size() {
+    // assert that the Options use no additional size
+    let _: [(Var, Value); 3] = mem::transmute(SmallBinding::default());
+    let _: (SmallBinding, u8, u8) = mem::transmute(SmallBinding::default().into_iter());
+}
+
+fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<SmallBinding, ()> {
+    let mut new_info: SmallBinding = Default::default();
 
     match clause.entity {
         Term::Bound(ref e) => {
@@ -417,7 +473,7 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
                     }
                 }
                 _ => {
-                    new_info.insert((*var).clone(), Value::Entity(fact.entity));
+                    new_info.0[0] = Some((*var, Value::Entity(fact.entity)));
                 }
             }
         }
@@ -437,7 +493,7 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
                     }
                 }
                 _ => {
-                    new_info.insert((*var).clone(), Value::String(fact.attribute.clone()));
+                    new_info.0[1] = Some((*var, Value::String(fact.attribute.clone())));
                 }
             }
         }
@@ -457,16 +513,13 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
                     }
                 }
                 _ => {
-                    new_info.insert((*var).clone(), fact.value.clone());
+                    new_info.0[2] = Some((*var, fact.value.clone()));
                 }
             }
         }
     }
 
-    let mut env = env.clone();
-    env.extend(new_info);
-
-    Ok(env)
+    Ok(new_info)
 }
 
 
@@ -478,6 +531,46 @@ mod tests {
     use std::iter;
 
     use super::*;
+
+    fn helper(query: &Query, expected: QueryResult) {
+        let db = test_db();
+        let result = db.query(query);
+        assert_eq!(expected, result);
+    }
+
+    fn test_db() -> InMemoryLog {
+        let mut db = InMemoryLog::new();
+        let facts = vec![Fact::new(Entity(0), "name", "Bob"),
+                         Fact::new(Entity(1), "name", "John"),
+                         Fact::new(Entity(2), "Hello", "World"),
+                         Fact::new(Entity(1), "parent", Entity(0))];
+
+        for fact in facts {
+            db.add(fact);
+        }
+
+        db
+    }
+
+    #[allow(dead_code)]
+    fn test_db_large() -> InMemoryLog {
+        let mut db = InMemoryLog::new();
+        let n = 10_000_000;
+
+        for i in 0..n {
+            let a = if i % 23 < 10 {
+                "name"
+            } else {
+                "random_attribute"
+            };
+
+            let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
+
+            db.add(Fact::new(Entity(i), a, v));
+        }
+
+        db
+    }
 
     #[test]
     fn test_parse_query() {
@@ -501,22 +594,6 @@ mod tests {
         parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
 
-    lazy_static! {
-        static ref DB: InMemoryLog = {
-            let mut db = InMemoryLog::new();
-            let facts = vec![Fact::new(Entity(0), "name", "Bob"),
-                             Fact::new(Entity(1), "name", "John"),
-                             Fact::new(Entity(2), "Hello", "World"),
-                             Fact::new(Entity(1), "parent", Entity(0))];
-
-            for fact in facts {
-                db.add(fact);
-            }
-
-            db
-        };
-    }
-
     #[test]
     fn test_insertion() {
         let fact = Fact::new(Entity(0), "name", "Bob");
@@ -530,18 +607,17 @@ mod tests {
 
     #[test]
     fn test_facts_matching() {
-        assert_eq!(DB.facts_matching(&Clause::new(Term::Unbound("e".into()),
-                                                  Term::Bound("name".into()),
-                                                  Term::Bound(Value::String("Bob".into()))),
-                                     &Binding::default()),
+        assert_eq!(test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
+                                                         Term::Bound("name".into()),
+                                                         Term::Bound(Value::String("Bob".into()))),
+                                            &Binding::default()),
                    vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))])
     }
 
     #[test]
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
-        helper(&*DB,
-               &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+        helper(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect()]));
     }
@@ -549,18 +625,17 @@ mod tests {
     #[test]
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
-        helper(&*DB,
-               &parse_query("find ?a where (0 name ?a)").unwrap(),
+        helper(&parse_query("find ?a where (0 name ?a)").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::String("Bob".into())))
                                     .collect()]));
 
     }
+
     #[test]
     fn test_query_unknown_attribute() {
         // find ?a where (1 ?a "John")
-        helper(&*DB,
-               &parse_query("find ?a where (1 ?a \"John\")").unwrap(),
+        helper(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![iter::once((Var::new("a"), Value::String("name".into())))
                                     .collect()]));
@@ -569,8 +644,7 @@ mod tests {
     #[test]
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
-        helper(&*DB,
-               &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+        helper(&parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![Var::new("a"), Var::new("b")],
                            vec![vec![(Var::new("a"), Value::Entity(Entity(0))),
                                      (Var::new("b"), Value::String("Bob".into()))]
@@ -585,8 +659,7 @@ mod tests {
     #[test]
     fn test_query_explicit_join() {
         // find ?b where (?a name Bob) (?b parent ?a)
-        helper(&*DB,
-               &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+        helper(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
                QueryResult(vec![Var::new("b")],
                            vec![iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect()]));
     }
@@ -594,17 +667,11 @@ mod tests {
     #[test]
     fn test_query_implicit_join() {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
-        helper(&*DB,
-               &parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
+        helper(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
                    .unwrap(),
                QueryResult(vec![Var::new("c")],
                            vec![iter::once((Var::new("c"), Value::String("John".into())))
                                     .collect()]));
-    }
-
-    fn helper<D: Database>(db: &D, query: &Query, expected: QueryResult) {
-        let result = db.query(query);
-        assert_eq!(expected, result);
     }
 
     #[bench]
@@ -622,50 +689,32 @@ mod tests {
         // the implicit join query
         let input = black_box(r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#);
         let query = parse_query(input).unwrap();
+        let db = test_db();
 
-        helper(&*DB,
-               &query,
-               QueryResult(vec![Var::new("c")],
-                           vec![iter::once((Var::new("c"), Value::String("John".into())))
-                                    .collect()]));
+        b.iter(|| db.query(&query));
+    }
 
-        b.iter(|| DB.query(&query));
+    #[bench]
+    fn bench_add(b: &mut Bencher) {
+        let mut db = InMemoryLog::new();
+
+        let a = StringRef::from("blah");
+
+        let mut e = 0;
+
+        b.iter(|| {
+            let entity = Entity(e);
+            e += 1;
+            db.add(Fact::new(entity, a, Value::Entity(entity)));
+        });
     }
 
     // Don't run on 'cargo test', only 'cargo bench'
     #[cfg(not(debug_assertions))]
     #[bench]
     fn large_db_simple(b: &mut Bencher) {
-        use std::io::{stdout, Write};
-
-        let quiet = ::std::env::var_os("QUIET").is_some();
-        if !quiet {
-            println!();
-        }
-
         let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
-        let mut db = InMemoryLog::new();
-        let n = 10_000_000;
-
-        for i in 0..n {
-            if !quiet && i % (n / 100) == 0 {
-                print!("\rBuilding: {}%", ((i as f32) / (n as f32) * 100.0) as i32);
-                stdout().flush().unwrap();
-            }
-
-            let a = if i % 23 < 10 {
-                "name"
-            } else {
-                "random_attribute"
-            };
-            let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
-
-            db.add(Fact::new(Entity(i), a, v));
-        }
-
-        if !quiet {
-            println!("\nQuerying...");
-        }
+        let db = test_db_large();
 
         b.iter(|| db.query(&query));
     }

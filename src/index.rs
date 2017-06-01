@@ -209,6 +209,8 @@ impl<T: Ord + Clone + Debug> Node<T> {
 
 #[cfg(test)]
 mod tests {
+    extern crate test;
+    use self::test::{Bencher};
 
     use super::*;
 
@@ -239,5 +241,26 @@ mod tests {
         }
 
         assert_eq!(enumerate_node(&idx.root), (0..(16*16+1)).collect::<Vec<_>>());
+    }
+
+    #[bench]
+    fn bench_insert_sequence(b: &mut Bencher) {
+        let mut tree = Index::new();
+        let mut n = 0usize;
+        b.iter(|| {
+            tree = tree.insert(n);
+            n += 1;
+        });
+    }
+
+    #[bench]
+    fn bench_insert_range(b: &mut Bencher) {
+        let mut tree = Index::new();
+        let mut n = 0usize;
+        b.iter(|| {
+            tree = tree.insert(n);
+            n  = (n + 1) % 512;
+        });
+
     }
 }

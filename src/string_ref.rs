@@ -1,13 +1,23 @@
 
+
+
 use std::fmt::{self, Display, Debug, Formatter};
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::borrow::Cow;
-use std::sync::Mutex;
 use std::collections::HashSet;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Copy, Hash)]
 pub struct StringRef(&'static str);
+
+impl !Sync for StringRef {}
+impl !Send for StringRef {}
+
+impl StringRef {
+    pub fn address(&self) -> *const () {
+        self.0 as *const str as *const _
+    }
+}
 
 impl Display for StringRef {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
@@ -17,10 +27,9 @@ impl Display for StringRef {
 
 impl Debug for StringRef {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        f.debug_tuple("StringRef").field(&self.0).field(&(self.0 as *const _)).finish()
+        write!(f, "{:?}", self.0)
     }
 }
-
 
 impl FromIterator<char> for StringRef {
     fn from_iter<T: IntoIterator<Item = char>>(iter: T) -> Self {
@@ -41,23 +50,67 @@ impl<'a, T> From<T> for StringRef
     where T: Into<Cow<'a, str>>
 {
     fn from(other: T) -> Self {
-
-        lazy_static! {
-            static ref MAP: Mutex<HashSet<String>> = Default::default();
-        }
+        use std::cell::RefCell;
+        use std::mem;
 
         let val = other.into();
 
-        let mut map = MAP.lock().unwrap();
-
-        if !map.contains(&*val) {
-            let string: String = val.clone().into_owned();
-            map.insert(string);
+        thread_local! {
+            static MAP: RefCell<HashSet<String>> = Default::default();
         }
 
-        let s = map.get(&*val).unwrap();
+        MAP.with(|map| {
+            let mut map = map.borrow_mut();
 
-        // TODO: review saftey
-        StringRef(unsafe { ::std::mem::transmute(&**s) })
+            if !map.contains(&*val) {
+                map.insert(val.clone().into_owned());
+            }
+
+            StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
+        })
+
+        
+        // lazy_static! {
+        //     static ref MAP: Mutex<HashSet<String>> = Default::default();
+        // }
+
+        // let mut map = MAP.lock().unwrap();
+        
+        // if !map.contains(&*val) {
+        //     map.insert(val.clone().into_owned());
+        // }
+
+        // StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate test;
+    use self::test::{Bencher, black_box};
+    use std::str;
+
+    use super::*;
+
+    #[test]
+    fn same_address() {
+        let a = StringRef::from(String::from("Hello"));
+        let b = StringRef::from(String::from("Hello"));
+
+        assert_eq!(a.address(), b.address());
+    }
+
+    #[bench]
+    fn bench_string_ref(b: &mut Bencher) {
+        let mut n = 0usize;
+        let mut data = [b'0'; 8];
+
+        b.iter(|| {
+            for (i, byte) in data.iter_mut().enumerate() {
+                *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
+            }
+            StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
+            n += 1;
+        });
     }
 }
