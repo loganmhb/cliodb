@@ -1,6 +1,9 @@
 use std::sync::Arc;
 use std::fmt::Debug;
 
+const KEY_CAPACITY: usize = 16;
+const LINK_CAPACITY: usize = KEY_CAPACITY + 1;
+
 #[derive(Debug)]
 struct Index<T: Ord + Clone + Debug> {
     root: Node<T>,
@@ -8,11 +11,9 @@ struct Index<T: Ord + Clone + Debug> {
 
 impl<T: Ord + Clone + Debug> Index<T> {
     fn new() -> Index<T> {
-        let cap = 16;
         Index {
             root: Node::Leaf {
-                keys: Vec::with_capacity(cap),
-                capacity: cap,
+                keys: Vec::with_capacity(KEY_CAPACITY),
             },
         }
     }
@@ -30,7 +31,6 @@ impl<T: Ord + Clone + Debug> Index<T> {
                 new_root_keys.push(sep);
                 Index {
                     root: Node::Directory {
-                        capacity: self.root.capacity(),
                         links: new_root_links,
                         keys: new_root_keys,
                     }.insert(item).unwrap()
@@ -43,11 +43,12 @@ impl<T: Ord + Clone + Debug> Index<T> {
 #[derive(Debug, Clone)]
 enum Node<T: Ord + Clone + Debug> {
     Directory {
-        capacity: usize,
         keys: Vec<T>,
         links: Vec<Arc<Node<T>>>,
     },
-    Leaf { capacity: usize, keys: Vec<T> },
+    Leaf {
+        keys: Vec<T>
+    },
 }
 
 #[derive(Debug)]
@@ -62,23 +63,18 @@ impl<T: Ord + Clone + Debug> Node<T> {
     /// keys.
     fn size(&self) -> usize {
         match self {
-            &Node::Leaf { capacity, ref keys } => keys.len(),
-            &Node::Directory {
-                 capacity,
-                 ref keys,
-                 ref links,
-             } => keys.len(),
+            &Node::Leaf { ref keys } => keys.len(),
+            &Node::Directory {ref keys, ..} => keys.len(),
         }
     }
 
     fn capacity(&self) -> usize {
         match self {
-            &Node::Leaf { capacity, ref keys } => capacity,
+            &Node::Leaf { ref keys } => keys.capacity(),
             &Node::Directory {
-                 capacity,
                  ref keys,
-                 ref links,
-             } => capacity,
+                ..
+             } => keys.capacity(),
         }
     }
 
@@ -91,41 +87,54 @@ impl<T: Ord + Clone + Debug> Node<T> {
 
         let split_idx = self.size() / 2;
         match self {
-            &Node::Leaf { capacity, ref keys } => {
-                let (left_keys, right_keys_and_sep) = keys.split_at(split_idx);
+            &Node::Leaf { ref keys } => {
+                let (left_keys_slice, right_keys_and_sep) = keys.split_at(split_idx);
                 // Pop the separator off to be inserted into the parent.
-                let (sep, right_keys) = right_keys_and_sep.split_first().unwrap();
+                let (sep, right_keys_slice) = right_keys_and_sep.split_first().unwrap();
+
+                let mut left_keys = Vec::with_capacity(KEY_CAPACITY);
+                let mut right_keys = Vec::with_capacity(KEY_CAPACITY);
+
+                left_keys.extend_from_slice(left_keys_slice);
+                right_keys.extend_from_slice(right_keys_slice);
 
                 let left = Node::Leaf {
-                    capacity: capacity,
-                    keys: left_keys.to_owned(),
+                    keys: left_keys,
                 };
 
                 let right = Node::Leaf {
-                    capacity: capacity,
-                    keys: right_keys.to_owned(),
+                    keys: right_keys,
                 };
                 (left, sep.clone(), right)
             }
             &Node::Directory {
-                 capacity,
                  ref keys,
                  ref links,
              } => {
-                let (left_keys, right_keys_and_sep) = keys.split_at(split_idx);
-                let (left_links, right_links) = links.split_at(split_idx + 1);
-                let (sep, right_keys) = right_keys_and_sep.split_first().unwrap();
+                let (left_keys_slice, right_keys_and_sep) = keys.split_at(split_idx);
+                let (left_links_slice, right_links_slice) = links.split_at(split_idx + 1);
+                let (sep, right_keys_slice) = right_keys_and_sep.split_first().unwrap();
+
+                let mut left_keys = Vec::with_capacity(KEY_CAPACITY);
+                let mut right_keys = Vec::with_capacity(KEY_CAPACITY);
+
+                let mut left_links = Vec::with_capacity(LINK_CAPACITY);
+                let mut right_links = Vec::with_capacity(LINK_CAPACITY);
+
+                left_keys.extend_from_slice(left_keys_slice);
+                right_keys.extend_from_slice(right_keys_slice);
+
+                left_links.extend_from_slice(left_links_slice);
+                right_links.extend_from_slice(right_links_slice);
 
                 let left = Node::Directory {
-                    capacity: capacity,
-                    keys: left_keys.to_vec(),
-                    links: left_links.to_vec(),
+                    keys: left_keys,
+                    links: left_links,
                 };
 
                 let right = Node::Directory {
-                    capacity: capacity,
-                    keys: right_keys.to_vec(),
-                    links: right_links.to_vec(),
+                    keys: right_keys,
+                    links: right_links,
                 };
 
                 (left, sep.clone(), right)
@@ -135,8 +144,8 @@ impl<T: Ord + Clone + Debug> Node<T> {
 
     fn insert(&self, item: T) -> Result<Node<T>, InsertError> {
         match self {
-            &Node::Leaf { capacity, ref keys } => {
-                if keys.len() < capacity {
+            &Node::Leaf { ref keys } => {
+                if keys.len() < keys.capacity() {
                     let idx = match keys.binary_search(&item) {
                         Ok(_) => return Ok(self.clone()), // idempotent insertion?
                         Err(idx) => idx,
@@ -145,7 +154,6 @@ impl<T: Ord + Clone + Debug> Node<T> {
                     let mut new_keys = keys.clone();
                     new_keys.insert(idx, item);
                     Ok(Node::Leaf {
-                           capacity: capacity,
                            keys: new_keys,
                        })
                 } else {
@@ -153,7 +161,6 @@ impl<T: Ord + Clone + Debug> Node<T> {
                 }
             }
             &Node::Directory {
-                 capacity,
                  ref keys,
                  ref links,
              } => {
@@ -173,7 +180,6 @@ impl<T: Ord + Clone + Debug> Node<T> {
                         let mut new_links = links.clone();
                         new_links[idx] = Arc::new(new_child);
                         Ok(Node::Directory {
-                            capacity,
                             keys: keys.clone(),
                             links: new_links
                         })
@@ -181,7 +187,7 @@ impl<T: Ord + Clone + Debug> Node<T> {
                     Err(InsertError::NodeFull) => {
                         // Child needs to be split, if we have space
                         // for an extra link.
-                        if links.len() < capacity+1 {
+                        if links.len() < links.capacity() {
                             let (left, sep, right) = child.split();
 
                             let mut new_keys = keys.clone();
@@ -193,7 +199,6 @@ impl<T: Ord + Clone + Debug> Node<T> {
                             new_links.insert(idx, Arc::new(left));
 
                             Ok(Node::Directory {
-                                   capacity: capacity,
                                    links: new_links,
                                    keys: new_keys,
                                }.insert(item).unwrap())
@@ -216,10 +221,10 @@ mod tests {
 
     fn enumerate_node<T: Clone + Ord + ::std::fmt::Debug>(node: &Node<T>) -> Vec<T> {
         match node {
-            &Node::Leaf { capacity, ref keys } => {
+            &Node::Leaf { ref keys } => {
                 keys.clone()
             },
-            &Node::Directory { capacity, ref links, ref keys } => {
+            &Node::Directory { ref links, ref keys } => {
                 let mut result = vec![];
                 for i in 0..keys.len() {
                     result.extend_from_slice(&enumerate_node(&links[i]));
