@@ -64,11 +64,13 @@ impl<T: Ord + Clone + Debug> Index<T> {
     }
 
     pub fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<T> {
-        let mut stack = vec![IterState {
-                                 node: &self.root,
-                                 link_idx: 0,
-                                 key_idx: 0,
-                             }];
+        let mut stack = vec![
+            IterState {
+                node: &self.root,
+                link_idx: 0,
+                key_idx: 0,
+            },
+        ];
 
         // search for range.start
         loop {

@@ -69,13 +69,13 @@ impl<'a, T> From<T> for StringRef
             StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
         })
 
-        
+
         // lazy_static! {
         //     static ref MAP: Mutex<HashSet<String>> = Default::default();
         // }
 
         // let mut map = MAP.lock().unwrap();
-        
+
         // if !map.contains(&*val) {
         //     map.insert(val.clone().into_owned());
         // }
@@ -106,11 +106,11 @@ mod tests {
         let mut data = [b'0'; 8];
 
         b.iter(|| {
-            for (i, byte) in data.iter_mut().enumerate() {
-                *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
-            }
-            StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
-            n += 1;
-        });
+                   for (i, byte) in data.iter_mut().enumerate() {
+                       *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
+                   }
+                   StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
+                   n += 1;
+               });
     }
 }

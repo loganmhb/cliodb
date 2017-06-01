@@ -16,9 +16,12 @@ pub enum Input {
 pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
     where I: combine::Stream<Item = char>
 {
-    choice!(query_parser().map(Input::Query), tx_parser().map(Input::Tx), sample_db_parser(), dump_parser())
-        .parse(input)
-        .map(|(r, _)| r)
+    choice!(query_parser().map(Input::Query),
+            tx_parser().map(Input::Tx),
+            sample_db_parser(),
+            dump_parser())
+            .parse(input)
+            .map(|(r, _)| r)
 }
 
 pub fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
@@ -127,7 +130,7 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
         between(lex_char('('),
                 lex_char(')'),
                 (entity(), attribute(), value()))
-            .map(|f| Fact::new(f.0, f.1, f.2))
+                .map(|f| Fact::new(f.0, f.1, f.2))
     };
 
     let attr_pair = || (attribute(), value());
@@ -135,7 +138,7 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
         between(lex_char('{'),
                 lex_char('}'),
                 many1::<HashMap<_, _>, _>(attr_pair()))
-            .map(|x| TxItem::NewEntity(x))
+                .map(|x| TxItem::NewEntity(x))
     };
 
     let addition = || {
@@ -151,5 +154,8 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
 
     let tx_item = || choice!(addition(), retraction(), new_entity());
 
-    many1::<Vec<_>, _>(tx_item()).map(|tx| Tx { items: tx }).and(eof()).map(|x| x.0)
+    many1::<Vec<_>, _>(tx_item())
+        .map(|tx| Tx { items: tx })
+        .and(eof())
+        .map(|x| x.0)
 }
