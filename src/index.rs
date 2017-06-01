@@ -4,6 +4,18 @@ use std::fmt::Debug;
 const KEY_CAPACITY: usize = 16;
 const LINK_CAPACITY: usize = KEY_CAPACITY + 1;
 
+// Cloning a vector doesn't preserve its capacity, which we rely on
+// for the B-tree node size.
+macro_rules! clone_vec {
+    ($other:expr, $capacity:expr) => {
+        {
+            let mut new_vec = Vec::with_capacity($capacity);
+            new_vec.extend_from_slice(&$other);
+            new_vec
+        }
+    };
+}
+
 #[derive(Debug)]
 struct Index<T: Ord + Clone + Debug> {
     root: Node<T>,
@@ -40,7 +52,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
     }
 }
 
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 enum Node<T: Ord + Clone + Debug> {
     Directory {
         keys: Vec<T>,
@@ -49,6 +61,26 @@ enum Node<T: Ord + Clone + Debug> {
     Leaf {
         keys: Vec<T>
     },
+}
+
+// When a node is cloned, we need to make sure that cloned vectors
+// preserve their capacities again.
+// FIXME: Sharing references to vectors instead of cloning them might
+// render this unnecessary.
+impl<T: Clone + Ord + Debug> Clone for Node<T> {
+    fn clone(&self) -> Node<T> {
+        match self {
+            &Node::Leaf { ref keys } => {
+                Node::Leaf { keys: clone_vec!(keys, KEY_CAPACITY)}
+            },
+            &Node::Directory { ref keys, ref links } => {
+                Node::Directory {
+                    keys: clone_vec!(keys, KEY_CAPACITY),
+                    links: clone_vec!(links, LINK_CAPACITY)
+                }
+            }
+        }
+    }
 }
 
 #[derive(Debug)]
@@ -79,11 +111,12 @@ impl<T: Ord + Clone + Debug> Node<T> {
     }
 
     /// Splits a node in half, returning a tuple of the first half, separator key
-    /// and the second half.
-    /// SHOULD ONLY BE CALLED ON FULL NODES. (Unsafe?)
+    /// and the second half. Should only be called on full nodes, because it assumes
+    /// that there are enough items in the node to create two new legal nodes.
     fn split(&self) -> (Node<T>, T, Node<T>) {
+        assert_eq!(self.capacity(), KEY_CAPACITY);
         // It's a logic error to invoke this when the node isn't full.
-        assert!(self.size() == self.capacity());
+        assert!(self.size() == KEY_CAPACITY);
 
         let split_idx = self.size() / 2;
         match self {
@@ -151,8 +184,9 @@ impl<T: Ord + Clone + Debug> Node<T> {
                         Err(idx) => idx,
                     };
 
-                    let mut new_keys = keys.clone();
+                    let mut new_keys = clone_vec!(keys, KEY_CAPACITY);
                     new_keys.insert(idx, item);
+
                     Ok(Node::Leaf {
                            keys: new_keys,
                        })
@@ -177,8 +211,9 @@ impl<T: Ord + Clone + Debug> Node<T> {
 
                 match result {
                     Ok(new_child) => {
-                        let mut new_links = links.clone();
+                        let mut new_links = clone_vec!(links, LINK_CAPACITY);
                         new_links[idx] = Arc::new(new_child);
+
                         Ok(Node::Directory {
                             keys: keys.clone(),
                             links: new_links
