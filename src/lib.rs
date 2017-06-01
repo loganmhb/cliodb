@@ -143,8 +143,8 @@ pub struct Tx {
 
 #[derive(Debug, PartialEq, Eq)]
 enum TxItem {
-    Addition(Fact),
-    Retraction(Fact),
+    Addition(Hypothetical),
+    Retraction(Hypothetical),
     NewEntity(HashMap<StringRef, Value>),
 }
 
@@ -174,14 +174,16 @@ pub trait Database {
     fn next_id(&self) -> u64;
 
     fn transact(&mut self, tx: Tx) {
+        let tx_entity = Entity(self.next_id());
+        self.add(Fact::new(tx_entity, "txInstant", "now! (FIXME)", tx_entity));
         for item in tx.items {
             match item {
-                TxItem::Addition(f) => self.add(f),
+                TxItem::Addition(f) => self.add(Fact::from_hypothetical(f, tx_entity)),
                 // TODO Implement retractions + new entities
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.next_id());
                     for (k, v) in ht {
-                        self.add(Fact::new(entity, k, v))
+                        self.add(Fact::new(entity, k, v, tx_entity))
                     }
                 }
                 _ => unimplemented!(),
@@ -190,6 +192,7 @@ pub trait Database {
     }
 
     fn query(&self, query: &Query) -> QueryResult {
+        // TODO: automatically bind ?tx in queries
         let mut bindings = vec![HashMap::new()];
 
         for clause in &query.clauses {
@@ -231,15 +234,54 @@ pub struct Fact {
     entity: Entity,
     attribute: StringRef,
     value: Value,
+    tx: Entity,
 }
 
-impl Fact {
-    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V) -> Fact {
-        Fact {
+// We need a struct to represent facts that may not be in the database,
+// i.e. may not have an associated tx, for use by the parser and unifier.
+// FIXME: I don't like this name. Some better way to distinguish between
+// facts that have tx ids vs those that don't would be better.
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy)]
+struct Hypothetical {
+    entity: Entity,
+    attribute: StringRef,
+    value: Value,
+}
+
+impl Hypothetical {
+    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V) -> Hypothetical {
+        Hypothetical {
             entity: e,
             attribute: a.into(),
             value: v.into(),
         }
+    }
+}
+
+impl Fact {
+    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V, tx: Entity) -> Fact {
+        Fact {
+            entity: e,
+            attribute: a.into(),
+            value: v.into(),
+            tx: tx,
+        }
+    }
+
+    fn from_hypothetical(h: Hypothetical, tx: Entity) -> Fact {
+        Fact {
+            tx: tx,
+            entity: h.entity,
+            attribute: h.attribute,
+            value: h.value,
+        }
+    }
+}
+
+impl PartialEq<Fact> for Hypothetical {
+    fn eq(&self, other: &Fact) -> bool {
+        self.entity == other.entity && self.attribute == other.attribute &&
+        self.value == other.value
     }
 }
 
@@ -389,7 +431,8 @@ impl Database for InMemoryLog {
                 attribute: Term::Bound(a),
                 value: Term::Bound(v),
             } => {
-                let range_start = Fact::new(Entity(0), a, v);
+
+                let range_start = Fact::new(Entity(0), a, v, Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
                     .map(|ave| &ave.0)
@@ -403,7 +446,7 @@ impl Database for InMemoryLog {
                 value: Term::Unbound(_),
             } => {
                 // Value::String("") is the lowest-sorted value
-                let range_start = Fact::new(e, a, Value::String("".into()));
+                let range_start = Fact::new(e, a, Value::String("".into()), Entity(0));
                 self.eav
                     .iter_range_from(range_start..)
                     .take_while(|f| f.entity == e && f.attribute == a)
@@ -560,15 +603,14 @@ mod tests {
     fn test_db() -> InMemoryLog {
         let mut db = InMemoryLog::new();
         let facts = vec![
-            Fact::new(Entity(0), "name", "Bob"),
-            Fact::new(Entity(1), "name", "John"),
-            Fact::new(Entity(2), "Hello", "World"),
-            Fact::new(Entity(1), "parent", Entity(0)),
+
+            Hypothetical::new(Entity(0), "name", "Bob"),
+            Hypothetical::new(Entity(1), "name", "John"),
+            Hypothetical::new(Entity(2), "Hello", "World"),
+            Hypothetical::new(Entity(1), "parent", Entity(0)),
         ];
 
-        for fact in facts {
-            db.add(fact);
-        }
+        db.transact(Tx { items: facts.iter().map(|x| TxItem::Addition(*x)).collect() });
 
         db
     }
@@ -587,7 +629,7 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            db.add(Fact::new(Entity(i), a, v));
+            db.add(Fact::new(Entity(i), a, v, Entity(0)));
         }
 
         db
@@ -610,11 +652,9 @@ mod tests {
     fn test_parse_tx() {
         assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
                    Tx {
-                       items: vec![
-            TxItem::Addition(Fact::new(Entity(0),
-                                       "name",
-                                       Value::String("Bob".into()))),
-        ],
+                       items: vec![TxItem::Addition(Hypothetical::new(Entity(0),
+                                                              "name",
+                                                              Value::String("Bob".into())))],
                    });
         parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
@@ -632,7 +672,7 @@ mod tests {
 
     #[test]
     fn test_facts_matching() {
-        assert_eq!(vec![&Fact::new(Entity(0), "name", Value::String("Bob".into()))],
+        assert_eq!(vec![&Hypothetical::new(Entity(0), "name", Value::String("Bob".into()))],
                    test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),
@@ -745,7 +785,8 @@ mod tests {
         b.iter(|| {
                    let entity = Entity(e);
                    e += 1;
-                   db.add(Fact::new(entity, a, Value::Entity(entity)));
+
+                   db.add(Fact::new(entity, a, Value::Entity(entity), Entity(0)));
                });
     }
 
