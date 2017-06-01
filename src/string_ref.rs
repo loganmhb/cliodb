@@ -1,17 +1,14 @@
 
-
-
 use std::fmt::{self, Display, Debug, Formatter};
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::borrow::Cow;
 use std::collections::HashSet;
+use std::sync::Mutex;
+use std::mem;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Copy, Hash)]
 pub struct StringRef(&'static str);
-
-impl !Sync for StringRef {}
-impl !Send for StringRef {}
 
 impl StringRef {
     pub fn address(&self) -> *const () {
@@ -50,37 +47,18 @@ impl<'a, T> From<T> for StringRef
     where T: Into<Cow<'a, str>>
 {
     fn from(other: T) -> Self {
-        use std::cell::RefCell;
-        use std::mem;
-
-        let val = other.into();
-
-        thread_local! {
-            static MAP: RefCell<HashSet<String>> = Default::default();
+        lazy_static! {
+            static ref MAP: Mutex<HashSet<String>> = Default::default();
         }
 
-        MAP.with(|map| {
-            let mut map = map.borrow_mut();
+        let val = other.into();
+        let mut map = MAP.lock().unwrap();
 
-            if !map.contains(&*val) {
-                map.insert(val.clone().into_owned());
-            }
+        if !map.contains(&*val) {
+            map.insert(val.clone().into_owned());
+        }
 
-            StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
-        })
-
-
-        // lazy_static! {
-        //     static ref MAP: Mutex<HashSet<String>> = Default::default();
-        // }
-
-        // let mut map = MAP.lock().unwrap();
-
-        // if !map.contains(&*val) {
-        //     map.insert(val.clone().into_owned());
-        // }
-
-        // StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
+        StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
     }
 }
 
