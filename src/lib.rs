@@ -632,6 +632,21 @@ mod tests {
         b.iter(|| DB.query(&query));
     }
 
+    #[bench]
+    fn bench_add(b: &mut Bencher) {
+        let mut db = InMemoryLog::new();
+        
+        let a = StringRef::from("blah");
+
+        let mut e = 0;
+
+        b.iter(|| {
+            let entity = Entity(e);
+            e += 1;
+            db.add(Fact::new(entity, a, Value::Entity(entity)));
+        });
+    }
+
     // Don't run on 'cargo test', only 'cargo bench'
     #[cfg(not(debug_assertions))]
     #[bench]

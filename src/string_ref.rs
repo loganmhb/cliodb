@@ -3,7 +3,6 @@ use std::fmt::{self, Display, Debug, Formatter};
 use std::iter::FromIterator;
 use std::ops::Deref;
 use std::borrow::Cow;
-use std::sync::Mutex;
 use std::collections::HashSet;
 
 #[derive(PartialEq, Eq, Ord, PartialOrd, Clone, Copy, Hash)]
@@ -41,23 +40,54 @@ impl<'a, T> From<T> for StringRef
     where T: Into<Cow<'a, str>>
 {
     fn from(other: T) -> Self {
+        use std::cell::RefCell;
+        use std::mem;
 
-        lazy_static! {
-            static ref MAP: Mutex<HashSet<String>> = Default::default();
+        thread_local! {
+            static MAP: RefCell<HashSet<String>> = Default::default();
         }
 
         let val = other.into();
 
-        let mut map = MAP.lock().unwrap();
+        MAP.with(|map| {
+            let mut map = map.borrow_mut();
 
-        if !map.contains(&*val) {
-            let string: String = val.clone().into_owned();
-            map.insert(string);
-        }
+            if !map.contains(&*val) {
+                map.insert(val.clone().into_owned());
+            }
 
-        let s = map.get(&*val).unwrap();
+            StringRef(unsafe { mem::transmute(&**map.get(&*val).unwrap()) })
+        })
+    }
+}
 
-        // TODO: review saftey
-        StringRef(unsafe { ::std::mem::transmute(&**s) })
+#[cfg(test)]
+mod tests {
+    extern crate test;
+    use self::test::{Bencher, black_box};
+    use std::str;
+
+    use super::*;
+
+    #[test]
+    fn same_address() {
+        let a = StringRef::from(String::from("Hello"));
+        let b = StringRef::from(String::from("Hello"));
+
+        assert_eq!(format!("{:?}", a), format!("{:?}", b));
+    }
+
+    #[bench]
+    fn bench_string_ref(b: &mut Bencher) {
+        let mut n = 0usize;
+        let mut data = [b'0'; 8];
+
+        b.iter(|| {
+            for (i, byte) in data.iter_mut().enumerate() {
+                *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
+            }
+            StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
+            n += 1;
+        });
     }
 }
