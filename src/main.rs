@@ -18,6 +18,7 @@ fn main() {
                 if line == "quit" {
                     break;
                 }
+                rl.add_history_entry(&line);
 
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => println!("{}", db.query(&q)),
