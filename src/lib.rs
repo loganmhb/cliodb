@@ -11,6 +11,9 @@ extern crate prettytable as pt;
 extern crate chrono;
 
 #[macro_use]
+extern crate serde_derive;
+
+#[macro_use]
 extern crate lazy_static;
 
 use itertools::*;
