@@ -64,6 +64,10 @@ fn string_lit<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Outpu
     between(char('"'), char('"'), many1(none_of(vec!['\"']))).map(|s| Value::String(s))
 }
 
+fn attribute<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = StringRef> {
+    many1(letter().or(char(':'))).skip(spaces())
+}
+
 fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
     where I: combine::Stream<Item = char>
 {
@@ -71,7 +75,6 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
     // probably requires a change to the types/maybe change to the unification system.
 
     let entity = number_lit;
-    let attribute = many1(letter());
     let value = string_lit().or(number_lit().map(|e| Value::Entity(e)));
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
@@ -81,7 +84,7 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
         .skip(spaces());
     let attribute_term = free_var()
         .map(|x| Term::Unbound(x))
-        .or(attribute.map(|x| Term::Bound(x)))
+        .or(attribute().map(|x| Term::Bound(x)))
         .skip(spaces());
     let value_term = free_var()
         .map(|x| Term::Unbound(x))
@@ -118,7 +121,6 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
     where I: combine::Stream<Item = char>
 {
     let entity = || number_lit().skip(spaces());
-    let attribute = || many1(letter()).skip(spaces());
     let value = || {
         string_lit()
             .or(number_lit().map(|e| Value::Entity(e)))
