@@ -64,7 +64,7 @@ fn string_lit<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Outpu
     between(char('"'), char('"'), many1(none_of(vec!['\"']))).map(|s| Value::String(s))
 }
 
-fn attribute<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = StringRef> {
+fn attribute<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = String> {
     many1(letter().or(char(':'))).skip(spaces())
 }
 

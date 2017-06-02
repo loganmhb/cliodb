@@ -11,9 +11,6 @@ extern crate prettytable as pt;
 extern crate chrono;
 
 #[macro_use]
-extern crate serde_derive;
-
-#[macro_use]
 extern crate lazy_static;
 
 use itertools::*;
@@ -21,7 +18,6 @@ use itertools::*;
 use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::iter;
-use std::mem;
 
 use chrono::prelude::{DateTime, UTC};
 pub mod parser;
@@ -74,9 +70,9 @@ impl Display for QueryResult {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum Value {
-    String(StringRef),
+    String(String),
     Entity(Entity),
     // FIXME: clock drift is an issue here
     Timestamp(DateTime<UTC>)
@@ -92,16 +88,8 @@ impl Display for Value {
     }
 }
 
-// // FIXME: This doesn't work because the trait bound on StringRef's
-// //  From impl includes DateTime.
-// impl From<DateTime<UTC>> for Value {
-//   fn from(t: DateTime<UTC>) -> Self {
-//     Value::Timestamp(t)
-//   }
-// }
-
 impl<T> From<T> for Value
-    where T: Into<StringRef>
+    where T: Into<String>
 {
     fn from(x: T) -> Self {
         Value::String(x.into())
@@ -122,6 +110,9 @@ enum Term<T> {
 }
 
 // A free [logic] variable
+// FIXME: Is it actually safe to intern these statically?
+// For a long running process, there could be a theoretically
+// unbounded number of logic vars used in queries.
 #[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
 pub struct Var {
     name: StringRef,
@@ -164,21 +155,21 @@ pub struct Tx {
 enum TxItem {
     Addition(Hypothetical),
     Retraction(Hypothetical),
-    NewEntity(HashMap<StringRef, Value>),
+    NewEntity(HashMap<String, Value>),
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Entity(u64);
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Clause {
     entity: Term<Entity>,
-    attribute: Term<StringRef>,
+    attribute: Term<String>,
     value: Term<Value>,
 }
 
 impl Clause {
-    fn new(e: Term<Entity>, a: Term<StringRef>, v: Term<Value>) -> Clause {
+    fn new(e: Term<Entity>, a: Term<String>, v: Term<Value>) -> Clause {
         Clause {
             entity: e,
             attribute: a,
@@ -237,7 +228,7 @@ pub trait Database {
             *binding = binding
                 .iter()
                 .filter(|&(k, _)| query.find.contains(k))
-                .map(|(&var, &value)| (var, value))
+                .map(|(&var, value)| (var, value.clone()))
                 .collect();
         }
 
@@ -248,10 +239,10 @@ pub trait Database {
 // The Fact struct represents a fact in the database.
 // The derived ordering is used by the EAV index; other
 // indices use orderings provided by wrapper structs.
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 pub struct Fact {
     entity: Entity,
-    attribute: StringRef,
+    attribute: String,
     value: Value,
     tx: Entity,
 }
@@ -260,15 +251,15 @@ pub struct Fact {
 // i.e. may not have an associated tx, for use by the parser and unifier.
 // FIXME: I don't like this name. Some better way to distinguish between
 // facts that have tx ids vs those that don't would be better.
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone, Copy)]
+#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 struct Hypothetical {
     entity: Entity,
-    attribute: StringRef,
+    attribute: String,
     value: Value,
 }
 
 impl Hypothetical {
-    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V) -> Hypothetical {
+    fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V) -> Hypothetical {
         Hypothetical {
             entity: e,
             attribute: a.into(),
@@ -278,7 +269,7 @@ impl Hypothetical {
 }
 
 impl Fact {
-    fn new<A: Into<StringRef>, V: Into<Value>>(e: Entity, a: A, v: V, tx: Entity) -> Fact {
+    fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V, tx: Entity) -> Fact {
         Fact {
             entity: e,
             attribute: a.into(),
@@ -320,7 +311,7 @@ macro_rules! impl_range_arg {
 
 macro_rules! index_wrapper {
     ($name:ident; $i1:ident, $i2:ident, $i3:ident) => {
-        #[derive(PartialEq, Eq, Debug, Clone, Copy)]
+        #[derive(PartialEq, Eq, Debug, Clone)]
         struct $name(Fact);
 
         impl PartialOrd for $name {
@@ -366,26 +357,26 @@ impl Clause {
         };
 
         let attribute = match &self.attribute {
-            &Term::Bound(_) => self.attribute,
+            &Term::Bound(_) => self.attribute.clone(),
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match val {
-                        &Value::String(s) => Term::Bound(s),
+                        &Value::String(ref s) => Term::Bound(s.clone()),
                         _ => unimplemented!(),
                     }
                 } else {
-                    self.attribute
+                    self.attribute.clone()
                 }
             }
         };
 
         let value = match &self.value {
-            &Term::Bound(_) => self.value,
+            &Term::Bound(_) => self.value.clone(),
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
-                    Term::Bound(*val)
+                    Term::Bound(val.clone())
                 } else {
-                    self.value
+                    self.value.clone()
                 }
             }
         };
@@ -436,8 +427,8 @@ impl Database for InMemoryLog {
             self.next_id = fact.entity.0 + 1;
         }
 
-        self.eav = self.eav.insert(fact);
-        self.ave = self.ave.insert(AVE(fact));
+        self.eav = self.eav.insert(fact.clone());
+        self.ave = self.ave.insert(AVE(fact.clone()));
         self.aev = self.aev.insert(AEV(fact));
     }
 
@@ -451,11 +442,11 @@ impl Database for InMemoryLog {
                 value: Term::Bound(v),
             } => {
 
-                let range_start = Fact::new(Entity(0), a, v, Entity(0));
+                let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
                     .map(|ave| &ave.0)
-                    .take_while(|f| f.attribute == a && f.value == v)
+                    .take_while(|&f| f.attribute == a && f.value == v)
                     .collect()
             }
             // e a ?v => use the eav index
@@ -465,7 +456,7 @@ impl Database for InMemoryLog {
                 value: Term::Unbound(_),
             } => {
                 // Value::String("") is the lowest-sorted value
-                let range_start = Fact::new(e, a, Value::String("".into()), Entity(0));
+                let range_start = Fact::new(e, a.clone(), Value::String("".into()), Entity(0));
                 self.eav
                     .iter_range_from(range_start..)
                     .take_while(|f| f.entity == e && f.attribute == a)
@@ -483,62 +474,8 @@ impl Database for InMemoryLog {
     }
 }
 
-#[derive(Copy, Clone, Default)]
-struct SmallBinding([Option<(Var, Value)>; 3]);
-struct IntoIter {
-    data: [(Var, Value); 3],
-    len: u8,
-    idx: u8,
-}
-
-impl Iterator for IntoIter {
-    type Item = (Var, Value);
-    fn next(&mut self) -> Option<Self::Item> {
-        use std::ptr;
-        if self.idx < self.len {
-            let ret = unsafe {
-                let ptr = &self.data as *const _;
-                ptr::read(ptr.offset(self.idx as isize))
-            };
-            self.idx += 1;
-            Some(ret)
-        } else {
-            None
-        }
-    }
-}
-
-impl IntoIterator for SmallBinding {
-    type Item = <IntoIter as Iterator>::Item;
-    type IntoIter = IntoIter;
-    fn into_iter(self) -> Self::IntoIter {
-        // Safe because data will never be read past len, where it is initialized
-        let mut data: [(Var, Value); 3] = unsafe { mem::uninitialized() };
-        let mut len = 0;
-
-        for item in self.0.into_iter() {
-            if let Some(value) = *item {
-                data[len] = value;
-                len += 1;
-            }
-        }
-
-        IntoIter {
-            data: data,
-            len: len as u8,
-            idx: 0,
-        }
-    }
-}
-
-unsafe fn _assert_small_binding_size() {
-    // assert that the Options use no additional size
-    let _: [(Var, Value); 3] = mem::transmute(SmallBinding::default());
-    let _: (SmallBinding, u8, u8) = mem::transmute(SmallBinding::default().into_iter());
-}
-
-fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<SmallBinding, ()> {
-    let mut new_info: SmallBinding = Default::default();
+fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
+    let mut new_info: Binding = Default::default();
 
     match clause.entity {
         Term::Bound(ref e) => {
@@ -554,7 +491,7 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<SmallBinding, ()
                     }
                 }
                 _ => {
-                    new_info.0[0] = Some((*var, Value::Entity(fact.entity)));
+                    new_info.insert(*var, Value::Entity(fact.entity));
                 }
             }
         }
@@ -574,7 +511,7 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<SmallBinding, ()
                     }
                 }
                 _ => {
-                    new_info.0[1] = Some((*var, Value::String(fact.attribute.clone())));
+                    new_info.insert(*var, Value::String(fact.attribute.clone()));
                 }
             }
         }
@@ -594,7 +531,7 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<SmallBinding, ()
                     }
                 }
                 _ => {
-                    new_info.0[2] = Some((*var, fact.value.clone()));
+                    new_info.insert(*var, fact.value.clone());
                 }
             }
         }
@@ -628,7 +565,7 @@ mod tests {
             Hypothetical::new(Entity(1), "parent", Entity(0)),
         ];
 
-        db.transact(Tx { items: facts.iter().map(|x| TxItem::Addition(*x)).collect() });
+        db.transact(Tx { items: facts.iter().map(|x| TxItem::Addition(x.clone())).collect() });
 
         db
     }
@@ -796,7 +733,7 @@ mod tests {
     fn bench_add(b: &mut Bencher) {
         let mut db = InMemoryLog::new();
 
-        let a = StringRef::from("blah");
+        let a = String::from("blah");
 
         let mut e = 0;
 
@@ -804,7 +741,7 @@ mod tests {
                    let entity = Entity(e);
                    e += 1;
 
-                   db.add(Fact::new(entity, a, Value::Entity(entity), Entity(0)));
+                   db.add(Fact::new(entity, a.clone(), Value::Entity(entity), Entity(0)));
                });
     }
 
