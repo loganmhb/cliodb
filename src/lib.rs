@@ -8,6 +8,7 @@ extern crate itertools;
 extern crate combine;
 
 extern crate prettytable as pt;
+extern crate chrono;
 
 #[macro_use]
 extern crate lazy_static;
@@ -19,6 +20,7 @@ use std::collections::HashMap;
 use std::iter;
 use std::mem;
 
+use chrono::prelude::{DateTime, UTC};
 pub mod parser;
 pub mod string_ref;
 
@@ -73,6 +75,8 @@ impl Display for QueryResult {
 pub enum Value {
     String(StringRef),
     Entity(Entity),
+    // FIXME: clock drift is an issue here
+    Timestamp(DateTime<UTC>)
 }
 
 impl Display for Value {
@@ -80,9 +84,18 @@ impl Display for Value {
         write!(f, "{}", match *self {
             Value::Entity(e) => format!("{}", e.0),
             Value::String(ref s) => format!("{}", s),
+            Value::Timestamp(t) => format!("{}", t)
         })
     }
 }
+
+// // FIXME: This doesn't work because the trait bound on StringRef's
+// //  From impl includes DateTime.
+// impl From<DateTime<UTC>> for Value {
+//   fn from(t: DateTime<UTC>) -> Self {
+//     Value::Timestamp(t)
+//   }
+// }
 
 impl<T> From<T> for Value
     where T: Into<StringRef>
@@ -97,6 +110,7 @@ impl From<Entity> for Value {
         Value::Entity(x.into())
     }
 }
+
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
 enum Term<T> {
@@ -177,7 +191,7 @@ pub trait Database {
 
     fn transact(&mut self, tx: Tx) {
         let tx_entity = Entity(self.next_id());
-        self.add(Fact::new(tx_entity, "txInstant", "now! (FIXME)", tx_entity));
+        self.add(Fact::new(tx_entity, "txInstant", Value::Timestamp(UTC::now()), tx_entity));
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => self.add(Fact::from_hypothetical(f, tx_entity)),
