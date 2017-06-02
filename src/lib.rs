@@ -11,6 +11,9 @@ extern crate prettytable as pt;
 extern crate chrono;
 
 #[macro_use]
+extern crate serde_derive;
+
+#[macro_use]
 extern crate lazy_static;
 
 use itertools::*;
@@ -70,7 +73,7 @@ impl Display for QueryResult {
     }
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum Value {
     String(String),
     Entity(Entity),
@@ -146,19 +149,19 @@ impl Query {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Tx {
     items: Vec<TxItem>,
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 enum TxItem {
     Addition(Hypothetical),
     Retraction(Hypothetical),
     NewEntity(HashMap<String, Value>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
 pub struct Entity(u64);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
@@ -239,7 +242,7 @@ pub trait Database {
 // The Fact struct represents a fact in the database.
 // The derived ordering is used by the EAV index; other
 // indices use orderings provided by wrapper structs.
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 pub struct Fact {
     entity: Entity,
     attribute: String,
@@ -251,7 +254,7 @@ pub struct Fact {
 // i.e. may not have an associated tx, for use by the parser and unifier.
 // FIXME: I don't like this name. Some better way to distinguish between
 // facts that have tx ids vs those that don't would be better.
-#[derive(Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 struct Hypothetical {
     entity: Entity,
     attribute: String,
@@ -311,7 +314,7 @@ macro_rules! impl_range_arg {
 
 macro_rules! index_wrapper {
     ($name:ident; $i1:ident, $i2:ident, $i3:ident) => {
-        #[derive(PartialEq, Eq, Debug, Clone)]
+        #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
         struct $name(Fact);
 
         impl PartialOrd for $name {
