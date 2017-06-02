@@ -1,4 +1,3 @@
-#![feature(optin_builtin_traits)]
 #![feature(collections_range)]
 #![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
@@ -9,6 +8,9 @@ extern crate itertools;
 extern crate combine;
 
 extern crate prettytable as pt;
+
+#[macro_use]
+extern crate lazy_static;
 
 use itertools::*;
 
@@ -603,7 +605,6 @@ mod tests {
     fn test_db() -> InMemoryLog {
         let mut db = InMemoryLog::new();
         let facts = vec![
-
             Hypothetical::new(Entity(0), "name", "Bob"),
             Hypothetical::new(Entity(1), "name", "John"),
             Hypothetical::new(Entity(2), "Hello", "World"),
