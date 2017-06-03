@@ -12,6 +12,10 @@ extern crate chrono;
 
 #[macro_use]
 extern crate serde_derive;
+extern crate serde;
+extern crate rmp_serde;
+
+extern crate rusqlite;
 
 #[macro_use]
 extern crate lazy_static;
@@ -28,6 +32,8 @@ pub mod string_ref;
 
 pub use parser::*;
 pub use string_ref::StringRef;
+
+mod durable;
 
 mod index;
 use index::Index;
