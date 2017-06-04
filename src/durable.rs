@@ -1,9 +1,6 @@
-use std::ops::Deref;
+use std::path::Path;
 use serde::ser::Serialize;
 use serde::de::{Deserialize};
-
-use std::marker::PhantomData;
-
 use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
 
@@ -23,6 +20,25 @@ struct DurableNode<V> {
 
 struct SqliteStore {
     conn: sql::Connection
+}
+
+#[derive(Debug)]
+struct Error(String);
+
+impl From<sql::Error> for Error {
+    fn from(err: sql::Error) -> Error {
+        Error(err.to_string())
+    }
+}
+
+impl SqliteStore {
+    fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore, Error> {
+        let conn = sql::Connection::open(path)?;
+
+        conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL, val BLOB)", &[])?;
+
+        Ok(SqliteStore { conn: conn })
+    }
 }
 
 impl<'de, V> KVStore<V> for SqliteStore
@@ -66,15 +82,12 @@ impl<'de, V> KVStore<V> for SqliteStore
 #[cfg(test)]
 mod tests {
     use super::*;
-    use rusqlite as sql;
 
     #[test]
     fn test_kv_store() {
-        let mut store: SqliteStore = SqliteStore { conn: sql::Connection::open("/tmp/logos.db").unwrap()};
-
-//        store.conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL, val BLOB)", &[]).unwrap();
-        let mut root: DurableNode<String> = DurableNode { links: vec![], keys: vec![]};
-        store.set("key1", &root);
+        let root: DurableNode<String> = DurableNode { links: vec![], keys: vec![]};
+        let store = SqliteStore::new("/tmp/logos.db").unwrap();
+        store.set("key1", &root).unwrap();
 
         assert_eq!(store.get("key1").unwrap(), root)
     }
