@@ -3,13 +3,14 @@ use serde::ser::Serialize;
 use serde::de::{Deserialize};
 use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
+use uuid::Uuid;
 
 trait KVStore<V> where Self: Sized {
     type Node;
     type Error;
     fn get(&self, key: &str) -> Result<Self::Node, Self::Error>;
 
-    fn set(&self, key: &str, value: &Self::Node) -> Result<(), Self::Error>;
+    fn add(&self, value: &Self::Node) -> Result<String, Self::Error>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -67,13 +68,14 @@ impl<'de, V> KVStore<V> for SqliteStore
         }
     }
 
-    fn set(&self, key: &str, value: &Self::Node) -> Result<(), Self::Error> {
+    fn add(&self, value: &Self::Node) -> Result<String, Self::Error> {
+        let key = Uuid::new_v4().to_string();
         let mut buf = Vec::new();
         value.serialize(&mut Serializer::new(&mut buf)).unwrap();
 
         let mut stmt = self.conn.prepare("INSERT INTO logos_kvs (key, val) VALUES (?1, ?2)").unwrap();
         match stmt.execute(&[&key, &buf]) {
-            Ok(_) => Ok(()),
+            Ok(_) => Ok(key),
             Err(e) => Err(e.to_string())
         }
     }
@@ -82,13 +84,26 @@ impl<'de, V> KVStore<V> for SqliteStore
 #[cfg(test)]
 mod tests {
     use super::*;
+    extern crate test;
+    use self::test::Bencher;
 
     #[test]
     fn test_kv_store() {
         let root: DurableNode<String> = DurableNode { links: vec![], keys: vec![]};
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
-        store.set("key1", &root).unwrap();
+        let key = store.add(&root).unwrap();
 
-        assert_eq!(store.get("key1").unwrap(), root)
+        assert_eq!(store.get(&key).unwrap(), root)
+    }
+
+    #[bench]
+    fn bench_kv_insert(b: &mut Bencher) {
+        let root: DurableNode<String> = DurableNode { links: vec![], keys: vec![]};
+        let store = SqliteStore::new("/tmp/logos.db").unwrap();
+
+        b.iter(|| {
+            let key = store.add(&root).unwrap();
+            assert_eq!(store.get(&key).unwrap(), root)
+        })
     }
 }

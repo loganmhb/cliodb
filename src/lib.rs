@@ -17,6 +17,8 @@ extern crate rmp_serde;
 
 extern crate rusqlite;
 
+extern crate uuid;
+
 #[macro_use]
 extern crate lazy_static;
 
