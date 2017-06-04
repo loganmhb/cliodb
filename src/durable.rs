@@ -12,7 +12,7 @@ trait KVStore<V> where Self: Sized {
     type Error;
     fn get(&self, key: &str) -> Result<Self::Node, Self::Error>;
 
-    fn set(&self, key: &str, value: Vec<u8>) -> Result<(), Self::Error>;
+    fn set(&self, key: &str, value: &Self::Node) -> Result<(), Self::Error>;
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,13 +21,12 @@ struct DurableNode<V> {
     links: Vec<String>
 }
 
-struct SqliteStore<V> {
-    phantom: PhantomData<V>,
+struct SqliteStore {
     conn: sql::Connection
 }
 
-impl<'de, V> KVStore<V> for SqliteStore<V>
-    where V: Deserialize<'de>
+impl<'de, V> KVStore<V> for SqliteStore
+    where V: Serialize + Deserialize<'de>
 {
     type Node = DurableNode<V>;
     type Error = String;
@@ -52,9 +51,12 @@ impl<'de, V> KVStore<V> for SqliteStore<V>
         }
     }
 
-    fn set(&self, key: &str, value: Vec<u8>) -> Result<(), Self::Error> {
+    fn set(&self, key: &str, value: &Self::Node) -> Result<(), Self::Error> {
+        let mut buf = Vec::new();
+        value.serialize(&mut Serializer::new(&mut buf)).unwrap();
+
         let mut stmt = self.conn.prepare("INSERT INTO logos_kvs (key, val) VALUES (?1, ?2)").unwrap();
-        match stmt.execute(&[&key, &value]) {
+        match stmt.execute(&[&key, &buf]) {
             Ok(_) => Ok(()),
             Err(e) => Err(e.to_string())
         }
@@ -65,15 +67,14 @@ impl<'de, V> KVStore<V> for SqliteStore<V>
 mod tests {
     use super::*;
     use rusqlite as sql;
+
     #[test]
     fn test_kv_store() {
-        let mut store: SqliteStore<String> = SqliteStore { phantom: PhantomData, conn: sql::Connection::open("/tmp/logos.db").unwrap()};
+        let mut store: SqliteStore = SqliteStore { conn: sql::Connection::open("/tmp/logos.db").unwrap()};
 
 //        store.conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL, val BLOB)", &[]).unwrap();
         let mut root: DurableNode<String> = DurableNode { links: vec![], keys: vec![]};
-        let mut buf = Vec::new();
-        root.serialize(&mut Serializer::new(&mut buf)).unwrap();
-        store.set("key1", buf);
+        store.set("key1", &root);
 
         assert_eq!(store.get("key1").unwrap(), root)
     }
