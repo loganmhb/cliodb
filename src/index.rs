@@ -90,7 +90,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
                         Err(idx) => {
                             *stack.last_mut().unwrap() = IterState {
                                 key_idx: idx,
-                                link_idx: idx+1, // FIXME: Why is this off by one from what I expected?
+                                link_idx: idx+1,
                                 ..state
                             };
                             stack.push(IterState {
