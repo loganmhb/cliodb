@@ -1,3 +1,5 @@
+use std::ops::RangeFrom;
+
 pub const CAPACITY: usize = 512;
 
 pub enum Insertion<N: Node> {
@@ -18,9 +20,7 @@ pub trait Node where Self: Sized {
     fn items(&self) -> &[Self::Item];
     fn links(&self) -> &[Self::Reference];
 
-    /// For a directory node, returns the child at link index idx.
-    /// It's a logic error to call this on a leaf node.
-    fn child(&self, idx: usize) -> Self;
+    fn by_ref(reference: &Self::Reference) -> Self;
 
     fn new_leaf(items: Vec<Self::Item>) -> Self;
     fn new_dir(items: Vec<Self::Item>, links: Vec<Self::Reference>) -> Self;
@@ -46,7 +46,7 @@ pub trait Node where Self: Sized {
                 Err(idx) => idx
             };
 
-            let child = self.child(idx);
+            let child = Self::by_ref(&self.links()[idx]);
             let child_result = child.insert(item.clone());
 
             match child_result {
@@ -107,6 +107,124 @@ pub trait Node where Self: Sized {
             let right = Self::new_dir(right_items.to_vec(), right_links.to_vec());
 
             (left, sep.clone(), right)
+        }
+    }
+}
+
+
+pub fn iter_range_start<N: Node>(node_ref: N::Reference, range: RangeFrom<N::Item>) -> Iter<N> {
+    let mut stack = vec![
+        IterState {
+            node_ref,
+            link_idx: 0,
+            item_idx: 0
+        }
+    ];
+
+    // Search for the beginning of the range.
+    loop {
+        let state = stack.pop().unwrap();
+
+        let node: N = N::by_ref(&state.node_ref);
+
+        match node.items().binary_search(&range.start) {
+            Ok(idx) => {
+                stack.push(IterState {
+                    item_idx: idx,
+                    link_idx: idx + 1,
+                    ..state
+                });
+                return Iter { stack }
+            },
+            Err(idx) if node.is_leaf() => {
+                stack.push(IterState {
+                    item_idx: idx,
+                    ..state
+                });
+                return Iter { stack };
+            }
+            Err(idx) => {
+                stack.push(IterState {
+                    item_idx: idx,
+                    link_idx: idx+1,
+                    ..state
+                });
+                stack.push(IterState {
+                    node_ref: node.links()[idx].clone(),
+                    item_idx: 0,
+                    link_idx: 0,
+                });
+            }
+        }
+    }
+}
+
+// The structs necessary to implement iter() for an index are provided here, but
+// iter() cannot be implemented for Node directly because a Node doesn't have a
+// reference to itself, which is needed for creating the Iter struct's stack.
+#[derive(Copy, Clone, Debug)]
+pub struct IterState<N: Node> {
+    pub node_ref: N::Reference,
+    pub link_idx: usize,
+    pub item_idx: usize,
+}
+
+#[derive(Clone)]
+pub struct Iter<N: Node> {
+    pub stack: Vec<IterState<N>>,
+}
+
+impl<N: Node> Iterator for Iter<N> {
+    type Item = N::Item;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        loop {
+            let IterState { node_ref, link_idx, item_idx} = match self.stack.pop() {
+                Some(frame) => frame,
+                None => return None,
+            };
+
+            let node = N::by_ref(&node_ref);
+            if node.is_leaf() {
+                if item_idx < node.size() {
+                    let res = node.items()[item_idx].clone();
+                    self.stack.push(IterState {
+                        node_ref,
+                        link_idx,
+                        item_idx: item_idx + 1,
+                    });
+                    return Some(res);
+                } else {
+                    continue; // pop the frame and continue
+                }
+            } else {
+                // If link idx == item idx, push the child and continue.
+                // otherwise, yield the item idx and bump it.
+                if link_idx == item_idx {
+                    self.stack.push(IterState {
+                        node_ref,
+                        link_idx: link_idx + 1,
+                        item_idx,
+                    });
+                    self.stack.push(IterState {
+                        node_ref: node.links()[link_idx].clone(),
+                        link_idx: 0,
+                        item_idx: 0,
+                    });
+                    continue;
+                } else if item_idx < node.size() {
+                    let res = &node.items()[item_idx];
+                    self.stack.push(IterState {
+                        node_ref,
+                        link_idx,
+                        item_idx: item_idx + 1,
+                    });
+                    return Some((*res).clone());
+                } else {
+                    // This node is done, so we don't re-push its stack frame.
+                    continue;
+                }
+            }
         }
     }
 }

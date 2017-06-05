@@ -192,7 +192,7 @@ impl Clause {
 
 pub trait Database {
     fn add(&mut self, fact: Fact);
-    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact>;
+    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact>;
     fn next_id(&self) -> u64;
 
     fn transact(&mut self, tx: Tx) {
@@ -444,7 +444,7 @@ impl Database for InMemoryLog {
         self.aev = self.aev.insert(AEV(fact));
     }
 
-    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<&Fact> {
+    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
         let expanded = clause.substitute(binding);
         match expanded {
             // ?e a v => use the ave index
@@ -457,8 +457,8 @@ impl Database for InMemoryLog {
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
-                    .map(|ave| &ave.0)
-                    .take_while(|&f| f.attribute == a && f.value == v)
+                    .map(|ave| ave.0)
+                    .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
             }
             // e a ?v => use the eav index
@@ -639,7 +639,7 @@ mod tests {
 
     #[test]
     fn test_facts_matching() {
-        assert_eq!(vec![&Hypothetical::new(Entity(0), "name", Value::String("Bob".into()))],
+        assert_eq!(vec![Hypothetical::new(Entity(0), "name", Value::String("Bob".into()))],
                    test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),

@@ -2,22 +2,22 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
 
-use btree::{Node, Insertion};
+use btree::{Node, Insertion, Iter, IterState, iter_range_start};
 
 #[derive(Clone, Debug)]
 pub struct Index<T: Ord + Clone + Debug> {
-    root: HeapNode<T>,
+    root: Rc<HeapNode<T>>,
 }
 
 impl<T: Ord + Clone + Debug> Index<T> {
     pub fn new() -> Index<T> {
-        Index { root: HeapNode::Leaf { keys: vec![] } }
+        Index { root: Rc::new(HeapNode::Leaf { keys: vec![] }) }
     }
 
     pub fn insert(&self, item: T) -> Index<T> {
         match self.root.insert(item.clone()) {
             Insertion::Duplicate => self.clone(),
-            Insertion::Inserted(new_root) => Index { root: new_root },
+            Insertion::Inserted(new_root) => Index { root: Rc::new(new_root) },
             Insertion::NodeFull => {
                 // Need to make a new root; the whole tree is full.
                 let (left, sep, right) = self.root.split();
@@ -30,84 +30,30 @@ impl<T: Ord + Clone + Debug> Index<T> {
                 };
 
                 match new_root.insert(item) {
-                    Insertion::Inserted(root) => Index { root: root },
+                    Insertion::Inserted(root) => Index { root: Rc::new(root) },
                     _ => unreachable!(),
                 }
             }
         }
     }
 
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<HeapNode<T>> {
         let mut stack = Vec::new();
         stack.push(IterState {
-                       node: &self.root,
-                       link_idx: 0,
-                       key_idx: 0,
-                   });
+            node_ref: self.root.clone(),
+            link_idx: 0,
+            item_idx: 0,
+        });
         Iter { stack: stack }
     }
 
-    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<T> {
-        let mut stack = vec![
-            IterState {
-                node: &self.root,
-                link_idx: 0,
-                key_idx: 0,
-            },
-        ];
-
-        // search for range.start
-        loop {
-            let state = stack.last().unwrap().clone();
-            match state {
-                IterState { node: &HeapNode::Leaf { ref keys }, .. } => {
-                    match keys.binary_search(&range.start) {
-                        Ok(idx) | Err(idx) => {
-                            *stack.last_mut().unwrap() = IterState {
-                                key_idx: idx,
-                                ..state
-                            };
-                            return Iter { stack };
-                        }
-                    }
-                }
-                IterState {
-                    node: &HeapNode::Directory {
-                        ref keys,
-                        ref links,
-                    },
-                    ..
-                } => {
-                    match keys.binary_search(&range.start) {
-                        Ok(idx) => {
-                            *stack.last_mut().unwrap() = IterState {
-                                key_idx: idx,
-                                link_idx: idx + 1,
-                                ..state
-                            };
-                            return Iter { stack };
-                        }
-                        Err(idx) => {
-                            *stack.last_mut().unwrap() = IterState {
-                                key_idx: idx,
-                                link_idx: idx+1,
-                                ..state
-                            };
-                            stack.push(IterState {
-                                           node: &links[idx],
-                                           key_idx: 0,
-                                           link_idx: 0,
-                                       });
-                        }
-                    }
-                }
-            }
-        }
+    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<HeapNode<T>> {
+        iter_range_start(self.root.clone(), range)
     }
 }
 
 #[derive(Debug)]
-enum HeapNode<T: Ord + Clone + Debug> {
+pub enum HeapNode<T: Ord + Clone + Debug> {
     Directory {
         keys: Vec<T>,
         links: Vec<Rc<HeapNode<T>>>,
@@ -183,95 +129,8 @@ impl<T: Ord + Clone + Debug> Node for HeapNode<T> {
         }
     }
 
-    fn child(&self, idx: usize) -> Self {
-        match self {
-            &HeapNode::Directory { ref links, .. } => (*links[idx]).clone(),
-            _ => unimplemented!()
-        }
-    }
-}
-
-#[derive(Copy, Clone, Debug)]
-struct IterState<'a, T: 'a + Ord + Clone + Debug> {
-    node: &'a HeapNode<T>,
-    link_idx: usize,
-    key_idx: usize,
-}
-
-#[derive(Clone, Debug)]
-pub struct Iter<'a, T: 'a + Ord + Clone + Debug> {
-    stack: Vec<IterState<'a, T>>,
-}
-
-impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
-    type Item = &'a T;
-
-    fn next(&mut self) -> Option<Self::Item> {
-        loop {
-            let context = match self.stack.pop() {
-                Some(frame) => frame,
-                None => return None,
-            };
-
-            match context {
-                IterState {
-                    node: &HeapNode::Leaf { ref keys },
-                    link_idx,
-                    key_idx,
-                } => {
-                    if key_idx < keys.len() {
-                        let res = &keys[key_idx];
-                        self.stack
-                            .push(IterState {
-                                      node: context.node,
-                                      link_idx,
-                                      key_idx: key_idx + 1,
-                                  });
-                        return Some(res);
-                    } else {
-                        continue; // keep looking for a stack frame that will yield something
-                    }
-                }
-                IterState {
-                    node: &HeapNode::Directory {
-                        ref links,
-                        ref keys,
-                    },
-                    link_idx,
-                    key_idx,
-                } => {
-                    // If link idx == key idx, push the child and continue.
-                    // otherwise, yield the key idx and bump it.
-                    if link_idx == key_idx {
-                        self.stack
-                            .push(IterState {
-                                      node: context.node,
-                                      link_idx: link_idx + 1,
-                                      key_idx,
-                                  });
-                        self.stack
-                            .push(IterState {
-                                      node: &*links[link_idx],
-                                      link_idx: 0,
-                                      key_idx: 0,
-                                  });
-                        continue;
-                    } else if key_idx < keys.len() {
-                        let res = &keys[key_idx];
-                        self.stack
-                            .push(IterState {
-                                      node: context.node,
-                                      link_idx,
-                                      key_idx: key_idx + 1,
-                                  });
-                        return Some(res);
-                    } else {
-                        // This node is done, so we don't re-push its stack frame.
-                        continue;
-                    }
-                }
-            }
-        }
+    fn by_ref(reference: &Rc<HeapNode<T>>) -> Self {
+        (**reference).clone()
     }
 }
 
@@ -321,7 +180,7 @@ mod tests {
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i);
         }
-        assert_eq!(idx.iter().cloned().collect::<Vec<_>>(),
+        assert_eq!(idx.iter().collect::<Vec<_>>(),
                    range.collect::<Vec<usize>>());
     }
 
@@ -335,7 +194,7 @@ mod tests {
             idx = idx.insert(i);
         }
 
-        assert_equal(idx.iter_range_from(range.clone()).cloned(),
+        assert_equal(idx.iter_range_from(range.clone()),
                      range.start..full_range.end);
     }
 
