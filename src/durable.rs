@@ -5,6 +5,8 @@ use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
 use uuid::Uuid;
 
+/// Trait abstracting over anything that can be used as a disk-backed
+/// KV store, where keys can only be added, not modified.
 trait KVStore<V> where Self: Sized {
     type Node;
     type Error;
@@ -13,6 +15,11 @@ trait KVStore<V> where Self: Sized {
     fn add(&self, value: &Self::Node) -> Result<String, Self::Error>;
 }
 
+/// Representation of a B-tree node that is serializable to disk.
+/// Contains a vector of keys (i.e. the contents of the B-tree) and a
+/// vector of links, which are strings that correspond to keys in the
+/// KV store.
+// FIXME: overloaded use of `key`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 struct DurableNode<V> {
     keys: Vec<V>,

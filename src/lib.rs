@@ -31,6 +31,7 @@ use std::iter;
 use chrono::prelude::{DateTime, UTC};
 pub mod parser;
 pub mod string_ref;
+pub mod btree;
 
 pub use parser::*;
 pub use string_ref::StringRef;

@@ -2,29 +2,16 @@ use std::rc::Rc;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
 
-const KEY_CAPACITY: usize = 16;
-const LINK_CAPACITY: usize = KEY_CAPACITY + 1;
-
-// Cloning a vector doesn't preserve its capacity, which we rely on
-// for the B-tree node size.
-macro_rules! clone_vec {
-    ($other:expr, $capacity:expr) => {
-        {
-            let mut new_vec = Vec::with_capacity($capacity);
-            new_vec.extend_from_slice(&$other);
-            new_vec
-        }
-    };
-}
+use btree::{Node, Insertion};
 
 #[derive(Clone, Debug)]
 pub struct Index<T: Ord + Clone + Debug> {
-    root: Node<T>,
+    root: HeapNode<T>,
 }
 
 impl<T: Ord + Clone + Debug> Index<T> {
     pub fn new() -> Index<T> {
-        Index { root: Node::Leaf { keys: Vec::with_capacity(KEY_CAPACITY) } }
+        Index { root: HeapNode::Leaf { keys: vec![] } }
     }
 
     pub fn insert(&self, item: T) -> Index<T> {
@@ -34,13 +21,10 @@ impl<T: Ord + Clone + Debug> Index<T> {
             Insertion::NodeFull => {
                 // Need to make a new root; the whole tree is full.
                 let (left, sep, right) = self.root.split();
-                let mut new_root_links = Vec::with_capacity(self.root.capacity() + 1);
-                let mut new_root_keys: Vec<T> = Vec::with_capacity(self.root.capacity());
-                new_root_links.push(Rc::new(left));
-                new_root_links.push(Rc::new(right));
-                new_root_keys.push(sep);
+                let new_root_links = vec![Rc::new(left), Rc::new(right)];
+                let new_root_keys = vec![sep];
 
-                let new_root = Node::Directory {
+                let new_root = HeapNode::Directory {
                     links: new_root_links,
                     keys: new_root_keys,
                 };
@@ -76,7 +60,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
         loop {
             let state = stack.last().unwrap().clone();
             match state {
-                IterState { node: &Node::Leaf { ref keys }, .. } => {
+                IterState { node: &HeapNode::Leaf { ref keys }, .. } => {
                     match keys.binary_search(&range.start) {
                         Ok(idx) | Err(idx) => {
                             *stack.last_mut().unwrap() = IterState {
@@ -88,7 +72,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
                     }
                 }
                 IterState {
-                    node: &Node::Directory {
+                    node: &HeapNode::Directory {
                         ref keys,
                         ref links,
                     },
@@ -106,7 +90,7 @@ impl<T: Ord + Clone + Debug> Index<T> {
                         Err(idx) => {
                             *stack.last_mut().unwrap() = IterState {
                                 key_idx: idx,
-                                link_idx: idx,
+                                link_idx: idx+1, // FIXME: Why is this off by one from what I expected?
                                 ..state
                             };
                             stack.push(IterState {
@@ -123,10 +107,10 @@ impl<T: Ord + Clone + Debug> Index<T> {
 }
 
 #[derive(Debug)]
-enum Node<T: Ord + Clone + Debug> {
+enum HeapNode<T: Ord + Clone + Debug> {
     Directory {
         keys: Vec<T>,
-        links: Vec<Rc<Node<T>>>,
+        links: Vec<Rc<HeapNode<T>>>,
     },
     Leaf { keys: Vec<T> },
 }
@@ -135,190 +119,93 @@ enum Node<T: Ord + Clone + Debug> {
 // preserve their capacities again.
 // FIXME: Sharing references (Arcs?) to vectors instead of cloning them might
 // render this unnecessary.
-impl<T: Clone + Ord + Debug> Clone for Node<T> {
-    fn clone(&self) -> Node<T> {
+impl<T: Clone + Ord + Debug> Clone for HeapNode<T> {
+    fn clone(&self) -> HeapNode<T> {
         match self {
-            &Node::Leaf { ref keys } => Node::Leaf { keys: clone_vec!(keys, KEY_CAPACITY) },
-            &Node::Directory {
+            &HeapNode::Leaf { ref keys } => HeapNode::Leaf { keys: keys.clone() },
+            &HeapNode::Directory {
                 ref keys,
                 ref links,
             } => {
-                Node::Directory {
-                    keys: clone_vec!(keys, KEY_CAPACITY),
-                    links: clone_vec!(links, LINK_CAPACITY),
+                HeapNode::Directory {
+                    keys: keys.clone(),
+                    links: links.clone()
                 }
             }
         }
     }
 }
 
-enum Insertion<T: Debug + Clone + Ord> {
-    Inserted(Node<T>),
-    Duplicate,
-    NodeFull,
-}
+impl<T: Ord + Clone + Debug> Node for HeapNode<T> {
+    type Item = T;
+    type Reference = Rc<HeapNode<T>>;
 
-impl<T: Ord + Clone + Debug> Node<T> {
-    /// Returns the number of keys in the node. For directory nodes,
-    /// the number of links is always one greater than the number of
-    /// keys.
     fn size(&self) -> usize {
         match self {
-            &Node::Leaf { ref keys } => keys.len(),
-            &Node::Directory { ref keys, .. } => keys.len(),
+            &HeapNode::Leaf { ref keys, .. } => keys.len(),
+            &HeapNode::Directory { ref keys, .. } => keys.len()
         }
     }
 
-    fn capacity(&self) -> usize {
+    fn items(&self) -> &[Self::Item] {
         match self {
-            &Node::Leaf { ref keys } => keys.capacity(),
-            &Node::Directory { ref keys, .. } => keys.capacity(),
+            &HeapNode::Leaf { ref keys, .. } => keys,
+            &HeapNode::Directory { ref keys, .. } => keys
         }
     }
 
-    /// Splits a node in half, returning a tuple of the first half, separator key
-    /// and the second half. Should only be called on full nodes, because it assumes
-    /// that there are enough items in the node to create two new legal nodes.
-    fn split(&self) -> (Node<T>, T, Node<T>) {
-        assert_eq!(self.capacity(), KEY_CAPACITY);
-        // It's a logic error to invoke this when the node isn't full.
-        assert!(self.size() == KEY_CAPACITY);
-
-        let split_idx = self.size() / 2;
+    fn links(&self) -> &[Self::Reference] {
         match self {
-            &Node::Leaf { ref keys } => {
-                let (left_keys_slice, right_keys_and_sep) = keys.split_at(split_idx);
-                // Pop the separator off to be inserted into the parent.
-                let (sep, right_keys_slice) = right_keys_and_sep.split_first().unwrap();
-
-                let mut left_keys = Vec::with_capacity(KEY_CAPACITY);
-                let mut right_keys = Vec::with_capacity(KEY_CAPACITY);
-
-                left_keys.extend_from_slice(left_keys_slice);
-                right_keys.extend_from_slice(right_keys_slice);
-
-                let left = Node::Leaf { keys: left_keys };
-
-                let right = Node::Leaf { keys: right_keys };
-                (left, sep.clone(), right)
-            }
-            &Node::Directory {
-                ref keys,
-                ref links,
-            } => {
-                let (left_keys_slice, right_keys_and_sep) = keys.split_at(split_idx);
-                let (left_links_slice, right_links_slice) = links.split_at(split_idx + 1);
-                let (sep, right_keys_slice) = right_keys_and_sep.split_first().unwrap();
-
-                let left_keys = clone_vec!(left_keys_slice, KEY_CAPACITY);
-                let right_keys = clone_vec!(right_keys_slice, KEY_CAPACITY);
-
-                let left_links = clone_vec!(left_links_slice, LINK_CAPACITY);
-                let right_links = clone_vec!(right_links_slice, LINK_CAPACITY);
-
-                let left = Node::Directory {
-                    keys: left_keys,
-                    links: left_links,
-                };
-
-                let right = Node::Directory {
-                    keys: right_keys,
-                    links: right_links,
-                };
-
-                (left, sep.clone(), right)
-            }
+            &HeapNode::Directory { ref links, .. } => links,
+            _ => unimplemented!()
         }
     }
 
-    fn insert(&self, item: T) -> Insertion<T> {
+    fn save(self) -> Self::Reference {
+        Rc::new(self)
+    }
+
+    fn is_leaf(&self) -> bool {
         match self {
-            &Node::Leaf { ref keys } => {
-                if keys.len() < keys.capacity() {
-                    let idx = match keys.binary_search(&item) {
-                        Ok(_) => return Insertion::Duplicate,
-                        Err(idx) => idx,
-                    };
+            &HeapNode::Leaf { .. } => true,
+            &HeapNode::Directory { .. } => false
+        }
+    }
 
-                    let mut new_keys = clone_vec!(keys, KEY_CAPACITY);
-                    new_keys.insert(idx, item);
+    fn new_leaf(items: Vec<Self::Item>) -> Self {
+        HeapNode::Leaf { keys: items }
+    }
 
-                    Insertion::Inserted(Node::Leaf { keys: new_keys })
-                } else {
-                    Insertion::NodeFull
-                }
-            }
-            &Node::Directory {
-                ref keys,
-                ref links,
-            } => {
+    fn new_dir(items: Vec<Self::Item>, links: Vec<Self::Reference>) -> Self {
+        HeapNode::Directory {
+            keys: items,
+            links: links
+        }
+    }
 
-                assert!(keys.len() + 1 == links.len());
-
-                let idx = match keys.binary_search(&item) {
-                    Ok(_) => return Insertion::Duplicate,
-                    Err(idx) => idx,
-                };
-
-                let child = links.get(idx).unwrap();
-                let result = child.insert(item.clone());
-
-                match result {
-                    Insertion::Duplicate => Insertion::Duplicate,
-                    Insertion::Inserted(new_child) => {
-                        let mut new_links = clone_vec!(links, LINK_CAPACITY);
-                        new_links[idx] = Rc::new(new_child);
-
-                        Insertion::Inserted(Node::Directory {
-                                                keys: keys.clone(),
-                                                links: new_links,
-                                            })
-                    }
-                    Insertion::NodeFull => {
-                        // Child needs to be split, if we have space
-                        // for an extra link.
-                        if links.len() < links.capacity() {
-                            let (left, sep, right) = child.split();
-
-                            let mut new_keys = keys.clone();
-                            let mut new_links = links.clone();
-
-                            new_keys.insert(idx, sep);
-                            new_links[idx] = Rc::new(right);
-                            new_links.insert(idx, Rc::new(left));
-
-                            let dir = Node::Directory {
-                                links: new_links,
-                                keys: new_keys,
-                            };
-
-                            match dir.insert(item) {
-                                Insertion::Inserted(new_dir) => Insertion::Inserted(new_dir),
-                                _ => unreachable!(),
-                            }
-                        } else {
-                            Insertion::NodeFull
-                        }
-                    }
-                }
-            }
+    fn child(&self, idx: usize) -> Self {
+        match self {
+            &HeapNode::Directory { ref links, .. } => (*links[idx]).clone(),
+            _ => unimplemented!()
         }
     }
 }
 
-#[derive(Copy, Clone)]
+#[derive(Copy, Clone, Debug)]
 struct IterState<'a, T: 'a + Ord + Clone + Debug> {
-    node: &'a Node<T>,
+    node: &'a HeapNode<T>,
     link_idx: usize,
     key_idx: usize,
 }
 
+#[derive(Clone, Debug)]
 pub struct Iter<'a, T: 'a + Ord + Clone + Debug> {
     stack: Vec<IterState<'a, T>>,
 }
 
 impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
     type Item = &'a T;
+
     fn next(&mut self) -> Option<Self::Item> {
         loop {
             let context = match self.stack.pop() {
@@ -328,7 +215,7 @@ impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
 
             match context {
                 IterState {
-                    node: &Node::Leaf { ref keys },
+                    node: &HeapNode::Leaf { ref keys },
                     link_idx,
                     key_idx,
                 } => {
@@ -346,7 +233,7 @@ impl<'a, T: Ord + Clone + Debug> Iterator for Iter<'a, T> {
                     }
                 }
                 IterState {
-                    node: &Node::Directory {
+                    node: &HeapNode::Directory {
                         ref links,
                         ref keys,
                     },
@@ -396,10 +283,10 @@ mod tests {
     use itertools::*;
     use super::*;
 
-    fn enumerate_node<T: Clone + Ord + ::std::fmt::Debug>(node: &Node<T>) -> Vec<T> {
+    fn enumerate_node<T: Clone + Ord + ::std::fmt::Debug>(node: &HeapNode<T>) -> Vec<T> {
         match node {
-            &Node::Leaf { ref keys } => keys.clone(),
-            &Node::Directory {
+            &HeapNode::Leaf { ref keys } => keys.clone(),
+            &HeapNode::Directory {
                 ref links,
                 ref keys,
             } => {
