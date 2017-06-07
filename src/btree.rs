@@ -1,6 +1,19 @@
 use std::ops::RangeFrom;
+use std::fmt::Debug;
 
 pub const CAPACITY: usize = 512;
+
+/// Trait abstracting over anything that can be used as a
+/// KV store, where keys can only be added, not modified.
+pub trait KVStore
+    where Self: Sized
+{
+    type Key;
+    type Value;
+    type Error;
+    fn get(&self, key: &Self::Key) -> Result<Self::Value, Self::Error>;
+    fn add(&self, value: &Self::Value) -> Result<String, Self::Error>;
+}
 
 pub enum Insertion<N: Node> {
     Inserted(N),
@@ -9,23 +22,22 @@ pub enum Insertion<N: Node> {
 }
 
 pub trait Node where Self: Sized {
-    type Item: Ord + Clone;
+    type Item: Ord + Clone + Debug;
     type Reference: Clone;
+    type Store: KVStore<Key=Self::Reference, Value=Self>;
 
     /// Return the number of items in the node.
     fn size(&self) -> usize;
     /// Allocate the node, however applicable, and return a reference.
-    fn save(self) -> Self::Reference;
+    fn save(&self, store: &Self::Store) -> Self::Reference;
     fn is_leaf(&self) -> bool;
     fn items(&self) -> &[Self::Item];
     fn links(&self) -> &[Self::Reference];
 
-    fn by_ref(reference: &Self::Reference) -> Self;
-
     fn new_leaf(items: Vec<Self::Item>) -> Self;
     fn new_dir(items: Vec<Self::Item>, links: Vec<Self::Reference>) -> Self;
 
-    fn insert(&self, item: Self::Item) -> Insertion<Self> {
+    fn insert(&self, store: &Self::Store, item: Self::Item) -> Insertion<Self> {
         if self.is_leaf() {
             if self.size() < CAPACITY {
                 let idx = match self.items().binary_search(&item) {
@@ -46,7 +58,7 @@ pub trait Node where Self: Sized {
                 Err(idx) => idx
             };
 
-            let child = Self::by_ref(&self.links()[idx]);
+            let child = store.get(&self.links()[idx]).unwrap();
             let child_result = child.insert(item.clone());
 
             match child_result {
@@ -112,7 +124,7 @@ pub trait Node where Self: Sized {
 }
 
 
-pub fn iter_range_start<N: Node>(node_ref: N::Reference, range: RangeFrom<N::Item>) -> Iter<N> {
+pub fn iter_range_start<N: Node, S: KVStore>(store: S, node_ref: N::Reference, range: RangeFrom<N::Item>) -> Iter<N> {
     let mut stack = vec![
         IterState {
             node_ref,
@@ -125,7 +137,7 @@ pub fn iter_range_start<N: Node>(node_ref: N::Reference, range: RangeFrom<N::Ite
     loop {
         let state = stack.pop().unwrap();
 
-        let node: N = N::by_ref(&state.node_ref);
+        let node: N = store.get(&state.node_ref);
 
         match node.items().binary_search(&range.start) {
             Ok(idx) => {
@@ -175,16 +187,25 @@ pub struct Iter<N: Node> {
 }
 
 impl<N: Node> Iterator for Iter<N> {
-    type Item = N::Item;
+    type Item = Result<N::Item, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
-            let IterState { node_ref, link_idx, item_idx} = match self.stack.pop() {
+            let state @ IterState { node_ref, link_idx, item_idx} = match self.stack.pop() {
                 Some(frame) => frame,
                 None => return None,
             };
 
-            let node = N::by_ref(&node_ref);
+            let node = match self.get_ref(&node_ref) {
+                Ok(n) => n,
+                Err(e) => {
+                    // Push the old state back on the stack so a retry will get
+                    // the same item.
+                    self.stack.push(state);
+                    return Err(e)
+                }
+            };
+
             if node.is_leaf() {
                 if item_idx < node.size() {
                     let res = node.items()[item_idx].clone();
@@ -193,7 +214,7 @@ impl<N: Node> Iterator for Iter<N> {
                         link_idx,
                         item_idx: item_idx + 1,
                     });
-                    return Some(res);
+                    return Some(Ok(res));
                 } else {
                     continue; // pop the frame and continue
                 }

@@ -32,6 +32,8 @@ use chrono::prelude::{DateTime, UTC};
 pub mod parser;
 pub mod string_ref;
 pub mod btree;
+pub mod db;
+use db::Database;
 
 pub use parser::*;
 pub use string_ref::StringRef;
@@ -39,7 +41,7 @@ pub use string_ref::StringRef;
 mod durable;
 
 mod index;
-use index::Index;
+use index::{Index, HeapStore};
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -187,64 +189,6 @@ impl Clause {
             attribute: a,
             value: v,
         }
-    }
-}
-
-pub trait Database {
-    fn add(&mut self, fact: Fact);
-    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact>;
-    fn next_id(&self) -> u64;
-
-    fn transact(&mut self, tx: Tx) {
-        let tx_entity = Entity(self.next_id());
-        self.add(Fact::new(tx_entity, "txInstant", Value::Timestamp(UTC::now()), tx_entity));
-        for item in tx.items {
-            match item {
-                TxItem::Addition(f) => self.add(Fact::from_hypothetical(f, tx_entity)),
-                // TODO Implement retractions + new entities
-                TxItem::NewEntity(ht) => {
-                    let entity = Entity(self.next_id());
-                    for (k, v) in ht {
-                        self.add(Fact::new(entity, k, v, tx_entity))
-                    }
-                }
-                _ => unimplemented!(),
-            }
-        }
-    }
-
-    fn query(&self, query: &Query) -> QueryResult {
-        // TODO: automatically bind ?tx in queries
-        let mut bindings = vec![HashMap::new()];
-
-        for clause in &query.clauses {
-            let mut new_bindings = vec![];
-
-            for binding in bindings {
-                for fact in self.facts_matching(clause, &binding) {
-                    match unify(&binding, clause, &fact) {
-                        Ok(new_info) => {
-                            let mut new_env = binding.clone();
-                            new_env.extend(new_info);
-                            new_bindings.push(new_env)
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-
-            bindings = new_bindings;
-        }
-
-        for binding in bindings.iter_mut() {
-            *binding = binding
-                .iter()
-                .filter(|&(k, _)| query.find.contains(k))
-                .map(|(&var, value)| (var, value.clone()))
-                .collect();
-        }
-
-        QueryResult(query.find.clone(), bindings)
     }
 }
 
@@ -401,8 +345,9 @@ impl Clause {
 pub struct InMemoryLog {
     next_id: u64,
     eav: Index<Fact>,
-    ave: Index<AVE>,
-    aev: Index<AEV>,
+    ave: Index<Fact>,
+    aev: Index<Fact>,
+    store: HeapStore<Vec<u8>>
 }
 
 use std::collections::range::RangeArgument;
@@ -410,24 +355,16 @@ use std::collections::Bound;
 
 impl InMemoryLog {
     pub fn new() -> InMemoryLog {
+        let store = HeapStore::default();
         InMemoryLog {
+            store: store,
             next_id: 0,
-            eav: Index::new(),
-            ave: Index::new(),
-            aev: Index::new(),
+            eav: Index::new(&store),
+            ave: Index::new(&store),
+            aev: Index::new(&store),
         }
     }
 }
-
-// impl IntoIterator for InMemoryLog {
-//     type Item = Fact;
-//     type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
-
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.eav.into_iter()
-//     }
-// }
-
 
 impl Database for InMemoryLog {
     fn next_id(&self) -> u64 {
@@ -439,9 +376,9 @@ impl Database for InMemoryLog {
             self.next_id = fact.entity.0 + 1;
         }
 
-        self.eav = self.eav.insert(fact.clone());
-        self.ave = self.ave.insert(AVE(fact.clone()));
-        self.aev = self.aev.insert(AEV(fact));
+        self.eav = self.eav.insert(&self.store, fact.clone());
+        self.ave = self.ave.insert(&self.store, AVE(fact.clone()));
+        self.aev = self.aev.insert(&self.store, AEV(fact));
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
@@ -457,7 +394,8 @@ impl Database for InMemoryLog {
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
-                    .map(|ave| ave.0)
+                    // FIXME: handle errors instead of unwrapping
+                    .map(|res| res.unwrap().0)
                     .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
             }

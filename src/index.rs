@@ -1,27 +1,40 @@
-use std::rc::Rc;
+use std::sync::Arc;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
+use std::collections::HashMap;
+use std::marker::PhantomData;
+use uuid::Uuid;
 
-use btree::{Node, Insertion, Iter, IterState, iter_range_start};
+use btree::{Node, Insertion, Iter, IterState, KVStore, iter_range_start};
 
 #[derive(Clone, Debug)]
-pub struct Index<T: Ord + Clone + Debug> {
-    root: Rc<HeapNode<T>>,
+pub struct Index<T> {
+    root: String,
+    phantom: PhantomData<T>
 }
 
 impl<T: Ord + Clone + Debug> Index<T> {
-    pub fn new() -> Index<T> {
-        Index { root: Rc::new(HeapNode::Leaf { keys: vec![] }) }
+    pub fn new(store: &HeapStore<T>) -> Index<T> {
+        let root = store.add(&HeapNode::Leaf { keys: vec![] }).unwrap();
+        Index { root: root, phantom: PhantomData }
     }
 
-    pub fn insert(&self, item: T) -> Index<T> {
-        match self.root.insert(item.clone()) {
+    pub fn insert(&self, store: &HeapStore<T>, item: T) -> Index<T> {
+        match store.get(&self.root).unwrap().insert(store, item.clone()) {
             Insertion::Duplicate => self.clone(),
-            Insertion::Inserted(new_root) => Index { root: Rc::new(new_root) },
+            Insertion::Inserted(new_root) => {
+                // FIXME: handle errors
+                let root_ref = store.add(&new_root).unwrap();
+                // FIXME: update the db contents
+                Index { root: root_ref, phantom: PhantomData }
+            }
             Insertion::NodeFull => {
                 // Need to make a new root; the whole tree is full.
-                let (left, sep, right) = self.root.split();
-                let new_root_links = vec![Rc::new(left), Rc::new(right)];
+                // FIXME: error handling
+                let (left, sep, right) = store.get(&self.root).unwrap().split();
+                let left_ref = store.add(&left).unwrap();
+                let right_ref = store.add(&right).unwrap();
+                let new_root_links = vec![left_ref, right_ref];
                 let new_root_keys = vec![sep];
 
                 let new_root = HeapNode::Directory {
@@ -29,8 +42,11 @@ impl<T: Ord + Clone + Debug> Index<T> {
                     keys: new_root_keys,
                 };
 
-                match new_root.insert(item) {
-                    Insertion::Inserted(root) => Index { root: Rc::new(root) },
+                match new_root.insert(store, item) {
+                    Insertion::Inserted(root) => Index {
+                        root: store.add(&root).unwrap(),
+                        phantom: PhantomData
+                    },
                     _ => unreachable!(),
                 }
             }
@@ -47,44 +63,47 @@ impl<T: Ord + Clone + Debug> Index<T> {
         Iter { stack: stack }
     }
 
-    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Iter<HeapNode<T>> {
-        iter_range_start(self.root.clone(), range)
+    pub fn iter_range_from(&self, store: HeapStore<T>, range: RangeFrom<T>) -> Iter<HeapNode<T>> {
+        iter_range_start(store, self.root.clone(), range)
     }
 }
 
-#[derive(Debug)]
+#[derive(Debug, PartialEq, Eq, PartialOrd, Ord, Clone)]
 pub enum HeapNode<T: Ord + Clone + Debug> {
     Directory {
         keys: Vec<T>,
-        links: Vec<Rc<HeapNode<T>>>,
+        links: Vec<String>,
     },
     Leaf { keys: Vec<T> },
 }
 
-// When a node is cloned, we need to make sure that cloned vectors
-// preserve their capacities again.
-// FIXME: Sharing references (Arcs?) to vectors instead of cloning them might
-// render this unnecessary.
-impl<T: Clone + Ord + Debug> Clone for HeapNode<T> {
-    fn clone(&self) -> HeapNode<T> {
-        match self {
-            &HeapNode::Leaf { ref keys } => HeapNode::Leaf { keys: keys.clone() },
-            &HeapNode::Directory {
-                ref keys,
-                ref links,
-            } => {
-                HeapNode::Directory {
-                    keys: keys.clone(),
-                    links: links.clone()
-                }
-            }
-        }
+#[derive(Debug)]
+pub struct HeapStore<T: Debug + Ord + Clone>(HashMap<String, HeapNode<T>>);
+
+impl<T: Debug + Clone + Ord> Default for HeapStore<T> {
+    fn default() -> HeapStore<T> {
+        HeapStore(HashMap::default())
+    }
+}
+impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
+    type Key = String;
+    type Value = HeapNode<T>;
+    type Error = String;
+
+    fn get(&self, key: &Self::Key) -> Result<Self::Value, Self::Error> {
+        self.0.get(key).map(|v| v.clone()).ok_or("Ref not found in store!".into())
+    }
+
+    fn add(&self, value: &Self::Value) -> Result<Self::Key, Self::Error> {
+        let k = Uuid::new_v4().to_string();
+        self.0.insert(k, value.clone()).map(|_| k).ok_or("Ref could not be added to store".into())
     }
 }
 
 impl<T: Ord + Clone + Debug> Node for HeapNode<T> {
     type Item = T;
-    type Reference = Rc<HeapNode<T>>;
+    type Reference = String;
+    type Store = HeapStore<T>;
 
     fn size(&self) -> usize {
         match self {
@@ -107,8 +126,8 @@ impl<T: Ord + Clone + Debug> Node for HeapNode<T> {
         }
     }
 
-    fn save(self) -> Self::Reference {
-        Rc::new(self)
+    fn save(&self, store: &Self::Store) -> Self::Reference {
+        store.add(self).unwrap()
     }
 
     fn is_leaf(&self) -> bool {
@@ -127,10 +146,6 @@ impl<T: Ord + Clone + Debug> Node for HeapNode<T> {
             keys: items,
             links: links
         }
-    }
-
-    fn by_ref(reference: &Rc<HeapNode<T>>) -> Self {
-        (**reference).clone()
     }
 }
 

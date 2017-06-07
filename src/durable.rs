@@ -1,35 +1,33 @@
 use std::path::Path;
+use std::marker::PhantomData;
+use std::fmt::Debug;
 use serde::ser::Serialize;
 use serde::de::Deserialize;
 use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
 use uuid::Uuid;
 
-/// Trait abstracting over anything that can be used as a disk-backed
-/// KV store, where keys can only be added, not modified.
-trait KVStore<V>
-    where Self: Sized
-{
-    type Node;
-    type Error;
-    fn get(&self, key: &str) -> Result<Self::Node, Self::Error>;
-    fn add(&self, value: &Self::Node) -> Result<String, Self::Error>;
-}
+use btree::{Node, Insertion, Iter, IterState, KVStore};
 
 /// Representation of a B-tree node that is serializable to disk.
 /// Contains a vector of keys (i.e. the contents of the B-tree) and a
 /// vector of links, which are strings that correspond to keys in the
 /// KV store.
-// FIXME: overloaded use of `key`
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct DurableNode<V> {
-    keys: Vec<V>,
-    links: Vec<String>,
+enum DurableNode<V> {
+    Directory {
+        items: Vec<V>,
+        links: Vec<String>,
+    },
+    Leaf {
+        items: Vec<V>,
+    }
 }
 
-struct SqliteStore {
+struct SqliteStore<V> {
     conn: sql::Connection,
     db_contents: DbContents,
+    phantom: PhantomData<V>
 }
 
 #[derive(Debug)]
@@ -56,7 +54,7 @@ struct DbContents {
     aev_index: String,
 }
 
-impl SqliteStore {
+impl<'de, V: Serialize + Deserialize<'de>> SqliteStore<V> {
     /// Sets the DbContents struct to point to a new set of indices,
     /// both in memory and durably.
     fn set_contents(&mut self, contents: DbContents) -> Result<(), Error> {
@@ -71,7 +69,7 @@ impl SqliteStore {
         Ok(())
     }
 
-    fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore, Error> {
+    fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore<V>, Error> {
         let conn = sql::Connection::open(path)?;
 
         // Set up SQLite tables to track index data
@@ -82,6 +80,7 @@ impl SqliteStore {
             conn: conn,
             // This DbContents will be overridden no matter what, but we need to create
             // the Store struct now in order to use its `add` method.
+            phantom: PhantomData,
             db_contents: DbContents {
                 eav_index: "dummy".to_string(),
                 ave_index: "dummy".to_string(),
@@ -111,9 +110,8 @@ impl SqliteStore {
             }
             Err(err) => {
                 println!("{}", err.to_string());
-                let empty_root: DurableNode<super::Fact> = DurableNode {
-                    keys: vec![],
-                    links: vec![],
+                let empty_root: DurableNode<V> = DurableNode::Leaf {
+                    items: vec![]
                 };
                 let eav_root = store.add(&empty_root)?;
                 let aev_root = store.add(&empty_root)?;
@@ -132,17 +130,16 @@ impl SqliteStore {
     }
 }
 
-impl<'de, V> KVStore<V> for SqliteStore
-    where V: Serialize + Deserialize<'de>
-{
-    type Node = DurableNode<V>;
+impl<'de, V: Serialize + Deserialize<'de>> KVStore for SqliteStore<V> {
+    type Key = String;
+    type Value = DurableNode<V>;
     type Error = String;
 
-    fn get(&self, key: &str) -> Result<Self::Node, Self::Error> {
+    fn get(&self, key: &String) -> Result<Self::Value, Self::Error> {
         let mut stmt = self.conn
             .prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
-        match stmt.query_row(&[&key], |row| {
+        match stmt.query_row(&[key], |row| {
             let s: Vec<u8> = row.get(0);
             s
         }) {
@@ -160,7 +157,7 @@ impl<'de, V> KVStore<V> for SqliteStore
         }
     }
 
-    fn add(&self, value: &Self::Node) -> Result<String, Self::Error> {
+    fn add(&self, value: &Self::Value) -> Result<String, Self::Error> {
         let key = Uuid::new_v4().to_string();
         let mut buf = Vec::new();
         value.serialize(&mut Serializer::new(&mut buf)).unwrap();
@@ -175,6 +172,51 @@ impl<'de, V> KVStore<V> for SqliteStore
     }
 }
 
+impl<'de, V> Node for DurableNode<V>
+    where V: Clone + Ord + Debug + Serialize + Deserialize<'de>
+{
+    type Item = V;
+    type Reference = String;
+    type Store = SqliteStore<V>;
+
+    fn size(&self) -> usize {
+        self.items().len()
+    }
+
+    fn items(&self) -> &[Self::Item] {
+        match self {
+            &DurableNode::Leaf { items, .. } => &items,
+            &DurableNode::Directory { items, .. } => &items
+        }
+    }
+
+    fn links(&self) -> &[Self::Reference] {
+        match self {
+            &DurableNode::Leaf { .. } => panic!("Attempted to call links() on a leaf node."),
+            &DurableNode::Directory { links, .. } => &links
+        }
+    }
+
+    fn save(&self, store: &Self::Store) -> Self::Reference {
+        store.add(self).unwrap() // FIXME! handle errors
+    }
+
+    fn is_leaf(&self) -> bool {
+        match self {
+            &DurableNode::Leaf { .. } => true,
+            _ => false
+        }
+    }
+
+    fn new_leaf(items: Vec<Self::Item>) -> Self {
+        DurableNode::Leaf {items}
+    }
+
+    fn new_dir(items: Vec<Self::Item>, links: Vec<Self::Reference>) -> Self {
+        DurableNode::Directory {items, links}
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -183,9 +225,9 @@ mod tests {
 
     #[test]
     fn test_kv_store() {
-        let root: DurableNode<String> = DurableNode {
+        let root: DurableNode<String> = DurableNode::Directory {
             links: vec![],
-            keys: vec![],
+            items: vec![],
         };
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
         let key = store.add(&root).unwrap();
@@ -195,9 +237,9 @@ mod tests {
 
     #[bench]
     fn bench_kv_insert(b: &mut Bencher) {
-        let root: DurableNode<String> = DurableNode {
+        let root: DurableNode<String> = DurableNode::Directory {
             links: vec![],
-            keys: vec![],
+            items: vec![],
         };
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
 
