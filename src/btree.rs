@@ -6,13 +6,28 @@ use uuid::Uuid;
 
 pub const CAPACITY: usize = 512;
 
+pub trait KVStore : Clone {
+    type Item;
+
+    fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String>;
+    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String>;
+}
+
 // HashMap pretending to be a database
 #[derive(Clone, Debug)]
 pub struct HeapStore<T: Debug + Ord + Clone> {
     inner: Arc<Mutex<HashMap<String, IndexNode<T>>>>,
 }
 
-impl<T: Debug + Ord + Clone> HeapStore<T> {
+impl<T: Ord + Debug + Clone> HeapStore<T> {
+    pub fn new() -> HeapStore<T> {
+        HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) }
+    }
+}
+
+impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
+    type Item = T;
+
     fn add(&self, value: IndexNode<T>) -> Result<String, String> {
         let key = Uuid::new_v4().to_string();
         let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
@@ -34,8 +49,8 @@ impl<T: Debug + Ord + Clone> HeapStore<T> {
 }
 
 #[derive(Clone)]
-pub struct Index<T: Debug + Ord + Clone> {
-    store: HeapStore<T>,
+pub struct Index<T: Debug + Ord + Clone, S: KVStore<Item = T>> {
+    store: S,
     root_ref: String,
 }
 
@@ -52,16 +67,14 @@ pub enum IndexNode<T> {
     Leaf { items: Vec<T> },
 }
 
-impl<T: Debug + Ord + Clone> Index<T> {
-    pub fn new() -> Result<Self, String> {
-        let store = HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) };
-
+impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
+    pub fn new(store: S) -> Result<Self, String> {
         let root = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add(root)?;
         Ok(Index { store, root_ref })
     }
 
-    pub fn insert(&self, item: T) -> Result<Index<T>, String> {
+    pub fn insert(&self, item: T) -> Result<Index<T, S>, String> {
         let new_root = self.store
             .get(&self.root_ref)
             .and_then(|root| root.insert(item.clone(), &self.store));
@@ -109,7 +122,7 @@ impl<T: Debug + Ord + Clone> Index<T> {
         }
     }
 
-    pub fn iter(&self) -> Iter<T> {
+    pub fn iter(&self) -> Iter<T, S> {
         Iter {
             store: self.store.clone(),
             stack: vec![
@@ -124,7 +137,7 @@ impl<T: Debug + Ord + Clone> Index<T> {
 
     // FIXME: Better would be to have this return either the Iter or,
     // if the store causes an error, to yield the error as the first iterator item.
-    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T>, String> {
+    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T, S>, String> {
         let mut stack = vec![
             IterState {
                 node_ref: self.root_ref.clone(),
@@ -198,7 +211,9 @@ impl<T: Debug + Ord + Clone> Index<T> {
 }
 
 impl<T: Debug + Ord + Clone> IndexNode<T> {
-    fn insert(&self, item: T, store: &HeapStore<T>) -> Result<Insertion<IndexNode<T>>, String> {
+    fn insert<S: KVStore<Item=T>>(&self, item: T, store: &S)
+                                  -> Result<Insertion<IndexNode<T>>, String>
+    {
         use self::IndexNode::{Leaf, Dir};
 
         match self {
@@ -327,12 +342,12 @@ pub struct IterState {
 }
 
 #[derive(Clone, Debug)]
-pub struct Iter<T: Ord + Debug + Clone> {
-    store: HeapStore<T>,
+pub struct Iter<T: Ord + Debug + Clone, S: KVStore<Item=T>> {
+    store: S,
     pub stack: Vec<IterState>,
 }
 
-impl<T: Debug + Ord + Clone> Iterator for Iter<T> {
+impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Iterator for Iter<T, S> {
     type Item = Result<T, String>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -412,7 +427,8 @@ mod tests {
 
     #[test]
     fn test_leaf_insert() {
-        let mut idx: Index<u64> = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut idx: Index<u64, HeapStore<u64>> = Index::new(store).unwrap();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i).unwrap();
@@ -421,7 +437,8 @@ mod tests {
 
     #[test]
     fn test_tree_iter() {
-        let mut idx: Index<usize> = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut idx: Index<usize, HeapStore<usize>> = Index::new(store).unwrap();
         let range = 0..65535;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
@@ -432,7 +449,8 @@ mod tests {
 
     #[test]
     fn test_range_iter() {
-        let mut idx = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut idx = Index::new(store).unwrap();
         let full_range = 0usize..10_000;
         let range = 1457usize..;
 
@@ -447,7 +465,8 @@ mod tests {
 
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
-        let mut tree = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut tree = Index::new(store).unwrap();
         let mut n = 0usize;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -457,7 +476,8 @@ mod tests {
 
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
-        let mut tree = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut tree = Index::new(store).unwrap();
         let mut n = 0usize;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -469,7 +489,8 @@ mod tests {
     #[bench]
     fn bench_iter(b: &mut Bencher) {
         let n = 10_000;
-        let mut tree = Index::new().unwrap();
+        let store = HeapStore::new();
+        let mut tree = Index::new(store).unwrap();
         for i in 0..n {
             tree = tree.insert(i).unwrap();
         }

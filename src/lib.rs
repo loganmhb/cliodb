@@ -38,7 +38,7 @@ pub use string_ref::StringRef;
 
 mod durable;
 
-use btree::Index;
+use btree::{Index, HeapStore};
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -398,9 +398,9 @@ impl Clause {
 
 pub struct InMemoryLog {
     next_id: u64,
-    eav: Index<Fact>,
-    ave: Index<AVE>,
-    aev: Index<AEV>,
+    eav: Index<Fact, HeapStore<Fact>>,
+    ave: Index<AVE, HeapStore<AVE>>,
+    aev: Index<AEV, HeapStore<AEV>>,
 }
 
 use std::collections::range::RangeArgument;
@@ -408,11 +408,15 @@ use std::collections::Bound;
 
 impl InMemoryLog {
     pub fn new() -> Result<InMemoryLog, String> {
+        // FIXME: share stores by changing Ord usage
+        let store1 = HeapStore::new();
+        let store2 = HeapStore::new();
+        let store3 = HeapStore::new();
         Ok(InMemoryLog {
             next_id: 0,
-            eav: Index::new()?,
-            ave: Index::new()?,
-            aev: Index::new()?,
+            eav: Index::new(store1)?,
+            ave: Index::new(store2)?,
+            aev: Index::new(store3)?,
         })
     }
 }
