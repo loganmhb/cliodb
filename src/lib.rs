@@ -38,8 +38,7 @@ pub use string_ref::StringRef;
 
 mod durable;
 
-mod index;
-use index::Index;
+use btree::Index;
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -397,7 +396,6 @@ impl Clause {
     }
 }
 
-#[derive(Debug)]
 pub struct InMemoryLog {
     next_id: u64,
     eav: Index<Fact>,
@@ -409,13 +407,13 @@ use std::collections::range::RangeArgument;
 use std::collections::Bound;
 
 impl InMemoryLog {
-    pub fn new() -> InMemoryLog {
-        InMemoryLog {
+    pub fn new() -> Result<InMemoryLog, String> {
+        Ok(InMemoryLog {
             next_id: 0,
-            eav: Index::new(),
-            ave: Index::new(),
-            aev: Index::new(),
-        }
+            eav: Index::new()?,
+            ave: Index::new()?,
+            aev: Index::new()?,
+        })
     }
 }
 
@@ -439,9 +437,9 @@ impl Database for InMemoryLog {
             self.next_id = fact.entity.0 + 1;
         }
 
-        self.eav = self.eav.insert(fact.clone());
-        self.ave = self.ave.insert(AVE(fact.clone()));
-        self.aev = self.aev.insert(AEV(fact));
+        self.eav = self.eav.insert(fact.clone()).unwrap();
+        self.ave = self.ave.insert(AVE(fact.clone())).unwrap();
+        self.aev = self.aev.insert(AEV(fact)).unwrap();
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
@@ -457,11 +455,13 @@ impl Database for InMemoryLog {
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
                     .iter_range_from(AVE(range_start)..)
+                    .unwrap()
+                    .map(|res| res.unwrap())
                     .map(|ave| ave.0)
                     .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
             }
-            // e a ?v => use the eav index
+            // // e a ?v => use the eav index
             Clause {
                 entity: Term::Bound(e),
                 attribute: Term::Bound(a),
@@ -471,6 +471,8 @@ impl Database for InMemoryLog {
                 let range_start = Fact::new(e, a.clone(), Value::String("".into()), Entity(0));
                 self.eav
                     .iter_range_from(range_start..)
+                    .unwrap()
+                    .map(|f| f.unwrap())
                     .take_while(|f| f.entity == e && f.attribute == a)
                     .collect()
             }
@@ -479,6 +481,7 @@ impl Database for InMemoryLog {
             _ => {
                 self.eav
                     .iter()
+                    .map(|f| f.unwrap()) // FIXME this is not safe :D
                     .filter(|f| unify(&binding, &clause, &f).is_ok())
                     .collect()
             }
@@ -569,7 +572,7 @@ mod tests {
     }
 
     fn test_db() -> InMemoryLog {
-        let mut db = InMemoryLog::new();
+        let mut db = InMemoryLog::new().unwrap();
         let facts = vec![
             Hypothetical::new(Entity(0), "name", "Bob"),
             Hypothetical::new(Entity(1), "name", "John"),
@@ -584,7 +587,7 @@ mod tests {
 
     #[allow(dead_code)]
     fn test_db_large() -> InMemoryLog {
-        let mut db = InMemoryLog::new();
+        let mut db = InMemoryLog::new().unwrap();
         let n = 10_000_000;
 
         for i in 0..n {
@@ -743,7 +746,7 @@ mod tests {
 
     #[bench]
     fn bench_add(b: &mut Bencher) {
-        let mut db = InMemoryLog::new();
+        let mut db = InMemoryLog::new().unwrap();
 
         let a = String::from("blah");
 

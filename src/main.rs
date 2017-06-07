@@ -15,7 +15,7 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let mut rl = rustyline::Editor::<()>::new();
-    let mut db = InMemoryLog::new();
+    let mut db = InMemoryLog::new().unwrap();
     loop {
         let readline = rl.readline("> ");
         match readline {
@@ -29,7 +29,7 @@ Commands:
                     Ok(Input::Query(q)) => println!("{}", db.query(&q)),
                     Ok(Input::Tx(tx)) => db.transact(tx),
                     Ok(Input::SampleDb) => {
-                        db = InMemoryLog::new();
+                        db = InMemoryLog::new().unwrap();
 
                         let sample = [
                             r#"add (0 name "Bob")"#,
