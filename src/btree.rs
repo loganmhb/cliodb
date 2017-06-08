@@ -1,3 +1,4 @@
+use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
@@ -48,10 +49,16 @@ impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
     }
 }
 
+pub trait Comparator : Clone {
+    type Item;
+    fn compare(a: &Self::Item, b: &Self::Item) -> Ordering;
+}
+
 #[derive(Clone)]
-pub struct Index<T: Debug + Ord + Clone, S: KVStore<Item = T>> {
+pub struct Index<T: Debug + Ord + Clone, S: KVStore<Item = T>, C: Comparator<Item=T>> {
     store: S,
     root_ref: String,
+    comparator: C,
 }
 
 
@@ -67,25 +74,28 @@ pub enum IndexNode<T> {
     Leaf { items: Vec<T> },
 }
 
-impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
-    pub fn new(store: S) -> Result<Self, String> {
+impl<T, S, C> Index<T, S, C>
+    where T: Debug + Ord + Clone, S: KVStore<Item=T>, C: Comparator<Item=T>
+{
+    pub fn new(store: S, comparator: C) -> Result<Self, String> {
         let root = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add(root)?;
-        Ok(Index { store, root_ref })
+        Ok(Index { store, root_ref, comparator })
     }
 
-    pub fn insert(&self, item: T) -> Result<Index<T, S>, String> {
+    pub fn insert(&self, item: T) -> Result<Index<T, S, C>, String> {
         let new_root = self.store
             .get(&self.root_ref)
-            .and_then(|root| root.insert(item.clone(), &self.store));
+            .and_then(|root| root.insert(item.clone(), &self.store, &self.comparator));
 
         match new_root {
             Ok(Insertion::Inserted(root)) => {
                 let root_ref = self.store.add(root)?;
                 Ok(Index {
-                       root_ref,
-                       store: self.store.clone(),
-                   })
+                    root_ref,
+                    comparator: self.comparator.clone(),
+                    store: self.store.clone(),
+                })
             }
 
             Ok(Insertion::Duplicate) => Ok((*self).clone()),
@@ -106,13 +116,14 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
                     items: new_root_items,
                 };
 
-                match new_root.insert(item, &self.store)? {
+                match new_root.insert(item, &self.store, &self.comparator)? {
                     Insertion::Inserted(root) => {
                         let root_ref = self.store.add(root)?;
                         Ok(Index {
-                               store: self.store.clone(),
-                               root_ref,
-                           })
+                            store: self.store.clone(),
+                            comparator: self.comparator.clone(),
+                            root_ref,
+                        })
                     }
                     _ => unreachable!(),
                 }
@@ -154,7 +165,7 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
 
             match node {
                 IndexNode::Leaf { items } => {
-                    match items.binary_search(&range.start) {
+                    match items.binary_search_by(|other| C::compare(other, &range.start)) {
                         Ok(idx) => {
                             stack.push(IterState {
                                            item_idx: idx,
@@ -179,7 +190,7 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
                     }
                 }
                 IndexNode::Dir { items, links } => {
-                    match items.binary_search(&range.start) {
+                    match items.binary_search_by(|other| C::compare(other, &range.start)) {
                         Ok(idx) => {
                             stack.push(IterState {
                                            item_idx: idx,
@@ -211,15 +222,15 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Index<T, S> {
 }
 
 impl<T: Debug + Ord + Clone> IndexNode<T> {
-    fn insert<S: KVStore<Item=T>>(&self, item: T, store: &S)
-                                  -> Result<Insertion<IndexNode<T>>, String>
+    fn insert<S, C>(&self, item: T, store: &S, comparator: &C) -> Result<Insertion<IndexNode<T>>, String>
+        where S: KVStore<Item=T>, C: Comparator<Item=T>
     {
         use self::IndexNode::{Leaf, Dir};
 
         match self {
             &Leaf { ref items } => {
                 if items.len() < CAPACITY {
-                    let idx = match items.binary_search(&item) {
+                    let idx = match items.binary_search_by(|other| C::compare(other, &item)) {
                         Ok(_) => return Ok(Insertion::Duplicate),
                         Err(idx) => idx,
                     };
@@ -237,13 +248,13 @@ impl<T: Debug + Ord + Clone> IndexNode<T> {
                 ref items,
                 ref links,
             } => {
-                let idx = match items.binary_search(&item) {
+                let idx = match items.binary_search_by(|other| C::compare(other, &item)) {
                     Ok(_) => return Ok(Insertion::Duplicate),
                     Err(idx) => idx,
                 };
 
                 let child = store.get(&links[idx])?;
-                let child_result = child.insert(item.clone(), store)?;
+                let child_result = child.insert(item.clone(), store, comparator)?;
 
                 match child_result {
                     Insertion::Duplicate => Ok(Insertion::Duplicate),
@@ -277,7 +288,7 @@ impl<T: Debug + Ord + Clone> IndexNode<T> {
                                 links: new_links,
                             };
 
-                            match dir.insert(item, store)? {
+                            match dir.insert(item, store, comparator)? {
                                 Insertion::Inserted(new_dir) => Ok(Insertion::Inserted(new_dir)),
                                 // If it's a dup we wouldn't have gotten NodeFull; since we just split
                                 // we won't get NodeFull again. Therefore anything else is unreachable.
@@ -425,10 +436,21 @@ mod tests {
     extern crate test;
     use self::test::Bencher;
 
+    #[derive(Clone)]
+    struct NumComparator;
+
+    impl Comparator for NumComparator {
+        type Item = u64;
+
+        fn compare(a: &u64, b: &u64) -> Ordering {
+            a.cmp(b)
+        }
+    }
     #[test]
     fn test_leaf_insert() {
         let store = HeapStore::new();
-        let mut idx: Index<u64, HeapStore<u64>> = Index::new(store).unwrap();
+        let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
+            Index::new(store, NumComparator).unwrap();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i).unwrap();
@@ -438,21 +460,22 @@ mod tests {
     #[test]
     fn test_tree_iter() {
         let store = HeapStore::new();
-        let mut idx: Index<usize, HeapStore<usize>> = Index::new(store).unwrap();
+        let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
+            Index::new(store, NumComparator).unwrap();
         let range = 0..65535;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
         }
         assert_eq!(idx.iter().map(|x| x.unwrap()).collect::<Vec<_>>(),
-                   range.collect::<Vec<usize>>());
+                   range.collect::<Vec<u64>>());
     }
 
     #[test]
     fn test_range_iter() {
         let store = HeapStore::new();
-        let mut idx = Index::new(store).unwrap();
-        let full_range = 0usize..10_000;
-        let range = 1457usize..;
+        let mut idx = Index::new(store, NumComparator).unwrap();
+        let full_range = 0u64..10_000;
+        let range = 1457u64..;
 
         for i in full_range.clone() {
             idx = idx.insert(i).unwrap();
@@ -466,8 +489,8 @@ mod tests {
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
         let store = HeapStore::new();
-        let mut tree = Index::new(store).unwrap();
-        let mut n = 0usize;
+        let mut tree = Index::new(store, NumComparator).unwrap();
+        let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
                    n += 1;
@@ -477,8 +500,8 @@ mod tests {
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
         let store = HeapStore::new();
-        let mut tree = Index::new(store).unwrap();
-        let mut n = 0usize;
+        let mut tree = Index::new(store, NumComparator).unwrap();
+        let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
                    n = (n + 1) % 512;
@@ -490,7 +513,7 @@ mod tests {
     fn bench_iter(b: &mut Bencher) {
         let n = 10_000;
         let store = HeapStore::new();
-        let mut tree = Index::new(store).unwrap();
+        let mut tree = Index::new(store, NumComparator).unwrap();
         for i in 0..n {
             tree = tree.insert(i).unwrap();
         }

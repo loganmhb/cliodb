@@ -38,7 +38,7 @@ pub use string_ref::StringRef;
 
 mod durable;
 
-use btree::{Index, HeapStore};
+use btree::{Index, HeapStore, Comparator};
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -306,48 +306,16 @@ impl PartialEq<Fact> for Hypothetical {
     }
 }
 
-macro_rules! impl_range_arg {
-    ($name:ident) => {
-        impl RangeArgument<$name> for $name {
-            fn start(&self) -> Bound<&$name> {
-                Bound::Included(&self)
-            }
+impl RangeArgument<Fact> for Fact {
+    fn start(&self) -> Bound<&Fact> {
+        Bound::Included(&self)
+    }
 
-            fn end(&self) -> Bound<&$name> {
-                Bound::Unbounded
-            }
-        }
-    };
+    fn end(&self) -> Bound<&Fact> {
+        Bound::Unbounded
+    }
 }
 
-macro_rules! index_wrapper {
-    ($name:ident; $i1:ident, $i2:ident, $i3:ident) => {
-        #[derive(PartialEq, Eq, Serialize, Deserialize, Debug, Clone)]
-        struct $name(Fact);
-
-        impl PartialOrd for $name {
-            fn partial_cmp(&self, other: &$name) -> Option<std::cmp::Ordering> {
-                Some(self.cmp(other))
-            }
-        }
-
-        impl Ord for $name {
-            fn cmp(&self, other: &$name) -> std::cmp::Ordering {
-                let (this, other) = (&self.0, &other.0);
-                this.$i1
-                    .cmp(&other.$i1)
-                    .then(this.$i2.cmp(&other.$i2))
-                    .then(this.$i3.cmp(&other.$i3))
-            }
-        }
-
-        impl_range_arg!($name);
-    };
-}
-
-index_wrapper!(AVE; attribute, value, entity);
-index_wrapper!(AEV; attribute, entity, value);
-impl_range_arg!(Fact);
 
 type Binding = HashMap<Var, Value>;
 
@@ -396,11 +364,34 @@ impl Clause {
     }
 }
 
+
+macro_rules! comparator {
+    ($name:ident, $first:ident, $second:ident, $third:ident, $fourth:ident) => {
+        #[derive(Debug, Clone)]
+        struct $name;
+
+        impl Comparator for $name {
+            type Item = Fact;
+
+            fn compare(a: &Fact, b: &Fact) -> std::cmp::Ordering {
+                a.$first.cmp(&b.$first)
+                    .then(a.$second.cmp(&b.$second))
+                    .then(a.$third.cmp(&b.$third))
+                    .then(a.$fourth.cmp(&b.$fourth))
+            }
+        }
+    }
+}
+
+comparator!(EAVT, entity, attribute, value, tx);
+comparator!(AEVT, attribute, entity, value, tx);
+comparator!(AVET, attribute, value, entity, tx);
+
 pub struct InMemoryLog {
     next_id: u64,
-    eav: Index<Fact, HeapStore<Fact>>,
-    ave: Index<AVE, HeapStore<AVE>>,
-    aev: Index<AEV, HeapStore<AEV>>,
+    eav: Index<Fact, HeapStore<Fact>, EAVT>,
+    ave: Index<Fact, HeapStore<Fact>, AVET>,
+    aev: Index<Fact, HeapStore<Fact>, AEVT>,
 }
 
 use std::collections::range::RangeArgument;
@@ -409,27 +400,15 @@ use std::collections::Bound;
 impl InMemoryLog {
     pub fn new() -> Result<InMemoryLog, String> {
         // FIXME: share stores by changing Ord usage
-        let store1 = HeapStore::new();
-        let store2 = HeapStore::new();
-        let store3 = HeapStore::new();
+        let store = HeapStore::new();
         Ok(InMemoryLog {
             next_id: 0,
-            eav: Index::new(store1)?,
-            ave: Index::new(store2)?,
-            aev: Index::new(store3)?,
+            eav: Index::new(store.clone(), EAVT)?,
+            ave: Index::new(store.clone(), AVET)?,
+            aev: Index::new(store, AEVT)?,
         })
     }
 }
-
-// impl IntoIterator for InMemoryLog {
-//     type Item = Fact;
-//     type IntoIter = <std::collections::BTreeSet<Fact> as IntoIterator>::IntoIter;
-
-//     fn into_iter(self) -> Self::IntoIter {
-//         self.eav.into_iter()
-//     }
-// }
-
 
 impl Database for InMemoryLog {
     fn next_id(&self) -> u64 {
@@ -442,8 +421,8 @@ impl Database for InMemoryLog {
         }
 
         self.eav = self.eav.insert(fact.clone()).unwrap();
-        self.ave = self.ave.insert(AVE(fact.clone())).unwrap();
-        self.aev = self.aev.insert(AEV(fact)).unwrap();
+        self.ave = self.ave.insert(fact.clone()).unwrap();
+        self.aev = self.aev.insert(fact).unwrap();
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
@@ -458,10 +437,9 @@ impl Database for InMemoryLog {
 
                 let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
-                    .iter_range_from(AVE(range_start)..)
+                    .iter_range_from(range_start..)
                     .unwrap()
                     .map(|res| res.unwrap())
-                    .map(|ave| ave.0)
                     .take_while(|f| f.attribute == a && f.value == v)
                     .collect()
             }
