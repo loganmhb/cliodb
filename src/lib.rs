@@ -28,19 +28,23 @@ use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::iter;
 
-use chrono::prelude::{DateTime, UTC};
+use chrono::prelude::{UTC};
+
 pub mod parser;
 pub mod string_ref;
 pub mod btree;
+pub mod durable;
+mod model;
 
 pub use parser::*;
+
+use model::{Fact, Record, Value, Entity};
 pub use string_ref::StringRef;
 
-pub mod durable;
 
 use btree::{Index, KVStore, Comparator, DbContents};
 
-// A database is just a log of facts. Facts are (entity, attribute, value) triples.
+// A database is just a log of records. Records are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
 
 #[derive(Debug, PartialEq)]
@@ -81,37 +85,7 @@ impl Display for QueryResult {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
-pub enum Value {
-    String(String),
-    Entity(Entity),
-    // FIXME: clock drift is an issue here
-    Timestamp(DateTime<UTC>)
-}
 
-impl Display for Value {
-    fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", match *self {
-            Value::Entity(e) => format!("{}", e.0),
-            Value::String(ref s) => format!("{}", s),
-            Value::Timestamp(t) => format!("{}", t)
-        })
-    }
-}
-
-impl<T> From<T> for Value
-    where T: Into<String>
-{
-    fn from(x: T) -> Self {
-        Value::String(x.into())
-    }
-}
-
-impl From<Entity> for Value {
-    fn from(x: Entity) -> Self {
-        Value::Entity(x.into())
-    }
-}
 
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
@@ -164,13 +138,10 @@ pub struct Tx {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 enum TxItem {
-    Addition(Hypothetical),
-    Retraction(Hypothetical),
+    Addition(Fact),
+    Retraction(Fact),
     NewEntity(HashMap<String, Value>),
 }
-
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct Entity(u64);
 
 #[derive(Debug, PartialEq, Eq, Clone)]
 pub struct Clause {
@@ -190,21 +161,21 @@ impl Clause {
 }
 
 pub trait Database {
-    fn add(&mut self, fact: Fact);
-    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact>;
+    fn add(&mut self, record: Record);
+    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Record>;
     fn next_id(&self) -> u64;
     fn save_contents(&self) -> Result<(), String>;
 
     fn transact(&mut self, tx: Tx) {
         let tx_entity = Entity(self.next_id());
-        self.add(Fact::new(tx_entity, "txInstant", Value::Timestamp(UTC::now()), tx_entity));
+        self.add(Record::new(tx_entity, "txInstant", Value::Timestamp(UTC::now()), tx_entity));
         for item in tx.items {
             match item {
-                TxItem::Addition(f) => self.add(Fact::from_hypothetical(f, tx_entity)),
+                TxItem::Addition(f) => self.add(Record::from_fact(f, tx_entity)),
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.next_id());
                     for (k, v) in ht {
-                        self.add(Fact::new(entity, k, v, tx_entity))
+                        self.add(Record::new(entity, k, v, tx_entity))
                     }
                 }
                 // TODO Implement retractions
@@ -222,8 +193,8 @@ pub trait Database {
             let mut new_bindings = vec![];
 
             for binding in bindings {
-                for fact in self.facts_matching(clause, &binding) {
-                    match unify(&binding, clause, &fact) {
+                for record in self.records_matching(clause, &binding) {
+                    match unify(&binding, clause, &record) {
                         Ok(new_info) => {
                             let mut new_env = binding.clone();
                             new_env.extend(new_info);
@@ -246,75 +217,6 @@ pub trait Database {
         }
 
         QueryResult(query.find.clone(), bindings)
-    }
-}
-
-// The Fact struct represents a fact in the database.
-// The derived ordering is used by the EAV index; other
-// indices use orderings provided by wrapper structs.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
-pub struct Fact {
-    entity: Entity,
-    attribute: String,
-    value: Value,
-    tx: Entity,
-}
-
-// We need a struct to represent facts that may not be in the database,
-// i.e. may not have an associated tx, for use by the parser and unifier.
-// FIXME: I don't like this name. Some better way to distinguish between
-// facts that have tx ids vs those that don't would be better.
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
-struct Hypothetical {
-    entity: Entity,
-    attribute: String,
-    value: Value,
-}
-
-impl Hypothetical {
-    fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V) -> Hypothetical {
-        Hypothetical {
-            entity: e,
-            attribute: a.into(),
-            value: v.into(),
-        }
-    }
-}
-
-impl Fact {
-    fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V, tx: Entity) -> Fact {
-        Fact {
-            entity: e,
-            attribute: a.into(),
-            value: v.into(),
-            tx: tx,
-        }
-    }
-
-    fn from_hypothetical(h: Hypothetical, tx: Entity) -> Fact {
-        Fact {
-            tx: tx,
-            entity: h.entity,
-            attribute: h.attribute,
-            value: h.value,
-        }
-    }
-}
-
-impl PartialEq<Fact> for Hypothetical {
-    fn eq(&self, other: &Fact) -> bool {
-        self.entity == other.entity && self.attribute == other.attribute &&
-        self.value == other.value
-    }
-}
-
-impl RangeArgument<Fact> for Fact {
-    fn start(&self) -> Bound<&Fact> {
-        Bound::Included(&self)
-    }
-
-    fn end(&self) -> Bound<&Fact> {
-        Bound::Unbounded
     }
 }
 
@@ -373,9 +275,9 @@ macro_rules! comparator {
         struct $name;
 
         impl Comparator for $name {
-            type Item = Fact;
+            type Item = Record;
 
-            fn compare(a: &Fact, b: &Fact) -> std::cmp::Ordering {
+            fn compare(a: &Record, b: &Record) -> std::cmp::Ordering {
                 a.$first.cmp(&b.$first)
                     .then(a.$second.cmp(&b.$second))
                     .then(a.$third.cmp(&b.$third))
@@ -389,19 +291,16 @@ comparator!(EAVT, entity, attribute, value, tx);
 comparator!(AEVT, attribute, entity, value, tx);
 comparator!(AVET, attribute, value, entity, tx);
 
-pub struct Db<S: KVStore<Item=Fact>> {
+pub struct Db<S: KVStore<Item=Record>> {
     next_id: u64,
     store: S,
-    eav: Index<Fact, S, EAVT>,
-    ave: Index<Fact, S, AVET>,
-    aev: Index<Fact, S, AEVT>,
+    eav: Index<Record, S, EAVT>,
+    ave: Index<Record, S, AVET>,
+    aev: Index<Record, S, AEVT>,
 }
 
-use std::collections::range::RangeArgument;
-use std::collections::Bound;
-
 impl<S> Db<S>
-    where S: btree::KVStore<Item=Fact>
+    where S: btree::KVStore<Item=Record>
 {
     pub fn new(store: S) -> Result<Db<S>, String> {
         // The store is responsible for making sure that its
@@ -420,20 +319,20 @@ impl<S> Db<S>
 }
 
 impl<S> Database for Db<S>
-    where S: btree::KVStore<Item=Fact>
+    where S: btree::KVStore<Item=Record>
 {
     fn next_id(&self) -> u64 {
         self.next_id
     }
 
-    fn add(&mut self, fact: Fact) {
-        if fact.entity.0 >= self.next_id {
-            self.next_id = fact.entity.0 + 1;
+    fn add(&mut self, record: Record) {
+        if record.entity.0 >= self.next_id {
+            self.next_id = record.entity.0 + 1;
         }
 
-        self.eav = self.eav.insert(fact.clone()).unwrap();
-        self.ave = self.ave.insert(fact.clone()).unwrap();
-        self.aev = self.aev.insert(fact).unwrap();
+        self.eav = self.eav.insert(record.clone()).unwrap();
+        self.ave = self.ave.insert(record.clone()).unwrap();
+        self.aev = self.aev.insert(record).unwrap();
     }
 
     /// Saves the db metadata (index root nodes, entity ID state) to
@@ -450,7 +349,7 @@ impl<S> Database for Db<S>
         self.store.set_contents(&contents)
     }
 
-    fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
+    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Record> {
         let expanded = clause.substitute(binding);
         match expanded {
             // ?e a v => use the ave index
@@ -460,7 +359,7 @@ impl<S> Database for Db<S>
                 value: Term::Bound(v),
             } => {
 
-                let range_start = Fact::new(Entity(0), a.clone(), v.clone(), Entity(0));
+                let range_start = Record::new(Entity(0), a.clone(), v.clone(), Entity(0));
                 self.ave
                     .iter_range_from(range_start..)
                     .unwrap()
@@ -475,7 +374,7 @@ impl<S> Database for Db<S>
                 value: Term::Unbound(_),
             } => {
                 // Value::String("") is the lowest-sorted value
-                let range_start = Fact::new(e, a.clone(), Value::String("".into()), Entity(0));
+                let range_start = Record::new(e, a.clone(), Value::String("".into()), Entity(0));
                 self.eav
                     .iter_range_from(range_start..)
                     .unwrap()
@@ -496,24 +395,24 @@ impl<S> Database for Db<S>
     }
 }
 
-fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
+fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()> {
     let mut new_info: Binding = Default::default();
 
     match clause.entity {
         Term::Bound(ref e) => {
-            if *e != fact.entity {
+            if *e != record.entity {
                 return Err(());
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
-                    if *e != Value::Entity(fact.entity) {
+                    if *e != Value::Entity(record.entity) {
                         return Err(());
                     }
                 }
                 _ => {
-                    new_info.insert(*var, Value::Entity(fact.entity));
+                    new_info.insert(*var, Value::Entity(record.entity));
                 }
             }
         }
@@ -521,19 +420,19 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
 
     match clause.attribute {
         Term::Bound(ref a) => {
-            if *a != fact.attribute {
+            if *a != record.attribute {
                 return Err(());
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
-                    if *e != Value::String(fact.attribute.clone()) {
+                    if *e != Value::String(record.attribute.clone()) {
                         return Err(());
                     }
                 }
                 _ => {
-                    new_info.insert(*var, Value::String(fact.attribute.clone()));
+                    new_info.insert(*var, Value::String(record.attribute.clone()));
                 }
             }
         }
@@ -541,19 +440,19 @@ fn unify(env: &Binding, clause: &Clause, fact: &Fact) -> Result<Binding, ()> {
 
     match clause.value {
         Term::Bound(ref v) => {
-            if *v != fact.value {
+            if *v != record.value {
                 return Err(());
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
-                    if *e != fact.value {
+                    if *e != record.value {
                         return Err(());
                     }
                 }
                 _ => {
-                    new_info.insert(*var, fact.value.clone());
+                    new_info.insert(*var, record.value.clone());
                 }
             }
         }
@@ -579,23 +478,23 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    fn test_db() -> Db<HeapStore<Fact>> {
+    fn test_db() -> Db<HeapStore<Record>> {
         let store = HeapStore::new();
         let mut db = Db::new(store).unwrap();
-        let facts = vec![
-            Hypothetical::new(Entity(0), "name", "Bob"),
-            Hypothetical::new(Entity(1), "name", "John"),
-            Hypothetical::new(Entity(2), "Hello", "World"),
-            Hypothetical::new(Entity(1), "parent", Entity(0)),
+        let records = vec![
+            Fact::new(Entity(0), "name", "Bob"),
+            Fact::new(Entity(1), "name", "John"),
+            Fact::new(Entity(2), "Hello", "World"),
+            Fact::new(Entity(1), "parent", Entity(0)),
         ];
 
-        db.transact(Tx { items: facts.iter().map(|x| TxItem::Addition(x.clone())).collect() });
+        db.transact(Tx { items: records.iter().map(|x| TxItem::Addition(x.clone())).collect() });
 
         db
     }
 
     #[allow(dead_code)]
-    fn test_db_large() -> Db<HeapStore<Fact>> {
+    fn test_db_large() -> Db<HeapStore<Record>> {
         let store = HeapStore::new();
         let mut db = Db::new(store).unwrap();
         let n = 10_000_000;
@@ -609,7 +508,7 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            db.add(Fact::new(Entity(i), a, v, Entity(0)));
+            db.add(Record::new(Entity(i), a, v, Entity(0)));
         }
 
         db
@@ -632,7 +531,7 @@ mod tests {
     fn test_parse_tx() {
         assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
                    Tx {
-                       items: vec![TxItem::Addition(Hypothetical::new(Entity(0),
+                       items: vec![TxItem::Addition(Fact::new(Entity(0),
                                                               "name",
                                                               Value::String("Bob".into())))],
                    });
@@ -641,9 +540,9 @@ mod tests {
 
     // #[test]
     // fn test_insertion() {
-    //     let fact = Fact::new(Entity(0), "name", "Bob");
+    //     let record = Record::new(Entity(0), "name", "Bob");
     //     let mut db = InMemoryLog::new();
-    //     db.add(fact);
+    //     db.add(record);
     //     let inserted = db.into_iter().take(1).nth(0).unwrap();
     //     assert!(inserted.entity == Entity(0));
     //     assert!(&*inserted.attribute == "name");
@@ -651,9 +550,9 @@ mod tests {
     // }
 
     #[test]
-    fn test_facts_matching() {
-        assert_eq!(vec![Hypothetical::new(Entity(0), "name", Value::String("Bob".into()))],
-                   test_db().facts_matching(&Clause::new(Term::Unbound("e".into()),
+    fn test_records_matching() {
+        assert_eq!(vec![Fact::new(Entity(0), "name", Value::String("Bob".into()))],
+                   test_db().records_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),
                                             &Binding::default()))
@@ -767,7 +666,7 @@ mod tests {
                    let entity = Entity(e);
                    e += 1;
 
-                   db.add(Fact::new(entity, a.clone(), Value::Entity(entity), Entity(0)));
+                   db.add(Record::new(entity, a.clone(), Value::Entity(entity), Entity(0)));
                });
     }
 

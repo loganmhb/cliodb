@@ -131,7 +131,7 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
         between(lex_char('('),
                 lex_char(')'),
                 (entity(), attribute(), value()))
-                .map(|f| Hypothetical::new(f.0, f.1, f.2))
+                .map(|f| Fact::new(f.0, f.1, f.2))
     };
 
     let attr_pair = || (attribute(), value());

@@ -65,7 +65,7 @@ impl<'de, V> SqliteStore<V>
                 // The indices exist already; they'll be retrieved by the Db when
                 // it calls get_contents() on the store.
             }
-            Err(err) => {
+            Err(_) => {
                 // The indices do NOT exist and we need to create root nodes for them.
                 let empty_root: IndexNode<V> = IndexNode::Leaf {
                     items: vec![],
