@@ -1,39 +1,24 @@
 use std::path::Path;
+use std::marker::PhantomData;
+use std::sync::Arc;
+
 use serde::ser::Serialize;
 use serde::de::Deserialize;
 use rmp_serde::{Deserializer, Serializer};
+
 use rusqlite as sql;
 use uuid::Uuid;
 
-/// Trait abstracting over anything that can be used as a disk-backed
-/// KV store, where keys can only be added, not modified.
-trait KVStore<V>
-    where Self: Sized
-{
-    type Node;
-    type Error;
-    fn get(&self, key: &str) -> Result<Self::Node, Self::Error>;
-    fn add(&self, value: &Self::Node) -> Result<String, Self::Error>;
-}
+use btree::{IndexNode, KVStore, DbContents};
 
-/// Representation of a B-tree node that is serializable to disk.
-/// Contains a vector of keys (i.e. the contents of the B-tree) and a
-/// vector of links, which are strings that correspond to keys in the
-/// KV store.
-// FIXME: overloaded use of `key`
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-struct DurableNode<V> {
-    keys: Vec<V>,
-    links: Vec<String>,
-}
-
-struct SqliteStore {
-    conn: sql::Connection,
-    db_contents: DbContents,
+#[derive(Clone)]
+pub struct SqliteStore<V> {
+    phantom: PhantomData<V>,
+    conn: Arc<sql::Connection>,
 }
 
 #[derive(Debug)]
-struct Error(String);
+pub struct Error(String);
 
 impl From<sql::Error> for Error {
     fn from(err: sql::Error) -> Error {
@@ -47,46 +32,25 @@ impl From<String> for Error {
     }
 }
 
-/// A structure designed to be stored in the index that enables
-/// a process to locate the indexes, tx log, etc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-struct DbContents {
-    eav_index: String,
-    ave_index: String,
-    aev_index: String,
-}
 
-impl SqliteStore {
+
+impl<'de, V> SqliteStore<V>
+    where V: Serialize + Deserialize<'de> + Clone
+{
     /// Sets the DbContents struct to point to a new set of indices,
     /// both in memory and durably.
-    fn set_contents(&mut self, contents: DbContents) -> Result<(), Error> {
-        let mut buf = Vec::new();
-        contents.serialize(&mut Serializer::new(&mut buf)).unwrap();
 
-        let mut stmt = self.conn
-            .prepare("INSERT INTO logos_kvs (key, val) VALUES (?1, ?2)")
-            .unwrap();
-        stmt.execute(&[&"db_contents", &buf])?;
-        self.db_contents = contents;
-        Ok(())
-    }
 
-    fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore<V>, Error> {
         let conn = sql::Connection::open(path)?;
 
         // Set up SQLite tables to track index data
-        conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL, val BLOB)",
+        conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
                      &[])?;
 
-        let mut store = SqliteStore {
-            conn: conn,
-            // This DbContents will be overridden no matter what, but we need to create
-            // the Store struct now in order to use its `add` method.
-            db_contents: DbContents {
-                eav_index: "dummy".to_string(),
-                ave_index: "dummy".to_string(),
-                aev_index: "dummy".to_string()
-            }
+        let store = SqliteStore {
+            conn: Arc::new(conn),
+            phantom: PhantomData,
         };
 
         // If the table is new, we need to set up index roots.
@@ -97,34 +61,25 @@ impl SqliteStore {
                        |row| row.get(0));
 
         match result {
-            Ok(val) => {
-                let mut de = Deserializer::new(&val[..]);
-                let res: Result<DbContents, ::rmp_serde::decode::Error> =
-                    Deserialize::deserialize(&mut de);
-                match res {
-                    Ok(_) => (),
-                    _ => {
-                        return Err(Error("corrupt index; could not deserialize db_contents"
-                                             .to_string()))
-                    }
-                }
+            Ok(_) => {
+                // The indices exist already; they'll be retrieved by the Db when
+                // it calls get_contents() on the store.
             }
             Err(err) => {
-                println!("{}", err.to_string());
-                let empty_root: DurableNode<super::Fact> = DurableNode {
-                    keys: vec![],
-                    links: vec![],
+                // The indices do NOT exist and we need to create root nodes for them.
+                let empty_root: IndexNode<V> = IndexNode::Leaf {
+                    items: vec![],
                 };
-                let eav_root = store.add(&empty_root)?;
-                let aev_root = store.add(&empty_root)?;
-                let ave_root = store.add(&empty_root)?;
+                let eav_root = store.add(empty_root.clone())?;
+                let aev_root = store.add(empty_root.clone())?;
+                let ave_root = store.add(empty_root.clone())?;
 
-                store.set_contents(DbContents {
-                    eav_index: eav_root,
-                    ave_index: ave_root,
-                    aev_index: aev_root,
+                store.set_contents(&DbContents {
+                    next_id: 1,
+                    eav: eav_root,
+                    ave: ave_root,
+                    aev: aev_root,
                 })?;
-
             }
         }
 
@@ -132,13 +87,12 @@ impl SqliteStore {
     }
 }
 
-impl<'de, V> KVStore<V> for SqliteStore
-    where V: Serialize + Deserialize<'de>
+impl<'de, V> KVStore for SqliteStore<V>
+    where V: Serialize + Deserialize<'de> + Clone
 {
-    type Node = DurableNode<V>;
-    type Error = String;
+    type Item = V;
 
-    fn get(&self, key: &str) -> Result<Self::Node, Self::Error> {
+    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String> {
         let mut stmt = self.conn
             .prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
@@ -150,7 +104,7 @@ impl<'de, V> KVStore<V> for SqliteStore
                 let mut de = Deserializer::new(&val[..]);
                 match Deserialize::deserialize(&mut de) {
                     Ok(node) => {
-                        let node: DurableNode<_> = node;
+                        let node: IndexNode<_> = node;
                         Ok(node)
                     }
                     Err(err) => Err(err.to_string()),
@@ -160,7 +114,7 @@ impl<'de, V> KVStore<V> for SqliteStore
         }
     }
 
-    fn add(&self, value: &Self::Node) -> Result<String, Self::Error> {
+    fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String> {
         let key = Uuid::new_v4().to_string();
         let mut buf = Vec::new();
         value.serialize(&mut Serializer::new(&mut buf)).unwrap();
@@ -173,6 +127,34 @@ impl<'de, V> KVStore<V> for SqliteStore
             Err(e) => Err(e.to_string()),
         }
     }
+
+    fn set_contents(&self, contents: &DbContents) -> Result<(), String> {
+        let mut buf = Vec::new();
+        contents.serialize(&mut Serializer::new(&mut buf)).unwrap();
+
+        let mut stmt = self.conn
+            .prepare("INSERT OR REPLACE INTO logos_kvs (key, val) VALUES ('db_contents', ?1)")
+            .unwrap();
+        stmt.execute(&[&buf]).map_err(|e| e.to_string())?;
+
+        Ok(())
+    }
+
+    fn get_contents(&self) -> Result<DbContents, String> {
+        let mut stmt = self.conn
+            .prepare("SELECT val FROM logos_kvs WHERE key = 'db_contents'")
+            .unwrap();
+        stmt.query_row(&[], |row| {
+            let val: Vec<u8> = row.get(0);
+            let mut de = Deserializer::new(&val[..]);
+            match Deserialize::deserialize(&mut de) {
+                Ok(contents) => {
+                    Ok(contents)
+                }
+                Err(err) => Err(err.to_string()),
+            }
+        }).map_err(|e| e.to_string())?
+    }
 }
 
 #[cfg(test)]
@@ -183,26 +165,24 @@ mod tests {
 
     #[test]
     fn test_kv_store() {
-        let root: DurableNode<String> = DurableNode {
-            links: vec![],
-            keys: vec![],
+        let root: IndexNode<String> = IndexNode::Leaf {
+            items: vec![],
         };
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
-        let key = store.add(&root).unwrap();
+        let key = store.add(root.clone()).unwrap();
 
         assert_eq!(store.get(&key).unwrap(), root)
     }
 
     #[bench]
     fn bench_kv_insert(b: &mut Bencher) {
-        let root: DurableNode<String> = DurableNode {
-            links: vec![],
-            keys: vec![],
+        let root: IndexNode<String> = IndexNode::Leaf {
+            items: vec![],
         };
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
 
         b.iter(|| {
-                   let key = store.add(&root).unwrap();
+                   let key = store.add(root.clone()).unwrap();
                    assert_eq!(store.get(&key).unwrap(), root)
                })
     }

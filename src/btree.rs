@@ -10,8 +10,22 @@ pub const CAPACITY: usize = 512;
 pub trait KVStore : Clone {
     type Item;
 
+    // Add an item to the database
     fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String>;
+    fn set_contents(&self, contents: &DbContents) -> Result<(), String>;
+    // Used to retrieve references to indices from possibly-persistent storage
+    fn get_contents(&self) -> Result<DbContents, String>;
     fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String>;
+}
+
+/// A structure designed to be stored in the index that enables
+/// a process to locate the indexes, tx log, etc.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DbContents {
+    pub next_id: u64,
+    pub eav: String,
+    pub ave: String,
+    pub aev: String,
 }
 
 // HashMap pretending to be a database
@@ -39,6 +53,25 @@ impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
         }
     }
 
+    fn set_contents(&self, _contents: &DbContents) -> Result<(), String> {
+        // HeapStore can't survive a restart, so it doesn't need to set
+        // the DbContents.
+        Ok(())
+    }
+
+    fn get_contents(&self) -> Result<DbContents, String> {
+        // We don't bother storing contents in a HeapStore, so we just make
+        // a new one.
+        let empty_root = IndexNode::Leaf { items: vec![] };
+
+        Ok(DbContents {
+            next_id: 1,
+            eav: self.add(empty_root.clone())?,
+            ave: self.add(empty_root.clone())?,
+            aev: self.add(empty_root)?
+        })
+    }
+
     fn get(&self, key: &str) -> Result<IndexNode<T>, String> {
         self.inner
             .lock()
@@ -57,7 +90,7 @@ pub trait Comparator : Clone {
 #[derive(Clone)]
 pub struct Index<T: Debug + Ord + Clone, S: KVStore<Item = T>, C: Comparator<Item=T>> {
     store: S,
-    root_ref: String,
+    pub root_ref: String,
     comparator: C,
 }
 
@@ -68,7 +101,7 @@ pub enum Insertion<N> {
     NodeFull,
 }
 
-#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone)]
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub enum IndexNode<T> {
     Dir { items: Vec<T>, links: Vec<String> },
     Leaf { items: Vec<T> },
@@ -77,9 +110,7 @@ pub enum IndexNode<T> {
 impl<T, S, C> Index<T, S, C>
     where T: Debug + Ord + Clone, S: KVStore<Item=T>, C: Comparator<Item=T>
 {
-    pub fn new(store: S, comparator: C) -> Result<Self, String> {
-        let root = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add(root)?;
+    pub fn new(root_ref: String, store: S, comparator: C) -> Result<Self, String> {
         Ok(Index { store, root_ref, comparator })
     }
 
@@ -449,8 +480,9 @@ mod tests {
     #[test]
     fn test_leaf_insert() {
         let store = HeapStore::new();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
         let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
-            Index::new(store, NumComparator).unwrap();
+            Index::new(root_ref, store, NumComparator).unwrap();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i).unwrap();
@@ -460,8 +492,9 @@ mod tests {
     #[test]
     fn test_tree_iter() {
         let store = HeapStore::new();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
         let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
-            Index::new(store, NumComparator).unwrap();
+            Index::new(root_ref, store, NumComparator).unwrap();
         let range = 0..65535;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
@@ -473,7 +506,8 @@ mod tests {
     #[test]
     fn test_range_iter() {
         let store = HeapStore::new();
-        let mut idx = Index::new(store, NumComparator).unwrap();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let mut idx = Index::new(root_ref, store, NumComparator).unwrap();
         let full_range = 0u64..10_000;
         let range = 1457u64..;
 
@@ -489,7 +523,8 @@ mod tests {
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
         let store = HeapStore::new();
-        let mut tree = Index::new(store, NumComparator).unwrap();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -500,7 +535,8 @@ mod tests {
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
         let store = HeapStore::new();
-        let mut tree = Index::new(store, NumComparator).unwrap();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -513,7 +549,8 @@ mod tests {
     fn bench_iter(b: &mut Bencher) {
         let n = 10_000;
         let store = HeapStore::new();
-        let mut tree = Index::new(store, NumComparator).unwrap();
+        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         for i in 0..n {
             tree = tree.insert(i).unwrap();
         }

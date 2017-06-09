@@ -36,9 +36,9 @@ pub mod btree;
 pub use parser::*;
 pub use string_ref::StringRef;
 
-mod durable;
+pub mod durable;
 
-use btree::{Index, HeapStore, Comparator};
+use btree::{Index, KVStore, Comparator, DbContents};
 
 // A database is just a log of facts. Facts are (entity, attribute, value) triples.
 // Attributes and values are both just strings. There are no transactions or histories.
@@ -193,6 +193,7 @@ pub trait Database {
     fn add(&mut self, fact: Fact);
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact>;
     fn next_id(&self) -> u64;
+    fn save_contents(&self) -> Result<(), String>;
 
     fn transact(&mut self, tx: Tx) {
         let tx_entity = Entity(self.next_id());
@@ -200,16 +201,17 @@ pub trait Database {
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => self.add(Fact::from_hypothetical(f, tx_entity)),
-                // TODO Implement retractions + new entities
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.next_id());
                     for (k, v) in ht {
                         self.add(Fact::new(entity, k, v, tx_entity))
                     }
                 }
+                // TODO Implement retractions
                 _ => unimplemented!(),
             }
         }
+        self.save_contents().unwrap() // FIXME: propagate the error
     }
 
     fn query(&self, query: &Query) -> QueryResult {
@@ -387,30 +389,39 @@ comparator!(EAVT, entity, attribute, value, tx);
 comparator!(AEVT, attribute, entity, value, tx);
 comparator!(AVET, attribute, value, entity, tx);
 
-pub struct InMemoryLog {
+pub struct Db<S: KVStore<Item=Fact>> {
     next_id: u64,
-    eav: Index<Fact, HeapStore<Fact>, EAVT>,
-    ave: Index<Fact, HeapStore<Fact>, AVET>,
-    aev: Index<Fact, HeapStore<Fact>, AEVT>,
+    store: S,
+    eav: Index<Fact, S, EAVT>,
+    ave: Index<Fact, S, AVET>,
+    aev: Index<Fact, S, AEVT>,
 }
 
 use std::collections::range::RangeArgument;
 use std::collections::Bound;
 
-impl InMemoryLog {
-    pub fn new() -> Result<InMemoryLog, String> {
-        // FIXME: share stores by changing Ord usage
-        let store = HeapStore::new();
-        Ok(InMemoryLog {
-            next_id: 0,
-            eav: Index::new(store.clone(), EAVT)?,
-            ave: Index::new(store.clone(), AVET)?,
-            aev: Index::new(store, AEVT)?,
+impl<S> Db<S>
+    where S: btree::KVStore<Item=Fact>
+{
+    pub fn new(store: S) -> Result<Db<S>, String> {
+        // The store is responsible for making sure that its
+        // 'db_contents' key is usable when it is created, and making
+        // new root nodes if the store is brand new.
+        let contents = store.get_contents()?;
+
+        Ok(Db {
+            next_id: contents.next_id,
+            store: store.clone(),
+            eav: Index::new(contents.eav, store.clone(), EAVT)?,
+            ave: Index::new(contents.ave, store.clone(), AVET)?,
+            aev: Index::new(contents.aev, store, AEVT)?,
         })
     }
 }
 
-impl Database for InMemoryLog {
+impl<S> Database for Db<S>
+    where S: btree::KVStore<Item=Fact>
+{
     fn next_id(&self) -> u64 {
         self.next_id
     }
@@ -423,6 +434,20 @@ impl Database for InMemoryLog {
         self.eav = self.eav.insert(fact.clone()).unwrap();
         self.ave = self.ave.insert(fact.clone()).unwrap();
         self.aev = self.aev.insert(fact).unwrap();
+    }
+
+    /// Saves the db metadata (index root nodes, entity ID state) to
+    /// storage, when implemented by the storage backend (i.e. when
+    /// not using in-memory storage).
+    fn save_contents(&self) -> Result<(), String> {
+        let contents = DbContents {
+            next_id: self.next_id,
+            eav: self.eav.root_ref.clone(),
+            aev: self.aev.root_ref.clone(),
+            ave: self.ave.root_ref.clone()
+        };
+
+        self.store.set_contents(&contents)
     }
 
     fn facts_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Fact> {
@@ -546,6 +571,7 @@ mod tests {
     use std::iter;
 
     use super::*;
+    use btree::HeapStore;
 
     fn helper(query: &Query, expected: QueryResult) {
         let db = test_db();
@@ -553,8 +579,9 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    fn test_db() -> InMemoryLog {
-        let mut db = InMemoryLog::new().unwrap();
+    fn test_db() -> Db<HeapStore<Fact>> {
+        let store = HeapStore::new();
+        let mut db = Db::new(store).unwrap();
         let facts = vec![
             Hypothetical::new(Entity(0), "name", "Bob"),
             Hypothetical::new(Entity(1), "name", "John"),
@@ -568,8 +595,9 @@ mod tests {
     }
 
     #[allow(dead_code)]
-    fn test_db_large() -> InMemoryLog {
-        let mut db = InMemoryLog::new().unwrap();
+    fn test_db_large() -> Db<HeapStore<Fact>> {
+        let store = HeapStore::new();
+        let mut db = Db::new(store).unwrap();
         let n = 10_000_000;
 
         for i in 0..n {
@@ -728,7 +756,8 @@ mod tests {
 
     #[bench]
     fn bench_add(b: &mut Bencher) {
-        let mut db = InMemoryLog::new().unwrap();
+        let store = HeapStore::new();
+        let mut db = Db::new(store).unwrap();
 
         let a = String::from("blah");
 

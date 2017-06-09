@@ -2,6 +2,8 @@ extern crate logos;
 extern crate rustyline;
 
 use logos::*;
+// use logos::btree::HeapStore;
+use logos::durable::SqliteStore;
 
 use std::error::Error;
 
@@ -15,7 +17,8 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let mut rl = rustyline::Editor::<()>::new();
-    let mut db = InMemoryLog::new().unwrap();
+    let store = SqliteStore::new("/tmp/logos.db").unwrap();
+    let mut db = Db::new(store).unwrap();
     loop {
         let readline = rl.readline("> ");
         match readline {
@@ -29,8 +32,6 @@ Commands:
                     Ok(Input::Query(q)) => println!("{}", db.query(&q)),
                     Ok(Input::Tx(tx)) => db.transact(tx),
                     Ok(Input::SampleDb) => {
-                        db = InMemoryLog::new().unwrap();
-
                         let sample = [
                             r#"add (0 name "Bob")"#,
                             r#"add (1 name "John")"#,
