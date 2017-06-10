@@ -74,6 +74,7 @@ impl RangeArgument<Record> for Record {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
 pub enum Value {
     String(String),
+    Ident(String),
     Entity(Entity),
     // FIXME: clock drift is an issue here
     Timestamp(DateTime<UTC>)
@@ -83,7 +84,8 @@ impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         write!(f, "{}", match *self {
             Value::Entity(e) => format!("{}", e.0),
-            Value::String(ref s) => format!("{}", s),
+            Value::String(ref s) => format!("\"{}\"", s),
+            Value::Ident(ref s) => format!("{}", s),
             Value::Timestamp(t) => format!("{}", t)
         })
     }

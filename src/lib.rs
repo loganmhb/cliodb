@@ -28,24 +28,19 @@ use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::iter;
 
-use chrono::prelude::{UTC};
+use chrono::prelude::UTC;
 
 pub mod parser;
 pub mod string_ref;
 pub mod btree;
 pub mod durable;
+mod query;
 mod model;
 
 pub use parser::*;
-
 use model::{Fact, Record, Value, Entity};
-pub use string_ref::StringRef;
-
-
+use query::{Query, Clause, Term, Var};
 use btree::{Index, KVStore, Comparator, DbContents};
-
-// A database is just a log of records. Records are (entity, attribute, value) triples.
-// Attributes and values are both just strings. There are no transactions or histories.
 
 #[derive(Debug, PartialEq)]
 pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);
@@ -54,7 +49,7 @@ impl Display for QueryResult {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let num_columns = self.0.len();
         let align = pt::format::Alignment::CENTER;
-        let mut titles: pt::row::Row = self.0.iter().map(|var| var.name).collect();
+        let mut titles: pt::row::Row = self.0.iter().map(|var| var.name.clone()).collect();
         titles.iter_mut().foreach(|c| c.align(align));
 
         let rows = self.1
@@ -85,52 +80,6 @@ impl Display for QueryResult {
     }
 }
 
-
-
-
-#[derive(Debug, PartialEq, Eq, Clone, Copy)]
-enum Term<T> {
-    Bound(T),
-    Unbound(Var),
-}
-
-// A free [logic] variable
-// FIXME: Is it actually safe to intern these statically?
-// For a long running process, there could be a theoretically
-// unbounded number of logic vars used in queries.
-#[derive(Debug, Hash, PartialEq, Eq, Clone, Copy)]
-pub struct Var {
-    name: StringRef,
-}
-
-impl Var {
-    fn new<T: Into<StringRef>>(name: T) -> Var {
-        Var::from(name)
-    }
-}
-
-impl<T: Into<StringRef>> From<T> for Var {
-    fn from(x: T) -> Self {
-        Var { name: x.into() }
-    }
-}
-
-// A query looks like `find ?var where (?var <attribute> <value>)`
-#[derive(Debug, PartialEq)]
-pub struct Query {
-    find: Vec<Var>,
-    clauses: Vec<Clause>,
-}
-
-impl Query {
-    fn new(find: Vec<Var>, clauses: Vec<Clause>) -> Query {
-        Query {
-            find: find,
-            clauses: clauses,
-        }
-    }
-}
-
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Tx {
     items: Vec<TxItem>,
@@ -143,23 +92,6 @@ enum TxItem {
     NewEntity(HashMap<String, Value>),
 }
 
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub struct Clause {
-    entity: Term<Entity>,
-    attribute: Term<String>,
-    value: Term<Value>,
-}
-
-impl Clause {
-    fn new(e: Term<Entity>, a: Term<String>, v: Term<Value>) -> Clause {
-        Clause {
-            entity: e,
-            attribute: a,
-            value: v,
-        }
-    }
-}
-
 pub trait Database {
     fn add(&mut self, record: Record);
     fn records_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Record>;
@@ -168,7 +100,10 @@ pub trait Database {
 
     fn transact(&mut self, tx: Tx) {
         let tx_entity = Entity(self.next_id());
-        self.add(Record::new(tx_entity, "txInstant", Value::Timestamp(UTC::now()), tx_entity));
+        self.add(Record::new(tx_entity,
+                             "txInstant",
+                             Value::Timestamp(UTC::now()),
+                             tx_entity));
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => self.add(Record::from_fact(f, tx_entity)),
@@ -212,7 +147,7 @@ pub trait Database {
             *binding = binding
                 .iter()
                 .filter(|&(k, _)| query.find.contains(k))
-                .map(|(&var, value)| (var, value.clone()))
+                .map(|(var, value)| (var.clone(), value.clone()))
                 .collect();
         }
 
@@ -226,7 +161,7 @@ type Binding = HashMap<Var, Value>;
 impl Clause {
     fn substitute(&self, env: &Binding) -> Clause {
         let entity = match &self.entity {
-            &Term::Bound(_) => self.entity,
+            &Term::Bound(_) => self.entity.clone(),
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match *val {
@@ -234,7 +169,7 @@ impl Clause {
                         _ => unimplemented!(),
                     }
                 } else {
-                    self.entity
+                    self.entity.clone()
                 }
             }
         };
@@ -291,7 +226,7 @@ comparator!(EAVT, entity, attribute, value, tx);
 comparator!(AEVT, attribute, entity, value, tx);
 comparator!(AVET, attribute, value, entity, tx);
 
-pub struct Db<S: KVStore<Item=Record>> {
+pub struct Db<S: KVStore<Item = Record>> {
     next_id: u64,
     store: S,
     eav: Index<Record, S, EAVT>,
@@ -300,7 +235,7 @@ pub struct Db<S: KVStore<Item=Record>> {
 }
 
 impl<S> Db<S>
-    where S: btree::KVStore<Item=Record>
+    where S: btree::KVStore<Item = Record>
 {
     pub fn new(store: S) -> Result<Db<S>, String> {
         // The store is responsible for making sure that its
@@ -309,17 +244,17 @@ impl<S> Db<S>
         let contents = store.get_contents()?;
 
         Ok(Db {
-            next_id: contents.next_id,
-            store: store.clone(),
-            eav: Index::new(contents.eav, store.clone(), EAVT)?,
-            ave: Index::new(contents.ave, store.clone(), AVET)?,
-            aev: Index::new(contents.aev, store, AEVT)?,
-        })
+               next_id: contents.next_id,
+               store: store.clone(),
+               eav: Index::new(contents.eav, store.clone(), EAVT)?,
+               ave: Index::new(contents.ave, store.clone(), AVET)?,
+               aev: Index::new(contents.aev, store, AEVT)?,
+           })
     }
 }
 
 impl<S> Database for Db<S>
-    where S: btree::KVStore<Item=Record>
+    where S: btree::KVStore<Item = Record>
 {
     fn next_id(&self) -> u64 {
         self.next_id
@@ -343,7 +278,7 @@ impl<S> Database for Db<S>
             next_id: self.next_id,
             eav: self.eav.root_ref.clone(),
             aev: self.aev.root_ref.clone(),
-            ave: self.ave.root_ref.clone()
+            ave: self.ave.root_ref.clone(),
         };
 
         self.store.set_contents(&contents)
@@ -395,7 +330,17 @@ impl<S> Database for Db<S>
     }
 }
 
-fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()> {
+type Idents = HashMap<String, Entity>;
+/// Attempts to unify a new record and a clause with existing
+/// bindings.  If bound fields in the clause match the record, then
+/// any fields in the record which match an unbound clause will be
+/// bound in the returned binding.  If bound fields in the clause
+/// conflict with fields in the record, unification fails.
+///
+/// Idents are treated specially for ergonomics: an ident unifies with
+/// the entity id where (?entity db:ident ?ident), so you can use the
+/// ident in a query where the entity id would normally be required.
+fn unify(env: &Binding, idents: Idents, clause: &Clause, record: &Record) -> Result<Binding, ()> {
     let mut new_info: Binding = Default::default();
 
     match clause.entity {
@@ -412,7 +357,7 @@ fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()>
                     }
                 }
                 _ => {
-                    new_info.insert(*var, Value::Entity(record.entity));
+                    new_info.insert(var.clone(), Value::Entity(record.entity));
                 }
             }
         }
@@ -432,7 +377,7 @@ fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()>
                     }
                 }
                 _ => {
-                    new_info.insert(*var, Value::String(record.attribute.clone()));
+                    new_info.insert(var.clone(), Value::String(record.attribute.clone()));
                 }
             }
         }
@@ -452,7 +397,7 @@ fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()>
                     }
                 }
                 _ => {
-                    new_info.insert(*var, record.value.clone());
+                    new_info.insert(var.clone(), record.value.clone());
                 }
             }
         }
@@ -488,7 +433,12 @@ mod tests {
             Fact::new(Entity(1), "parent", Entity(0)),
         ];
 
-        db.transact(Tx { items: records.iter().map(|x| TxItem::Addition(x.clone())).collect() });
+        db.transact(Tx {
+                        items: records
+                            .iter()
+                            .map(|x| TxItem::Addition(x.clone()))
+                            .collect(),
+                    });
 
         db
     }
@@ -514,40 +464,6 @@ mod tests {
         db
     }
 
-    #[test]
-    fn test_parse_query() {
-        assert_eq!(parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-                   Query {
-                       find: vec![Var::new("a")],
-                       clauses: vec![
-            Clause::new(Term::Unbound("a".into()),
-                        Term::Bound("name".into()),
-                        Term::Bound(Value::String("Bob".into()))),
-        ],
-                   })
-    }
-
-    #[test]
-    fn test_parse_tx() {
-        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
-                   Tx {
-                       items: vec![TxItem::Addition(Fact::new(Entity(0),
-                                                              "name",
-                                                              Value::String("Bob".into())))],
-                   });
-        parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
-    }
-
-    // #[test]
-    // fn test_insertion() {
-    //     let record = Record::new(Entity(0), "name", "Bob");
-    //     let mut db = InMemoryLog::new();
-    //     db.add(record);
-    //     let inserted = db.into_iter().take(1).nth(0).unwrap();
-    //     assert!(inserted.entity == Entity(0));
-    //     assert!(&*inserted.attribute == "name");
-    //     assert!(inserted.value == "Bob".into());
-    // }
 
     #[test]
     fn test_records_matching() {

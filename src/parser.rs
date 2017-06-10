@@ -64,27 +64,31 @@ fn string_lit<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Outpu
     between(char('"'), char('"'), many1(none_of(vec!['\"']))).map(|s| Value::String(s))
 }
 
-fn attribute<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = String> {
+fn ident<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = String> {
     many1(letter().or(char(':'))).skip(spaces())
 }
 
 fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
     where I: combine::Stream<Item = char>
 {
-    // FIXME: Number literals should be able to be entities or just integers; this
-    // probably requires a change to the types/maybe change to the unification system.
+    // FIXME: Number literals should be able to be entities or just
+    // integers; this probably requires a change to the types/maybe
+    // change to the unification system, or a specific syntax like $0
+    // for entity ids that allows the parser to distinguish them.
 
     let entity = number_lit;
-    let value = string_lit().or(number_lit().map(|e| Value::Entity(e)));
+    let value = string_lit()
+        .or(number_lit().map(|e| Value::Entity(e)))
+        .or(ident().map(|i| Value::Ident(i)));
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
     let entity_term = free_var()
         .map(|x| Term::Unbound(x))
         .or(entity().map(|x| Term::Bound(x)))
         .skip(spaces());
-    let attribute_term = free_var()
+    let ident_term = free_var()
         .map(|x| Term::Unbound(x))
-        .or(attribute().map(|x| Term::Bound(x)))
+        .or(ident().map(|x| Term::Bound(x)))
         .skip(spaces());
     let value_term = free_var()
         .map(|x| Term::Unbound(x))
@@ -92,7 +96,7 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
         .skip(spaces());
 
     // Clause structure
-    let clause_contents = (entity_term, attribute_term, value_term);
+    let clause_contents = (entity_term, ident_term, value_term);
     let clause = between(lex_char('('), lex_char(')'), clause_contents)
         .map(|(e, a, v)| Clause::new(e, a, v));
     let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);
@@ -130,11 +134,11 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
     let fact = || {
         between(lex_char('('),
                 lex_char(')'),
-                (entity(), attribute(), value()))
+                (entity(), ident(), value()))
                 .map(|f| Fact::new(f.0, f.1, f.2))
     };
 
-    let attr_pair = || (attribute(), value());
+    let attr_pair = || (ident(), value());
     let new_entity = || {
         between(lex_char('{'),
                 lex_char('}'),
@@ -159,4 +163,49 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
         .map(|tx| Tx { items: tx })
         .and(eof())
         .map(|x| x.0)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_query() {
+        assert_eq!(parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+                   Query {
+                       find: vec![Var::new("a")],
+                       clauses: vec![
+            Clause::new(Term::Unbound("a".into()),
+                        Term::Bound("name".into()),
+                        Term::Bound(Value::String("Bob".into()))),
+        ],
+                   })
+    }
+
+    #[test]
+    fn test_parse_tx() {
+        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
+                   Tx {
+                       items: vec![TxItem::Addition(Fact::new(Entity(0),
+                                                              "name",
+                                                              Value::String("Bob".into())))],
+                   });
+        parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
+    }
+
+    #[test]
+    fn test_parsing_idents() {
+        let q = Query {
+            find: vec![Var::new("p")],
+            clauses: vec![
+                Clause::new(Term::Unbound("p".into()),
+                            Term::Bound("country".into()),
+                            Term::Bound(Value::Ident("country:US".into()))
+               )
+            ]
+        };
+
+        assert_eq!(parse_query("find ?p where (?p country country:US)").unwrap(),
+                   q);
+    }
 }
