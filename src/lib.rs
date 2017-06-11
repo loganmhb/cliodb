@@ -36,9 +36,11 @@ pub mod btree;
 pub mod durable;
 mod query;
 mod model;
+mod ident;
 
 pub use parser::*;
 use model::{Fact, Record, Value, Entity};
+use ident::IdentMap;
 use query::{Query, Clause, Term, Var};
 use btree::{Index, KVStore, Comparator, DbContents};
 
@@ -330,17 +332,12 @@ impl<S> Database for Db<S>
     }
 }
 
-type Idents = HashMap<String, Entity>;
 /// Attempts to unify a new record and a clause with existing
 /// bindings.  If bound fields in the clause match the record, then
 /// any fields in the record which match an unbound clause will be
 /// bound in the returned binding.  If bound fields in the clause
 /// conflict with fields in the record, unification fails.
-///
-/// Idents are treated specially for ergonomics: an ident unifies with
-/// the entity id where (?entity db:ident ?ident), so you can use the
-/// ident in a query where the entity id would normally be required.
-fn unify(env: &Binding, idents: Idents, clause: &Clause, record: &Record) -> Result<Binding, ()> {
+fn unify(env: &Binding, clause: &Clause, record: &Record) -> Result<Binding, ()> {
     let mut new_info: Binding = Default::default();
 
     match clause.entity {
