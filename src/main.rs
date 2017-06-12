@@ -29,7 +29,12 @@ Commands:
                 rl.add_history_entry(&line);
 
                 match parse_input(&*line) {
-                    Ok(Input::Query(q)) => println!("{}", db.query(&q)),
+                    Ok(Input::Query(q)) => {
+                        match db.query(&q) {
+                            Ok(res) => println!("{}", res),
+                            Err(e) => println!("ERROR: {}", e)
+                        }
+                    },
                     Ok(Input::Tx(tx)) => db.transact(tx),
                     Ok(Input::SampleDb) => {
                         let sample = [
@@ -47,7 +52,7 @@ Commands:
                         println!("{}",
                                  db.query(&parse_query("find ?ent ?att ?val where (?ent ?att \
                                                        ?val)")
-                                                   .unwrap()))
+                                                   .unwrap()).unwrap())
                     }
                     Err(e) => println!("Oh no! {}", e),
                 };

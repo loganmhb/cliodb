@@ -40,7 +40,6 @@ mod ident;
 
 pub use parser::*;
 use model::{Fact, Record, Value, Entity};
-use ident::IdentMap;
 use query::{Query, Clause, Term, Var};
 use btree::{Index, KVStore, Comparator, DbContents};
 
@@ -96,7 +95,9 @@ enum TxItem {
 
 pub trait Database {
     fn add(&mut self, record: Record);
-    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Record>;
+    // FIXME: The return type of records_matching should probably really be Iter<Item=Result<Record>>,
+    // to avoid having to collect the iterator to discover errors.
+    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>, String>;
     fn next_id(&self) -> u64;
     fn save_contents(&self) -> Result<(), String>;
 
@@ -122,7 +123,7 @@ pub trait Database {
         self.save_contents().unwrap() // FIXME: propagate the error
     }
 
-    fn query(&self, query: &Query) -> QueryResult {
+    fn query(&self, query: &Query) -> Result<QueryResult, String> {
         // TODO: automatically bind ?tx in queries
         let mut bindings = vec![HashMap::new()];
 
@@ -130,7 +131,7 @@ pub trait Database {
             let mut new_bindings = vec![];
 
             for binding in bindings {
-                for record in self.records_matching(clause, &binding) {
+                for record in self.records_matching(clause, &binding)? {
                     match unify(&binding, clause, &record) {
                         Ok(new_info) => {
                             let mut new_env = binding.clone();
@@ -153,7 +154,7 @@ pub trait Database {
                 .collect();
         }
 
-        QueryResult(query.find.clone(), bindings)
+        Ok(QueryResult(query.find.clone(), bindings))
     }
 }
 
@@ -161,14 +162,14 @@ pub trait Database {
 type Binding = HashMap<Var, Value>;
 
 impl Clause {
-    fn substitute(&self, env: &Binding) -> Clause {
+    fn substitute(&self, env: &Binding) -> Result<Clause, String> {
         let entity = match &self.entity {
             &Term::Bound(_) => self.entity.clone(),
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match *val {
                         Value::Entity(e) => Term::Bound(e),
-                        _ => unimplemented!(),
+                        _ => return Err("type mismatch".to_string()),
                     }
                 } else {
                     self.entity.clone()
@@ -182,7 +183,7 @@ impl Clause {
                 if let Some(val) = env.get(&var) {
                     match val {
                         &Value::String(ref s) => Term::Bound(s.clone()),
-                        _ => unimplemented!(),
+                        _ => return Err("type mismatch".to_string()),
                     }
                 } else {
                     self.attribute.clone()
@@ -201,7 +202,7 @@ impl Clause {
             }
         };
 
-        Clause::new(entity, attribute, value)
+        Ok(Clause::new(entity, attribute, value))
     }
 }
 
@@ -286,8 +287,8 @@ impl<S> Database for Db<S>
         self.store.set_contents(&contents)
     }
 
-    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Vec<Record> {
-        let expanded = clause.substitute(binding);
+    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>, String> {
+        let expanded = clause.substitute(binding)?;
         match expanded {
             // ?e a v => use the ave index
             Clause {
@@ -297,12 +298,12 @@ impl<S> Database for Db<S>
             } => {
 
                 let range_start = Record::new(Entity(0), a.clone(), v.clone(), Entity(0));
-                self.ave
+                Ok(self.ave
                     .iter_range_from(range_start..)
                     .unwrap()
                     .map(|res| res.unwrap())
                     .take_while(|f| f.attribute == a && f.value == v)
-                    .collect()
+                    .collect())
             }
             // // e a ?v => use the eav index
             Clause {
@@ -312,21 +313,21 @@ impl<S> Database for Db<S>
             } => {
                 // Value::String("") is the lowest-sorted value
                 let range_start = Record::new(e, a.clone(), Value::String("".into()), Entity(0));
-                self.eav
+                Ok(self.eav
                     .iter_range_from(range_start..)
                     .unwrap()
                     .map(|f| f.unwrap())
                     .take_while(|f| f.entity == e && f.attribute == a)
-                    .collect()
+                    .collect())
             }
             // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
-                self.eav
+                Ok(self.eav
                     .iter()
                     .map(|f| f.unwrap()) // FIXME this is not safe :D
                     .filter(|f| unify(&binding, &clause, &f).is_ok())
-                    .collect()
+                    .collect())
             }
         }
     }
@@ -414,9 +415,9 @@ mod tests {
     use super::*;
     use btree::HeapStore;
 
-    fn helper(query: &Query, expected: QueryResult) {
+    fn expect_query_result(query: &Query, expected: QueryResult) {
         let db = test_db();
-        let result = db.query(query);
+        let result = db.query(query).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -468,13 +469,13 @@ mod tests {
                    test_db().records_matching(&Clause::new(Term::Unbound("e".into()),
                                                          Term::Bound("name".into()),
                                                          Term::Bound(Value::String("Bob".into()))),
-                                            &Binding::default()))
+                                            &Binding::default()).unwrap())
     }
 
     #[test]
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
-        helper(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+        expect_query_result(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![
             iter::once((Var::new("a"), Value::Entity(Entity(0)))).collect(),
@@ -484,7 +485,7 @@ mod tests {
     #[test]
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
-        helper(&parse_query("find ?a where (0 name ?a)").unwrap(),
+        expect_query_result(&parse_query("find ?a where (0 name ?a)").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![
             iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
@@ -495,7 +496,7 @@ mod tests {
     #[test]
     fn test_query_unknown_attribute() {
         // find ?a where (1 ?a "John")
-        helper(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
+        expect_query_result(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
                QueryResult(vec![Var::new("a")],
                            vec![
             iter::once((Var::new("a"), Value::String("name".into())))
@@ -506,7 +507,7 @@ mod tests {
     #[test]
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
-        helper(&parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+        expect_query_result(&parse_query("find ?a ?b where (?a name ?b)").unwrap(),
                QueryResult(vec![Var::new("a"), Var::new("b")],
                            vec![
             vec![
@@ -527,7 +528,7 @@ mod tests {
     #[test]
     fn test_query_explicit_join() {
         // find ?b where (?a name Bob) (?b parent ?a)
-        helper(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+        expect_query_result(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
                QueryResult(vec![Var::new("b")],
                            vec![
             iter::once((Var::new("b"), Value::Entity(Entity(1)))).collect(),
@@ -537,13 +538,20 @@ mod tests {
     #[test]
     fn test_query_implicit_join() {
         // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
-        helper(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
+        expect_query_result(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
                     .unwrap(),
                QueryResult(vec![Var::new("c")],
                            vec![
             iter::once((Var::new("c"), Value::String("John".into())))
                 .collect(),
         ]));
+    }
+
+    #[test]
+    fn test_type_mismatch() {
+        let db = test_db();
+        let q = &parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
+        assert_equal(db.query(&q), Err("type mismatch".to_string()))
     }
 
     #[bench]
