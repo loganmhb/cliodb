@@ -101,61 +101,7 @@ pub trait Database {
     fn next_id(&self) -> u64;
     fn save_contents(&self) -> Result<(), String>;
 
-    fn transact(&mut self, tx: Tx) {
-        let tx_entity = Entity(self.next_id());
-        self.add(Record::new(tx_entity,
-                             "txInstant",
-                             Value::Timestamp(UTC::now()),
-                             tx_entity));
-        for item in tx.items {
-            match item {
-                TxItem::Addition(f) => self.add(Record::from_fact(f, tx_entity)),
-                TxItem::NewEntity(ht) => {
-                    let entity = Entity(self.next_id());
-                    for (k, v) in ht {
-                        self.add(Record::new(entity, k, v, tx_entity))
-                    }
-                }
-                // TODO Implement retractions
-                _ => unimplemented!(),
-            }
-        }
-        self.save_contents().unwrap() // FIXME: propagate the error
-    }
 
-    fn query(&self, query: &Query) -> Result<QueryResult, String> {
-        // TODO: automatically bind ?tx in queries
-        let mut bindings = vec![HashMap::new()];
-
-        for clause in &query.clauses {
-            let mut new_bindings = vec![];
-
-            for binding in bindings {
-                for record in self.records_matching(clause, &binding)? {
-                    match unify(&binding, clause, &record) {
-                        Ok(new_info) => {
-                            let mut new_env = binding.clone();
-                            new_env.extend(new_info);
-                            new_bindings.push(new_env)
-                        }
-                        _ => continue,
-                    }
-                }
-            }
-
-            bindings = new_bindings;
-        }
-
-        for binding in bindings.iter_mut() {
-            *binding = binding
-                .iter()
-                .filter(|&(k, _)| query.find.contains(k))
-                .map(|(var, value)| (var.clone(), value.clone()))
-                .collect();
-        }
-
-        Ok(QueryResult(query.find.clone(), bindings))
-    }
 }
 
 
@@ -254,13 +200,11 @@ impl<S> Db<S>
                aev: Index::new(contents.aev, store, AEVT)?,
            })
     }
-}
 
-impl<S> Database for Db<S>
-    where S: btree::KVStore<Item = Record>
-{
-    fn next_id(&self) -> u64 {
-        self.next_id
+    fn get_id(&mut self) -> u64 {
+        let id = self.next_id;
+        self.next_id += 1;
+        id
     }
 
     fn add(&mut self, record: Record) {
@@ -330,6 +274,62 @@ impl<S> Database for Db<S>
                     .collect())
             }
         }
+    }
+
+    pub fn transact(&mut self, tx: Tx) {
+        let tx_entity = Entity(self.get_id());
+        self.add(Record::new(tx_entity,
+                             "txInstant",
+                             Value::Timestamp(UTC::now()),
+                             tx_entity));
+        for item in tx.items {
+            match item {
+                TxItem::Addition(f) => self.add(Record::from_fact(f, tx_entity)),
+                TxItem::NewEntity(ht) => {
+                    let entity = Entity(self.get_id());
+                    for (k, v) in ht {
+                        self.add(Record::new(entity, k, v, tx_entity))
+                    }
+                }
+                // TODO Implement retractions
+                _ => unimplemented!(),
+            }
+        }
+        self.save_contents().unwrap() // FIXME: propagate the error
+    }
+
+    pub fn query(&self, query: &Query) -> Result<QueryResult, String> {
+        // TODO: automatically bind ?tx in queries
+        let mut bindings = vec![HashMap::new()];
+
+        for clause in &query.clauses {
+            let mut new_bindings = vec![];
+
+            for binding in bindings {
+                for record in self.records_matching(clause, &binding)? {
+                    match unify(&binding, clause, &record) {
+                        Ok(new_info) => {
+                            let mut new_env = binding.clone();
+                            new_env.extend(new_info);
+                            new_bindings.push(new_env)
+                        }
+                        _ => continue,
+                    }
+                }
+            }
+
+            bindings = new_bindings;
+        }
+
+        for binding in bindings.iter_mut() {
+            *binding = binding
+                .iter()
+                .filter(|&(k, _)| query.find.contains(k))
+                .map(|(var, value)| (var.clone(), value.clone()))
+                .collect();
+        }
+
+        Ok(QueryResult(query.find.clone(), bindings))
     }
 }
 

@@ -1,6 +1,7 @@
 use model::Entity;
 
 /// Double-mapping of ident->entity and entity->ident.
+// FIXME: Should this be two hashmaps? benchmark.
 #[derive(Default, Clone)]
 pub struct IdentMap {
     mappings: Vec<(String, Entity)>
