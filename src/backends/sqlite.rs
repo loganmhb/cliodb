@@ -9,7 +9,8 @@ use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
 use uuid::Uuid;
 
-use btree::{IndexNode, KVStore, DbContents};
+use btree::IndexNode;
+use super::{KVStore, DbContents};
 use ident::IdentMap;
 
 #[derive(Clone)]
@@ -32,8 +33,6 @@ impl From<String> for Error {
         Error(err)
     }
 }
-
-
 
 impl<'de, V> SqliteStore<V>
     where V: Serialize + Deserialize<'de> + Clone

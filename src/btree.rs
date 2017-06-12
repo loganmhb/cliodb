@@ -1,89 +1,9 @@
 use std::cmp::Ordering;
-use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
-use std::sync::{Arc, Mutex};
-use uuid::Uuid;
-use ident::IdentMap;
+use backends::KVStore;
 
 pub const CAPACITY: usize = 512;
-
-pub trait KVStore : Clone {
-    type Item;
-
-    // Add an item to the database
-    fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String>;
-    fn set_contents(&self, contents: &DbContents) -> Result<(), String>;
-    // Used to retrieve references to indices from possibly-persistent storage
-    fn get_contents(&self) -> Result<DbContents, String>;
-    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String>;
-}
-
-/// A structure designed to be stored in the index that enables
-/// a process to locate the indexes, tx log, etc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub struct DbContents {
-    pub next_id: u64,
-    pub idents: IdentMap,
-    pub eav: String,
-    pub ave: String,
-    pub aev: String,
-}
-
-// HashMap pretending to be a database
-#[derive(Clone, Debug)]
-pub struct HeapStore<T: Debug + Ord + Clone> {
-    inner: Arc<Mutex<HashMap<String, IndexNode<T>>>>,
-}
-
-impl<T: Ord + Debug + Clone> HeapStore<T> {
-    pub fn new() -> HeapStore<T> {
-        HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) }
-    }
-}
-
-impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
-    type Item = T;
-
-    fn add(&self, value: IndexNode<T>) -> Result<String, String> {
-        let key = Uuid::new_v4().to_string();
-        let mut guard = self.inner.lock().map_err(|e| e.to_string())?;
-
-        match (*guard).insert(key.clone(), value) {
-            Some(_) => Err("duplicate uuid?!?".to_string()),
-            None => Ok(key),
-        }
-    }
-
-    fn set_contents(&self, _contents: &DbContents) -> Result<(), String> {
-        // HeapStore can't survive a restart, so it doesn't need to set
-        // the DbContents.
-        Ok(())
-    }
-
-    fn get_contents(&self) -> Result<DbContents, String> {
-        // We don't bother storing contents in a HeapStore, so we just make
-        // a new one.
-        let empty_root = IndexNode::Leaf { items: vec![] };
-
-        Ok(DbContents {
-            next_id: 0,
-            idents: IdentMap::default(),
-            eav: self.add(empty_root.clone())?,
-            ave: self.add(empty_root.clone())?,
-            aev: self.add(empty_root)?
-        })
-    }
-
-    fn get(&self, key: &str) -> Result<IndexNode<T>, String> {
-        self.inner
-            .lock()
-            .unwrap()
-            .get(key)
-            .map(|v| v.clone())
-            .ok_or("invalid reference".to_string())
-    }
-}
 
 pub trait Comparator : Clone {
     type Item;
@@ -469,6 +389,7 @@ mod tests {
 
     extern crate test;
     use self::test::Bencher;
+    use backends::mem::HeapStore;
 
     #[derive(Clone)]
     struct NumComparator;

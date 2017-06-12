@@ -33,7 +33,7 @@ use chrono::prelude::UTC;
 pub mod parser;
 pub mod string_ref;
 pub mod btree;
-pub mod durable;
+pub mod backends;
 mod query;
 mod model;
 mod ident;
@@ -41,7 +41,8 @@ mod ident;
 pub use parser::*;
 use model::{Fact, Record, Value, Entity};
 use query::{Query, Clause, Term, Var};
-use btree::{Index, KVStore, Comparator, DbContents};
+use btree::{Index, Comparator};
+use backends::{KVStore, DbContents};
 use ident::IdentMap;
 
 #[derive(Debug, PartialEq)]
@@ -174,7 +175,7 @@ pub struct Db<S: KVStore<Item = Record>> {
 }
 
 impl<S> Db<S>
-    where S: btree::KVStore<Item = Record>
+    where S: KVStore<Item = Record>
 {
     pub fn new(store: S) -> Result<Db<S>, String> {
         // The store is responsible for making sure that its
@@ -466,7 +467,7 @@ mod tests {
     use std::iter;
 
     use super::*;
-    use btree::HeapStore;
+    use backends::mem::HeapStore;
 
     fn expect_query_result(query: &Query, expected: QueryResult) {
         let db = test_db();

@@ -2,8 +2,7 @@ extern crate logos;
 extern crate rustyline;
 
 use logos::*;
-// use logos::btree::HeapStore;
-use logos::durable::SqliteStore;
+use logos::backends::sqlite::SqliteStore;
 
 use std::error::Error;
 
