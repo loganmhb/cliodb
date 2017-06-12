@@ -10,13 +10,14 @@ use chrono::prelude::{DateTime, UTC};
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 pub struct Record {
     pub entity: Entity,
-    pub attribute: String,
+    pub attribute: Entity,
     pub value: Value,
     pub tx: Entity,
 }
 
-// We need a struct to represent facts that may not be in the database,
-// i.e. may not have an associated tx, for use by the parser and unifier.
+// We need a struct to represent facts that may not be in the database
+// and may not have valid attributes, for use by the parser and
+// unifier.
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Ord, PartialOrd, Clone)]
 pub struct Fact {
     pub entity: Entity,
@@ -35,29 +36,13 @@ impl Fact {
 }
 
 impl Record {
-    pub fn new<A: Into<String>, V: Into<Value>>(e: Entity, a: A, v: V, tx: Entity) -> Record {
+    pub fn new<V: Into<Value>>(e: Entity, a: Entity, v: V, tx: Entity) -> Record {
         Record {
             entity: e,
-            attribute: a.into(),
+            attribute: a,
             value: v.into(),
             tx: tx,
         }
-    }
-
-    pub fn from_fact(h: Fact, tx: Entity) -> Record {
-        Record {
-            tx: tx,
-            entity: h.entity,
-            attribute: h.attribute,
-            value: h.value,
-        }
-    }
-}
-
-impl PartialEq<Record> for Fact {
-    fn eq(&self, other: &Record) -> bool {
-        self.entity == other.entity && self.attribute == other.attribute &&
-        self.value == other.value
     }
 }
 

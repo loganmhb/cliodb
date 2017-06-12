@@ -4,6 +4,7 @@ use std::fmt::Debug;
 use std::ops::RangeFrom;
 use std::sync::{Arc, Mutex};
 use uuid::Uuid;
+use ident::IdentMap;
 
 pub const CAPACITY: usize = 512;
 
@@ -23,6 +24,7 @@ pub trait KVStore : Clone {
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContents {
     pub next_id: u64,
+    pub idents: IdentMap,
     pub eav: String,
     pub ave: String,
     pub aev: String,
@@ -65,7 +67,8 @@ impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
         let empty_root = IndexNode::Leaf { items: vec![] };
 
         Ok(DbContents {
-            next_id: 1,
+            next_id: 0,
+            idents: IdentMap::default(),
             eav: self.add(empty_root.clone())?,
             ave: self.add(empty_root.clone())?,
             aev: self.add(empty_root)?

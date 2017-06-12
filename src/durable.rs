@@ -10,6 +10,7 @@ use rusqlite as sql;
 use uuid::Uuid;
 
 use btree::{IndexNode, KVStore, DbContents};
+use ident::IdentMap;
 
 #[derive(Clone)]
 pub struct SqliteStore<V> {
@@ -75,7 +76,8 @@ impl<'de, V> SqliteStore<V>
                 let ave_root = store.add(empty_root.clone())?;
 
                 store.set_contents(&DbContents {
-                    next_id: 1,
+                    next_id: 0,
+                    idents: IdentMap::default(),
                     eav: eav_root,
                     ave: ave_root,
                     aev: aev_root,

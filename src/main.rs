@@ -35,9 +35,14 @@ Commands:
                             Err(e) => println!("ERROR: {}", e)
                         }
                     },
-                    Ok(Input::Tx(tx)) => db.transact(tx),
+                    Ok(Input::Tx(tx)) => db.transact(tx).unwrap_or_else(|e| {
+                        println!("ERROR: {}", e);
+                    }),
                     Ok(Input::SampleDb) => {
                         let sample = [
+                            r#"{db:ident name} {db:ident parent}"#,
+                            // FIXME: Don't hardcode entities; need a way to get the entity id of a tx
+                            // (tempid system?)
                             r#"add (0 name "Bob")"#,
                             r#"add (1 name "John")"#,
                             r#"add (0 parent 1)"#,
@@ -45,7 +50,7 @@ Commands:
                         ];
 
                         for tx in sample.into_iter().map(|l| parse_tx(*l).unwrap()) {
-                            db.transact(tx);
+                            db.transact(tx).unwrap();
                         }
                     }
                     Ok(Input::Dump) => {
