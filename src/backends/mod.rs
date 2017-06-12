@@ -1,5 +1,6 @@
 pub mod sqlite;
 pub mod mem;
+pub mod cassandra;
 
 use btree::IndexNode;
 use ident::IdentMap;

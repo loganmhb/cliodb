@@ -15,7 +15,9 @@ extern crate serde_derive;
 extern crate serde;
 extern crate rmp_serde;
 
+extern crate cdrs;
 extern crate rusqlite;
+extern crate r2d2;
 
 extern crate uuid;
 

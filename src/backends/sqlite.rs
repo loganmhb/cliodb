@@ -37,10 +37,6 @@ impl From<String> for Error {
 impl<'de, V> SqliteStore<V>
     where V: Serialize + Deserialize<'de> + Clone
 {
-    /// Sets the DbContents struct to point to a new set of indices,
-    /// both in memory and durably.
-
-
     pub fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore<V>, Error> {
         let conn = sql::Connection::open(path)?;
 
@@ -54,6 +50,7 @@ impl<'de, V> SqliteStore<V>
         };
 
         // If the table is new, we need to set up index roots.
+        // TODO: this should happen in a separate create-db function.
         let result: Result<Vec<u8>, sql::Error> = store
             .conn
             .query_row("SELECT val FROM logos_kvs WHERE key = 'db_contents'",

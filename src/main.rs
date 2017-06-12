@@ -2,7 +2,7 @@ extern crate logos;
 extern crate rustyline;
 
 use logos::*;
-use logos::backends::sqlite::SqliteStore;
+use logos::backends::cassandra::CassandraStore;
 
 use std::error::Error;
 
@@ -16,7 +16,7 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let mut rl = rustyline::Editor::<()>::new();
-    let store = SqliteStore::new("/tmp/logos.db").unwrap();
+    let store = CassandraStore::new("localhost:9042").unwrap();
     let mut db = Db::new(store).unwrap();
     loop {
         let readline = rl.readline("> ");
