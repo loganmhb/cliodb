@@ -128,6 +128,7 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
     let value = || {
         string_lit()
             .or(number_lit().map(|e| Value::Entity(e)))
+            .or(ident().map(|i| Value::Ident(i)))
             .skip(spaces())
     };
 
