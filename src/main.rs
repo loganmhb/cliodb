@@ -30,12 +30,12 @@ Commands:
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => {
                         match db.query(&q) {
-                            Ok(res) => println!("{}", res),
-                            Err(e) => println!("ERROR: {}", e)
+                            Ok(res) => println!("{:?}", res),
+                            Err(e) => println!("ERROR: {:?}", e)
                         }
                     },
                     Ok(Input::Tx(tx)) => db.transact(tx).unwrap_or_else(|e| {
-                        println!("ERROR: {}", e);
+                        println!("ERROR: {:?}", e);
                     }),
                     Ok(Input::SampleDb) => {
                         let sample = [

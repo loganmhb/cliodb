@@ -9,6 +9,7 @@ use rmp_serde::{Deserializer, Serializer};
 use rusqlite as sql;
 use uuid::Uuid;
 
+use Result;
 use btree::IndexNode;
 use super::{KVStore, DbContents};
 use ident::IdentMap;
@@ -19,25 +20,10 @@ pub struct SqliteStore<V> {
     conn: Arc<sql::Connection>,
 }
 
-#[derive(Debug)]
-pub struct Error(String);
-
-impl From<sql::Error> for Error {
-    fn from(err: sql::Error) -> Error {
-        Error(err.to_string())
-    }
-}
-
-impl From<String> for Error {
-    fn from(err: String) -> Error {
-        Error(err)
-    }
-}
-
 impl<'de, V> SqliteStore<V>
     where V: Serialize + Deserialize<'de> + Clone
 {
-    pub fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore<V>, Error> {
+    pub fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore<V>> {
         let conn = sql::Connection::open(path)?;
 
         // Set up SQLite tables to track index data
@@ -51,8 +37,7 @@ impl<'de, V> SqliteStore<V>
 
         // If the table is new, we need to set up index roots.
         // TODO: this should happen in a separate create-db function.
-        let result: Result<Vec<u8>, sql::Error> = store
-            .conn
+        let result: sql::Result<Vec<u8>> = store.conn
             .query_row("SELECT val FROM logos_kvs WHERE key = 'db_contents'",
                        &[],
                        |row| row.get(0));
@@ -90,29 +75,19 @@ impl<'de, V> KVStore for SqliteStore<V>
 {
     type Item = V;
 
-    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String> {
+    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>> {
         let mut stmt = self.conn
             .prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
-        match stmt.query_row(&[&key], |row| {
+        let val = stmt.query_row(&[&key], |row| {
             let s: Vec<u8> = row.get(0);
             s
-        }) {
-            Ok(val) => {
-                let mut de = Deserializer::new(&val[..]);
-                match Deserialize::deserialize(&mut de) {
-                    Ok(node) => {
-                        let node: IndexNode<_> = node;
-                        Ok(node)
-                    }
-                    Err(err) => Err(err.to_string()),
-                }
-            }
-            Err(err) => Err(err.to_string()),
-        }
+        })?;
+        let mut de = Deserializer::new(&val[..]);
+        Ok(Deserialize::deserialize(&mut de)?)
     }
 
-    fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String> {
+    fn add(&self, value: IndexNode<Self::Item>) -> Result<String> {
         let key = Uuid::new_v4().to_string();
         let mut buf = Vec::new();
         value.serialize(&mut Serializer::new(&mut buf)).unwrap();
@@ -120,25 +95,23 @@ impl<'de, V> KVStore for SqliteStore<V>
         let mut stmt = self.conn
             .prepare("INSERT INTO logos_kvs (key, val) VALUES (?1, ?2)")
             .unwrap();
-        match stmt.execute(&[&key, &buf]) {
-            Ok(_) => Ok(key),
-            Err(e) => Err(e.to_string()),
-        }
+        stmt.execute(&[&key, &buf])?;
+        Ok(key)
     }
 
-    fn set_contents(&self, contents: &DbContents) -> Result<(), String> {
+    fn set_contents(&self, contents: &DbContents) -> Result<()> {
         let mut buf = Vec::new();
         contents.serialize(&mut Serializer::new(&mut buf)).unwrap();
 
         let mut stmt = self.conn
             .prepare("INSERT OR REPLACE INTO logos_kvs (key, val) VALUES ('db_contents', ?1)")
             .unwrap();
-        stmt.execute(&[&buf]).map_err(|e| e.to_string())?;
+        stmt.execute(&[&buf])?;
 
         Ok(())
     }
 
-    fn get_contents(&self) -> Result<DbContents, String> {
+    fn get_contents(&self) -> Result<DbContents> {
         let mut stmt = self.conn
             .prepare("SELECT val FROM logos_kvs WHERE key = 'db_contents'")
             .unwrap();
@@ -149,9 +122,9 @@ impl<'de, V> KVStore for SqliteStore<V>
                 Ok(contents) => {
                     Ok(contents)
                 }
-                Err(err) => Err(err.to_string()),
+                Err(err) => Err(err.into()),
             }
-        }).map_err(|e| e.to_string())?
+        })?
     }
 }
 

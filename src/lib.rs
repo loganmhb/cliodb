@@ -29,6 +29,7 @@ use itertools::*;
 use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::iter;
+use std::result;
 
 use chrono::prelude::UTC;
 
@@ -46,6 +47,17 @@ use query::{Query, Clause, Term, Var};
 use btree::{Index, Comparator};
 use backends::{KVStore, DbContents};
 use ident::IdentMap;
+
+#[derive(Debug)]
+pub struct Error(String);
+
+impl<S: ToString> From<S> for Error {
+    fn from(other: S) -> Error {
+        Error(other.to_string())
+    }
+}
+
+type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug, PartialEq)]
 pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);
@@ -100,14 +112,14 @@ enum TxItem {
 type Binding = HashMap<Var, Value>;
 
 impl Clause {
-    fn substitute(&self, env: &Binding) -> Result<Clause, String> {
+    fn substitute(&self, env: &Binding) -> Result<Clause> {
         let entity = match &self.entity {
             &Term::Bound(_) => self.entity.clone(),
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match *val {
                         Value::Entity(e) => Term::Bound(e),
-                        _ => return Err("type mismatch".to_string()),
+                        _ => return Err("type mismatch".into()),
                     }
                 } else {
                     self.entity.clone()
@@ -121,7 +133,7 @@ impl Clause {
                 if let Some(val) = env.get(&var) {
                     match val {
                         &Value::String(ref s) => Term::Bound(s.clone()),
-                        _ => return Err("type mismatch".to_string()),
+                        _ => return Err("type mismatch".into()),
                     }
                 } else {
                     self.attribute.clone()
@@ -179,7 +191,7 @@ pub struct Db<S: KVStore<Item = Record>> {
 impl<S> Db<S>
     where S: KVStore<Item = Record>
 {
-    pub fn new(store: S) -> Result<Db<S>, String> {
+    pub fn new(store: S) -> Result<Db<S>> {
         // The store is responsible for making sure that its
         // 'db_contents' key is usable when it is created, and making
         // new root nodes if the store is brand new.
@@ -249,7 +261,7 @@ impl<S> Db<S>
     /// Saves the db metadata (index root nodes, entity ID state) to
     /// storage, when implemented by the storage backend (i.e. when
     /// not using in-memory storage).
-    fn save_contents(&self) -> Result<(), String> {
+    fn save_contents(&self) -> Result<()> {
         let contents = DbContents {
             next_id: self.next_id,
             idents: self.idents.clone(),
@@ -258,10 +270,11 @@ impl<S> Db<S>
             ave: self.ave.root_ref.clone(),
         };
 
-        self.store.set_contents(&contents)
+        self.store.set_contents(&contents)?;
+        Ok(())
     }
 
-    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>, String> {
+    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
         let expanded = clause.substitute(binding)?;
         match expanded {
             // ?e a v => use the ave index
@@ -280,7 +293,7 @@ impl<S> Db<S>
                                .take_while(|rec| rec.attribute == attr && rec.value == v)
                                .collect())
                     }
-                    _ => return Err("invalid attribute".to_string()),
+                    _ => return Err("invalid attribute".into()),
                 }
             }
             // // e a ?v => use the eav index
@@ -300,7 +313,7 @@ impl<S> Db<S>
                                .take_while(|rec| rec.entity == e && rec.attribute == attr)
                                .collect())
                     }
-                    _ => return Err("invalid attribute".to_string()),
+                    _ => return Err("invalid attribute".into()),
                 }
             }
             // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
@@ -309,13 +322,13 @@ impl<S> Db<S>
                 Ok(self.eav
                     .iter()
                     .map(|f| f.unwrap()) // FIXME this is not safe :D
-                    .filter(|f| unify(&binding, &self.idents, &clause, &f).is_ok())
+                    .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
                     .collect())
             }
         }
     }
 
-    pub fn transact(&mut self, tx: Tx) -> Result<(), String> {
+    pub fn transact(&mut self, tx: Tx) -> Result<()> {
         let tx_entity = Entity(self.get_id());
         let attr = self.idents.get_entity("db:txInstant".to_string()).unwrap();
         self.add(Record::new(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity));
@@ -343,7 +356,7 @@ impl<S> Db<S>
         self.save_contents() // FIXME: propagate the error
     }
 
-    pub fn query(&self, query: &Query) -> Result<QueryResult, String> {
+    pub fn query(&self, query: &Query) -> Result<QueryResult> {
         // TODO: automatically bind ?tx in queries
         let mut bindings = vec![HashMap::new()];
 
@@ -353,7 +366,7 @@ impl<S> Db<S>
             for binding in bindings {
                 for record in self.records_matching(clause, &binding)? {
                     match unify(&binding, &self.idents, clause, &record) {
-                        Ok(new_info) => {
+                        Some(new_info) => {
                             let mut new_env = binding.clone();
                             new_env.extend(new_info);
                             new_bindings.push(new_env)
@@ -387,20 +400,20 @@ fn unify(env: &Binding,
          idents: &IdentMap,
          clause: &Clause,
          record: &Record)
-         -> Result<Binding, ()> {
+         -> Option<Binding> {
     let mut new_info: Binding = Default::default();
 
     match clause.entity {
         Term::Bound(ref e) => {
             if *e != record.entity {
-                return Err(());
+                return None;
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
                     if *e != Value::Entity(record.entity) {
-                        return Err(());
+                        return None;
                     }
                 }
                 _ => {
@@ -417,17 +430,17 @@ fn unify(env: &Binding,
             match idents.get_entity(a.to_owned()) {
                 Some(e) => {
                     if e != record.attribute {
-                        return Err(());
+                        return None;
                     }
                 }
-                _ => return Err(()),
+                _ => return None,
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
                     if *e != Value::Entity(record.attribute) {
-                        return Err(());
+                        return None;
                     }
                 }
                 _ => {
@@ -440,14 +453,14 @@ fn unify(env: &Binding,
     match clause.value {
         Term::Bound(ref v) => {
             if *v != record.value {
-                return Err(());
+                return None;
             }
         }
         Term::Unbound(ref var) => {
             match env.get(var) {
                 Some(e) => {
                     if *e != record.value {
-                        return Err(());
+                        return None;
                     }
                 }
                 _ => {
@@ -457,7 +470,7 @@ fn unify(env: &Binding,
         }
     }
 
-    Ok(new_info)
+    Some(new_info)
 }
 
 

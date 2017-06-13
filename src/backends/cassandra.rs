@@ -1,7 +1,7 @@
 use std::marker::PhantomData;
 
 use btree::IndexNode;
-use super::{KVStore, DbContents};
+use {KVStore, DbContents, Result};
 use ident::IdentMap;
 
 use uuid::Uuid;
@@ -36,7 +36,7 @@ impl<E: ToString> From<E> for Error {
 impl<'de, V> CassandraStore<V>
     where V: Serialize + Deserialize<'de> + Clone
 {
-    pub fn new(addr: &str) -> Result<CassandraStore<V>, Error> {
+    pub fn new(addr: &str) -> Result<CassandraStore<V>> {
 
         let tcp = TransportTcp::new(addr)?;
         let config = r2d2::Config::builder().pool_size(15).build();
@@ -99,11 +99,11 @@ impl<'de, V> KVStore for CassandraStore<V>
 {
     type Item = V;
 
-    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>, String> {
+    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>> {
         let select_query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = ?")
             .values(vec![Value::new_normal(key)])
             .finalize();
-        let mut session = self.pool.get().map_err(|e| e.to_string())?;
+        let mut session = self.pool.get()?;
         match session.query(select_query, false, false)
             .and_then(|r| r.get_body())
             .map(|b| b.into_rows())
@@ -113,15 +113,15 @@ impl<'de, V> KVStore for CassandraStore<V>
                 let mut de = Deserializer::new(&v[..]);
                 match Deserialize::deserialize(&mut de) {
                     Ok(node) => Ok(node),
-                    Err(err) => Err(err.to_string())
+                    Err(err) => Err(err.into())
                 }
             },
-            Ok(None) => Err("node not found".to_string()),
-            Err(e) => Err(e.to_string())
+            Ok(None) => Err("node not found".into()),
+            Err(e) => Err(e.into())
         }
     }
 
-    fn add(&self, value: IndexNode<Self::Item>) -> Result<String, String> {
+    fn add(&self, value: IndexNode<Self::Item>) -> Result<String> {
         let key = Uuid::new_v4().to_string();
         let mut buf = Vec::new();
         value.serialize(&mut Serializer::new(&mut buf)).unwrap();
@@ -130,33 +130,30 @@ impl<'de, V> KVStore for CassandraStore<V>
             .values(vec![Value::new_normal(key.clone()), Value::from(Bytes::new(buf))])
             .finalize();
 
-        let mut session = self.pool.get().map_err(|e| e.to_string())?;
+        let mut session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(key),
-            Err(e) => Err(e.to_string())
+            Err(e) => Err(e.into())
         }
     }
 
-    fn set_contents(&self, contents: &DbContents) -> Result<(), String> {
+    fn set_contents(&self, contents: &DbContents) -> Result<()> {
         let mut buf = Vec::new();
         contents.serialize(&mut Serializer::new(&mut buf)).unwrap();
         let query = QueryBuilder::new("INSERT INTO logos.logos_kvs (key, val) VALUES ('db_contents', ?)")
             .values(vec![Value::from(Bytes::new(buf))])
             .finalize();
 
-        let mut session = self.pool.get()
-            .map_err(|e| e.to_string())?;
-        session.query(query, false, false)
-            .map_err(|e| e.to_string())?;
+        let mut session = self.pool.get()?;
+        session.query(query, false, false)?;
 
         Ok(())
 
     }
 
-    fn get_contents(&self) -> Result<DbContents, String> {
-        let mut session = self.pool.get()
-            .map_err(|e| e.to_string())?;
+    fn get_contents(&self) -> Result<DbContents> {
+        let mut session = self.pool.get()?;
         let query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = 'db_contents'")
             .finalize();
         match session.query(query, false, false)
@@ -167,10 +164,10 @@ impl<'de, V> KVStore for CassandraStore<V>
                     let mut de = Deserializer::new(&v[..]);
                     match Deserialize::deserialize(&mut de) {
                         Ok(contents) => Ok(contents),
-                        Err(err) => Err(err.to_string())
+                        Err(err) => Err(err.into())
                     }
                 },
-                _ => Err("could not retrieve contents".to_string())
+                _ => Err("could not retrieve contents".into())
             }
     }
 }

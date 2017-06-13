@@ -2,6 +2,7 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
 use backends::KVStore;
+use Result;
 
 pub const CAPACITY: usize = 512;
 
@@ -33,11 +34,11 @@ pub enum IndexNode<T> {
 impl<T, S, C> Index<T, S, C>
     where T: Debug + Ord + Clone, S: KVStore<Item=T>, C: Comparator<Item=T>
 {
-    pub fn new(root_ref: String, store: S, comparator: C) -> Result<Self, String> {
+    pub fn new(root_ref: String, store: S, comparator: C) -> Result<Self> {
         Ok(Index { store, root_ref, comparator })
     }
 
-    pub fn insert(&self, item: T) -> Result<Index<T, S, C>, String> {
+    pub fn insert(&self, item: T) -> Result<Index<T, S, C>> {
         let new_root = self.store
             .get(&self.root_ref)
             .and_then(|root| root.insert(item.clone(), &self.store, &self.comparator));
@@ -102,7 +103,7 @@ impl<T, S, C> Index<T, S, C>
 
     // FIXME: Better would be to have this return either the Iter or,
     // if the store causes an error, to yield the error as the first iterator item.
-    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T, S>, String> {
+    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T, S>> {
         let mut stack = vec![
             IterState {
                 node_ref: self.root_ref.clone(),
@@ -176,7 +177,7 @@ impl<T, S, C> Index<T, S, C>
 }
 
 impl<T: Debug + Ord + Clone> IndexNode<T> {
-    fn insert<S, C>(&self, item: T, store: &S, comparator: &C) -> Result<Insertion<IndexNode<T>>, String>
+    fn insert<S, C>(&self, item: T, store: &S, comparator: &C) -> Result<Insertion<IndexNode<T>>>
         where S: KVStore<Item=T>, C: Comparator<Item=T>
     {
         use self::IndexNode::{Leaf, Dir};
@@ -313,7 +314,7 @@ pub struct Iter<T: Ord + Debug + Clone, S: KVStore<Item=T>> {
 }
 
 impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Iterator for Iter<T, S> {
-    type Item = Result<T, String>;
+    type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {

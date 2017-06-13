@@ -12,7 +12,7 @@ pub enum Input {
     Dump,
 }
 
-pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
+pub fn parse_input<I>(input: I) -> result::Result<Input, ParseError<I>>
     where I: combine::Stream<Item = char>
 {
     choice!(query_parser().map(Input::Query),
@@ -23,13 +23,13 @@ pub fn parse_input<I>(input: I) -> Result<Input, ParseError<I>>
             .map(|(r, _)| r)
 }
 
-pub fn parse_query<I>(input: I) -> Result<Query, ParseError<I>>
+pub fn parse_query<I>(input: I) -> result::Result<Query, ParseError<I>>
     where I: Stream<Item = char>
 {
     query_parser().parse(input).map(|(r, _)| r)
 }
 
-pub fn parse_tx<I>(input: I) -> Result<Tx, ParseError<I>>
+pub fn parse_tx<I>(input: I) -> result::Result<Tx, ParseError<I>>
     where I: Stream<Item = char>
 {
     tx_parser().parse(input).map(|(r, _)| r)
