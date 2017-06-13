@@ -30,7 +30,7 @@ Commands:
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => {
                         match db.query(&q) {
-                            Ok(res) => println!("{:?}", res),
+                            Ok(res) => println!("{}", res),
                             Err(e) => println!("ERROR: {:?}", e)
                         }
                     },

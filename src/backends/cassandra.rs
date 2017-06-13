@@ -59,7 +59,7 @@ impl<'de, V> CassandraStore<V>
 
         session.query(create, false, false)?;
 
-        let contents = QueryBuilder::new("SELECT val FROM logos_kvs WHERE key = 'db_contents'")
+        let contents = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = 'db_contents'")
             .finalize();
 
         match session.query(contents, false, false)
