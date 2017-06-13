@@ -2,7 +2,6 @@ use std::marker::PhantomData;
 
 use btree::IndexNode;
 use {KVStore, DbContents, Result};
-use ident::IdentMap;
 
 use uuid::Uuid;
 use serde::ser::Serialize;
@@ -58,37 +57,6 @@ impl<'de, V> CassandraStore<V>
         )").finalize();
 
         session.query(create, false, false)?;
-
-        let contents = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = 'db_contents'")
-            .finalize();
-
-        match session.query(contents, false, false)
-            .and_then(|r| r.get_body())
-            .map(|b| b.into_rows())
-        {
-            Ok(Some(rows)) => {
-                let _: Vec<u8> = rows[0].r_by_name("val")?;
-            },
-            _ => {
-                // Db contents doesn't exist yet; initialize.
-                // FIXME: DRY w/r/t sqlite, which is identical.
-                let empty_root: IndexNode<V> = IndexNode::Leaf {
-                    items: vec![],
-                };
-                let eav_root = store.add(empty_root.clone())?;
-                let aev_root = store.add(empty_root.clone())?;
-                let ave_root = store.add(empty_root.clone())?;
-
-                store.set_contents(&DbContents {
-                    next_id: 0,
-                    idents: IdentMap::default(),
-                    eav: eav_root,
-                    ave: ave_root,
-                    aev: aev_root,
-                })?;
-
-            }
-        };
 
         Ok(store)
     }
@@ -160,7 +128,8 @@ impl<'de, V> KVStore for CassandraStore<V>
             .and_then(|frame| frame.get_body())
             .map(|body| body.into_rows()) {
                 Ok(Some(rows)) => {
-                    let v: Vec<u8> = rows[0].r_by_name("val").unwrap();
+                    let v: Vec<u8> = rows.get(0).ok_or("contents do not exist")?
+                        .r_by_name("val").unwrap();
                     let mut de = Deserializer::new(&v[..]);
                     match Deserialize::deserialize(&mut de) {
                         Ok(contents) => Ok(contents),

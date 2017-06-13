@@ -192,10 +192,11 @@ impl<S> Db<S>
     where S: KVStore<Item = Record>
 {
     pub fn new(store: S) -> Result<Db<S>> {
-        // The store is responsible for making sure that its
-        // 'db_contents' key is usable when it is created, and making
-        // new root nodes if the store is brand new.
-        let contents = store.get_contents()?;
+        let contents: DbContents = store.get_contents()
+            // TODO: Only let the transactor create a database; the
+            // client should fail with an error here if the DB in
+            // question doesn't exist.
+            .or_else(|_| store.initialize())?;
 
         let mut db = Db {
             next_id: contents.next_id,

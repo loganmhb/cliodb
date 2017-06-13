@@ -12,7 +12,6 @@ use uuid::Uuid;
 use Result;
 use btree::IndexNode;
 use super::{KVStore, DbContents};
-use ident::IdentMap;
 
 #[derive(Clone)]
 pub struct SqliteStore<V> {
@@ -34,37 +33,6 @@ impl<'de, V> SqliteStore<V>
             conn: Arc::new(conn),
             phantom: PhantomData,
         };
-
-        // If the table is new, we need to set up index roots.
-        // TODO: this should happen in a separate create-db function.
-        let result: sql::Result<Vec<u8>> = store.conn
-            .query_row("SELECT val FROM logos_kvs WHERE key = 'db_contents'",
-                       &[],
-                       |row| row.get(0));
-
-        match result {
-            Ok(_) => {
-                // The indices exist already; they'll be retrieved by the Db when
-                // it calls get_contents() on the store.
-            }
-            Err(_) => {
-                // The indices do NOT exist and we need to create root nodes for them.
-                let empty_root: IndexNode<V> = IndexNode::Leaf {
-                    items: vec![],
-                };
-                let eav_root = store.add(empty_root.clone())?;
-                let aev_root = store.add(empty_root.clone())?;
-                let ave_root = store.add(empty_root.clone())?;
-
-                store.set_contents(&DbContents {
-                    next_id: 0,
-                    idents: IdentMap::default(),
-                    eav: eav_root,
-                    ave: ave_root,
-                    aev: aev_root,
-                })?;
-            }
-        }
 
         Ok(store)
     }
