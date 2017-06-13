@@ -109,6 +109,11 @@ enum TxItem {
     NewEntity(HashMap<String, Value>),
 }
 
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
+pub struct TxReport {
+    new_entities: Vec<Entity>
+}
+
 type Binding = HashMap<Var, Value>;
 
 impl Clause {
@@ -329,7 +334,8 @@ impl<S> Db<S>
         }
     }
 
-    pub fn transact(&mut self, tx: Tx) -> Result<()> {
+    pub fn transact(&mut self, tx: Tx) -> Result<TxReport> {
+        let mut new_entities = vec![];
         let tx_entity = Entity(self.get_id());
         let attr = self.idents.get_entity("db:txInstant".to_string()).unwrap();
         self.add(Record::new(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity));
@@ -349,12 +355,14 @@ impl<S> Db<S>
                             .ok_or("invalid attribute".to_string())?;
                         self.add(Record::new(entity, attr, v, tx_entity))
                     }
+                    new_entities.push(entity);
                 }
                 // TODO Implement retractions
                 _ => unimplemented!(),
             }
         }
-        self.save_contents() // FIXME: propagate the error
+        self.save_contents()?;
+        Ok(TxReport { new_entities })
     }
 
     pub fn query(&self, query: &Query) -> Result<QueryResult> {

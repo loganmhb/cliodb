@@ -34,9 +34,12 @@ Commands:
                             Err(e) => println!("ERROR: {:?}", e)
                         }
                     },
-                    Ok(Input::Tx(tx)) => db.transact(tx).unwrap_or_else(|e| {
-                        println!("ERROR: {:?}", e);
-                    }),
+                    Ok(Input::Tx(tx)) => {
+                        match db.transact(tx) {
+                            Ok(report) => println!("{:?}", report),
+                            Err(e) => println!("ERROR: {:?}", e)
+                        }
+                    },
                     Ok(Input::SampleDb) => {
                         let sample = [
                             r#"{db:ident name} {db:ident parent}"#,
