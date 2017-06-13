@@ -1,13 +1,39 @@
+#![feature(slice_patterns)]
+#![feature(conservative_impl_trait)]
 extern crate logos;
 extern crate rustyline;
 
 use logos::*;
+use logos::backends::KVStore;
 use logos::backends::cassandra::CassandraStore;
+use logos::backends::mem::HeapStore;
+use logos::backends::sqlite::SqliteStore;
 
 use std::error::Error;
+use std::env::args;
 
-fn main() {
-    // TODO print usage e.g. `quit` command
+fn run_uri(uri: &str) {
+    match &uri.split("//").collect::<Vec<_>>()[..] {
+        &["logos:mem:", _] => {
+            let store = HeapStore::new();
+            run(Db::new(store).unwrap());
+        }
+        &["logos:sqlite:", path] => {
+            let store = SqliteStore::new(path).unwrap();
+            run(Db::new(store).unwrap());
+        }
+        &["logos:cass:", url] => {
+            let store = CassandraStore::new(url).unwrap();
+            run(Db::new(store).unwrap());
+        }
+        _ => {
+            println!("Invalid uri!");
+            std::process::exit(1);
+        }
+    }
+}
+
+fn run<S: KVStore<Item = Record>>(mut db: Db<S>) {
     println!("
 logos
 Commands:
@@ -16,8 +42,6 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let mut rl = rustyline::Editor::<()>::new();
-    let store = CassandraStore::new("localhost:9042").unwrap();
-    let mut db = Db::new(store).unwrap();
     loop {
         let readline = rl.readline("> ");
         match readline {
@@ -31,15 +55,15 @@ Commands:
                     Ok(Input::Query(q)) => {
                         match db.query(&q) {
                             Ok(res) => println!("{}", res),
-                            Err(e) => println!("ERROR: {:?}", e)
+                            Err(e) => println!("ERROR: {:?}", e),
                         }
-                    },
+                    }
                     Ok(Input::Tx(tx)) => {
                         match db.transact(tx) {
                             Ok(report) => println!("{:?}", report),
-                            Err(e) => println!("ERROR: {:?}", e)
+                            Err(e) => println!("ERROR: {:?}", e),
                         }
-                    },
+                    }
                     Ok(Input::SampleDb) => {
                         let sample = [
                             r#"{db:ident name} {db:ident parent}"#,
@@ -59,7 +83,8 @@ Commands:
                         println!("{}",
                                  db.query(&parse_query("find ?ent ?att ?val where (?ent ?att \
                                                        ?val)")
-                                                   .unwrap()).unwrap())
+                                                   .unwrap())
+                                     .unwrap())
                     }
                     Err(e) => println!("Oh no! {}", e),
                 };
@@ -67,4 +92,15 @@ Commands:
             Err(e) => println!("Error! {:?}", e.description()),
         }
     }
+}
+
+fn main() {
+
+    let argv: Vec<_> = args().collect();
+    if argv.len() != 2 {
+        println!("Usage: {} <db-uri>", argv[0]);
+        std::process::exit(1);
+    }
+
+    run_uri(&argv[1]);
 }

@@ -42,7 +42,7 @@ mod model;
 mod ident;
 
 pub use parser::*;
-use model::{Fact, Record, Value, Entity};
+pub use model::{Fact, Record, Value, Entity};
 use query::{Query, Clause, Term, Var};
 use btree::{Index, Comparator};
 use backends::{KVStore, DbContents};
