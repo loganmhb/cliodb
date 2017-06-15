@@ -366,7 +366,6 @@ mod tests {
     use std::iter;
     use std::sync::Arc;
 
-    use super::*;
     use backends::mem::HeapStore;
     use db::Db;
 
@@ -494,6 +493,14 @@ mod tests {
         assert_equal(db.query(&q), Err("type mismatch".to_string()))
     }
 
+    #[test]
+    fn test_retractions() {
+        let mut db = test_db();
+        db.transact(parse_tx("retract (1 parent 0)").unwrap()).unwrap();
+        let result = db.query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap()).unwrap();
+
+        assert_eq!(result, QueryResult(vec![Var::new("a"), Var::new("b")], vec![]));
+    }
     #[bench]
     // Parse + run a query on a small db
     fn parse_bench(b: &mut Bencher) {
@@ -535,6 +542,7 @@ mod tests {
                });
     }
 
+    #[cfg(not(debug_assertions))]
     fn test_db_large() -> Db {
         let store = HeapStore::new();
         let mut db = Db::new(Arc::new(store)).unwrap();
