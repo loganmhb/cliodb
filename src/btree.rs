@@ -2,10 +2,11 @@ use serde::{Serialize, Deserialize};
 
 use chrono::prelude::UTC;
 use std::cmp::Ordering;
+use std::collections::HashMap;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
 use std::marker::PhantomData;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use backends::KVStore;
 use db;
 use Result;
@@ -19,7 +20,7 @@ pub trait Comparator: Clone {
 
 #[derive(Clone)]
 pub struct Index<T: Debug + Ord + Clone, C: Comparator<Item = T>> {
-    store: NodeStore,
+    store: NodeStore<T>,
     pub root_ref: String,
     comparator: C,
 }
@@ -41,7 +42,7 @@ impl<'de, T, C> Index<T, C>
     where T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
           C: Comparator<Item = T>
 {
-    pub fn new(root_ref: String, store: NodeStore, comparator: C) -> Result<Self> {
+    pub fn new(root_ref: String, store: NodeStore<T>, comparator: C) -> Result<Self> {
         Ok(Index {
                store,
                root_ref,
@@ -195,7 +196,11 @@ impl<'de, T, C> Index<T, C>
 impl<'de, T> IndexNode<T>
     where T: Debug + Ord + Clone + Serialize + Deserialize<'de>
 {
-    fn insert<C>(&self, item: T, store: &NodeStore, comparator: &C) -> Result<Insertion<IndexNode<T>>>
+    fn insert<C>(&self,
+                 item: T,
+                 store: &NodeStore<T>,
+                 comparator: &C)
+                 -> Result<Insertion<IndexNode<T>>>
         where C: Comparator<Item = T>
     {
         use self::IndexNode::{Leaf, Dir};
@@ -327,7 +332,7 @@ pub struct IterState {
 
 #[derive(Clone)]
 pub struct Iter<T: Ord + Debug + Clone> {
-    store: NodeStore,
+    store: NodeStore<T>,
     phantom: PhantomData<T>,
     pub stack: Vec<IterState>,
 }
@@ -405,20 +410,16 @@ impl<'de, T: Debug + Ord + Clone + Deserialize<'de>> Iterator for Iter<T> {
 
 // FIXME: NodeStore is an awkward solution which could probably be avoided with
 // lifetimes on Iter references to a KVStore
-pub struct NodeStore {
-    pub backing_store: Arc<KVStore + 'static>
+#[derive(Clone)]
+pub struct NodeStore<T> {
+    pub backing_store: Arc<KVStore + 'static>,
+    cache: Arc<Mutex<HashMap<String, IndexNode<T>>>>,
 }
 
-impl Clone for NodeStore {
-    fn clone(&self) -> NodeStore {
-        NodeStore { backing_store: self.backing_store.clone()}
-    }
-}
-
-impl NodeStore {
+impl<T: Debug> NodeStore<T> {
     /// Generates a unique ID and stores the given node at that ID,
     /// returning the ID if succsessful.
-    pub fn add_node<T>(&self, node: IndexNode<T>) -> Result<String>
+    pub fn add_node(&self, node: IndexNode<T>) -> Result<String>
         where T: Serialize
     {
         println!("Starting add_node: {}", UTC::now());
@@ -428,15 +429,26 @@ impl NodeStore {
     }
 
     /// Fetches and deserializes the node with the given key.
-    fn get_node<'de, T>(&self, key: &str) -> Result<IndexNode<T>>
+    fn get_node<'de>(&self, key: &str) -> Result<IndexNode<T>>
         where T: Deserialize<'de> + Clone
     {
-        println!("Starting get_node: {}", UTC::now());
-        let node = db::get_node(&(*self.backing_store), key);
+        println!("Starting get_node for node {}: {}", key, UTC::now());
+        let store = &self.backing_store;
+        let mut hm = self.cache.lock().unwrap();
+        let node = hm.entry(key.to_string())
+            .or_insert_with(|| db::get_node(&(**store), key).unwrap());
         println!("Finishing get_node: {}", UTC::now());
-        node
+        Ok(node.clone())
+    }
+
+    pub fn new(store: Arc<KVStore>) -> NodeStore<T> {
+        NodeStore {
+            backing_store: store,
+            cache: Arc::new(Mutex::new(HashMap::default())),
+        }
     }
 }
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -456,13 +468,14 @@ mod tests {
             a.cmp(b)
         }
     }
+
     #[test]
     fn test_leaf_insert() {
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
-        let mut idx: Index<u64, NumComparator> =
-            Index::new(root_ref, store, NumComparator).unwrap();
+        let mut idx: Index<u64, NumComparator> = Index::new(root_ref, store, NumComparator)
+            .unwrap();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i).unwrap();
@@ -471,11 +484,11 @@ mod tests {
 
     #[test]
     fn test_tree_iter() {
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
-        let mut idx: Index<u64, NumComparator> =
-            Index::new(root_ref, store, NumComparator).unwrap();
+        let mut idx: Index<u64, NumComparator> = Index::new(root_ref, store, NumComparator)
+            .unwrap();
         let range = 0..4096;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
@@ -487,8 +500,8 @@ mod tests {
 
     #[test]
     fn test_range_iter() {
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
         let mut idx = Index::new(root_ref, store, NumComparator).unwrap();
         let full_range = 0u64..10_000;
@@ -507,8 +520,8 @@ mod tests {
 
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
@@ -520,8 +533,8 @@ mod tests {
 
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
@@ -535,8 +548,8 @@ mod tests {
     #[bench]
     fn bench_iter(b: &mut Bencher) {
         let n = 10_000;
-        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let store = NodeStore::new(Arc::new(HeapStore::new()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
         let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         for i in 0..n {

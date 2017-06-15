@@ -19,7 +19,7 @@ impl Db {
     pub fn new(store: Arc<KVStore>) -> Result<Db> {
         let contents: DbContents = store.get_contents()?;
 
-        let node_store = btree::NodeStore { backing_store: store.clone() };
+        let node_store = btree::NodeStore::new(store.clone());
         let mut db = Db {
             next_id: contents.next_id,
             store: store,

@@ -15,7 +15,7 @@ pub struct HeapStore {
 impl HeapStore {
     pub fn new() -> HeapStore {
         let store = HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) };
-        let node_store = btree::NodeStore { backing_store: Arc::new(store.clone()) };
+        let node_store = btree::NodeStore::new(Arc::new(store.clone()));
 
         let empty_root: btree::IndexNode<String> = btree::IndexNode::Leaf { items: vec![] };
         let contents = DbContents {
