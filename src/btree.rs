@@ -422,9 +422,7 @@ impl<T: Debug> NodeStore<T> {
     pub fn add_node(&self, node: IndexNode<T>) -> Result<String>
         where T: Serialize
     {
-        println!("Starting add_node: {}", UTC::now());
         let node = db::add_node(&(*self.backing_store), node);
-        println!("Finishing add_node: {}", UTC::now());
         node
     }
 
@@ -432,12 +430,10 @@ impl<T: Debug> NodeStore<T> {
     fn get_node<'de>(&self, key: &str) -> Result<IndexNode<T>>
         where T: Deserialize<'de> + Clone
     {
-        println!("Starting get_node for node {}: {}", key, UTC::now());
         let store = &self.backing_store;
         let mut hm = self.cache.lock().unwrap();
         let node = hm.entry(key.to_string())
             .or_insert_with(|| db::get_node(&(**store), key).unwrap());
-        println!("Finishing get_node: {}", UTC::now());
         Ok(node.clone())
     }
 
