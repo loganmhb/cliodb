@@ -1,19 +1,25 @@
+use serde::{Serialize, Deserialize};
+use rmp_serde::{Serializer, Deserializer};
+use uuid::Uuid;
+
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
+use std::marker::PhantomData;
+use std::sync::Arc;
 use backends::KVStore;
 use Result;
 
 pub const CAPACITY: usize = 512;
 
-pub trait Comparator : Clone {
+pub trait Comparator: Clone {
     type Item;
     fn compare(a: &Self::Item, b: &Self::Item) -> Ordering;
 }
 
 #[derive(Clone)]
-pub struct Index<T: Debug + Ord + Clone, S: KVStore<Item = T>, C: Comparator<Item=T>> {
-    store: S,
+pub struct Index<T: Debug + Ord + Clone, C: Comparator<Item = T>> {
+    store: NodeStore,
     pub root_ref: String,
     comparator: C,
 }
@@ -31,37 +37,43 @@ pub enum IndexNode<T> {
     Leaf { items: Vec<T> },
 }
 
-impl<T, S, C> Index<T, S, C>
-    where T: Debug + Ord + Clone, S: KVStore<Item=T>, C: Comparator<Item=T>
+impl<'de, T, C> Index<T, C>
+    where T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
+          C: Comparator<Item = T>
 {
-    pub fn new(root_ref: String, store: S, comparator: C) -> Result<Self> {
-        Ok(Index { store, root_ref, comparator })
+    pub fn new(root_ref: String, store: NodeStore, comparator: C) -> Result<Self> {
+        Ok(Index {
+               store,
+               root_ref,
+               comparator,
+           })
     }
 
-    pub fn insert(&self, item: T) -> Result<Index<T, S, C>> {
-        let new_root = self.store
-            .get(&self.root_ref)
-            .and_then(|root| root.insert(item.clone(), &self.store, &self.comparator));
+    pub fn insert(&self, item: T) -> Result<Index<T, C>> {
+        let new_root =
+            self.store
+                .get_node(&self.root_ref)
+                .and_then(|root| root.insert(item.clone(), &self.store, &self.comparator));
 
         match new_root {
             Ok(Insertion::Inserted(root)) => {
-                let root_ref = self.store.add(root)?;
+                let root_ref = self.store.add_node(root)?;
                 Ok(Index {
-                    root_ref,
-                    comparator: self.comparator.clone(),
-                    store: self.store.clone(),
-                })
+                       root_ref,
+                       comparator: self.comparator.clone(),
+                       store: self.store.clone(),
+                   })
             }
 
             Ok(Insertion::Duplicate) => Ok((*self).clone()),
 
             Ok(Insertion::NodeFull) => {
                 // Need to split the root and create a new one.
-                let root = self.store.get(&self.root_ref)?;
+                let root = self.store.get_node(&self.root_ref)?;
 
                 let (left, sep, right) = root.split();
-                let left_ref = self.store.add(left)?;
-                let right_ref = self.store.add(right)?;
+                let left_ref = self.store.add_node(left)?;
+                let right_ref = self.store.add_node(right)?;
 
                 let new_root_links = vec![left_ref, right_ref];
                 let new_root_items = vec![sep];
@@ -73,12 +85,12 @@ impl<T, S, C> Index<T, S, C>
 
                 match new_root.insert(item, &self.store, &self.comparator)? {
                     Insertion::Inserted(root) => {
-                        let root_ref = self.store.add(root)?;
+                        let root_ref = self.store.add_node(root)?;
                         Ok(Index {
-                            store: self.store.clone(),
-                            comparator: self.comparator.clone(),
-                            root_ref,
-                        })
+                               store: self.store.clone(),
+                               comparator: self.comparator.clone(),
+                               root_ref,
+                           })
                     }
                     _ => unreachable!(),
                 }
@@ -88,8 +100,9 @@ impl<T, S, C> Index<T, S, C>
         }
     }
 
-    pub fn iter(&self) -> Iter<T, S> {
+    pub fn iter(&self) -> Iter<T> {
         Iter {
+            phantom: PhantomData,
             store: self.store.clone(),
             stack: vec![
                 IterState {
@@ -103,7 +116,7 @@ impl<T, S, C> Index<T, S, C>
 
     // FIXME: Better would be to have this return either the Iter or,
     // if the store causes an error, to yield the error as the first iterator item.
-    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T, S>> {
+    pub fn iter_range_from(&self, range: RangeFrom<T>) -> Result<Iter<T>> {
         let mut stack = vec![
             IterState {
                 node_ref: self.root_ref.clone(),
@@ -116,7 +129,7 @@ impl<T, S, C> Index<T, S, C>
         loop {
             let state = stack.pop().unwrap();
 
-            let node = self.store.get(&state.node_ref)?;
+            let node = self.store.get_node(&state.node_ref)?;
 
             match node {
                 IndexNode::Leaf { items } => {
@@ -129,6 +142,7 @@ impl<T, S, C> Index<T, S, C>
                                        });
                             return Ok(Iter {
                                           stack,
+                                          phantom: PhantomData,
                                           store: self.store.clone(),
                                       });
                         }
@@ -139,6 +153,7 @@ impl<T, S, C> Index<T, S, C>
                                        });
                             return Ok(Iter {
                                           stack,
+                                          phantom: PhantomData,
                                           store: self.store.clone(),
                                       });
                         }
@@ -154,6 +169,7 @@ impl<T, S, C> Index<T, S, C>
                                        });
                             return Ok(Iter {
                                           stack,
+                                          phantom: PhantomData,
                                           store: self.store.clone(),
                                       });
                         }
@@ -176,9 +192,11 @@ impl<T, S, C> Index<T, S, C>
     }
 }
 
-impl<T: Debug + Ord + Clone> IndexNode<T> {
-    fn insert<S, C>(&self, item: T, store: &S, comparator: &C) -> Result<Insertion<IndexNode<T>>>
-        where S: KVStore<Item=T>, C: Comparator<Item=T>
+impl<'de, T> IndexNode<T>
+    where T: Debug + Ord + Clone + Serialize + Deserialize<'de>
+{
+    fn insert<C>(&self, item: T, store: &NodeStore, comparator: &C) -> Result<Insertion<IndexNode<T>>>
+        where C: Comparator<Item = T>
     {
         use self::IndexNode::{Leaf, Dir};
 
@@ -208,14 +226,14 @@ impl<T: Debug + Ord + Clone> IndexNode<T> {
                     Err(idx) => idx,
                 };
 
-                let child = store.get(&links[idx])?;
+                let child = store.get_node(&links[idx])?;
                 let child_result = child.insert(item.clone(), store, comparator)?;
 
                 match child_result {
                     Insertion::Duplicate => Ok(Insertion::Duplicate),
                     Insertion::Inserted(new_child) => {
                         let mut new_links = links.clone();
-                        new_links[idx] = store.add(new_child)?;
+                        new_links[idx] = store.add_node(new_child)?;
 
                         Ok(Insertion::Inserted(Dir {
                                                    items: items.clone(),
@@ -231,8 +249,8 @@ impl<T: Debug + Ord + Clone> IndexNode<T> {
                             let mut new_items = items.clone();
                             let mut new_links = links.clone();
 
-                            let left_ref = store.add(left)?;
-                            let right_ref = store.add(right)?;
+                            let left_ref = store.add_node(left)?;
+                            let right_ref = store.add_node(right)?;
 
                             new_items.insert(idx, sep);
                             new_links[idx] = right_ref;
@@ -307,13 +325,14 @@ pub struct IterState {
     item_idx: usize,
 }
 
-#[derive(Clone, Debug)]
-pub struct Iter<T: Ord + Debug + Clone, S: KVStore<Item=T>> {
-    store: S,
+#[derive(Clone)]
+pub struct Iter<T: Ord + Debug + Clone> {
+    store: NodeStore,
+    phantom: PhantomData<T>,
     pub stack: Vec<IterState>,
 }
 
-impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Iterator for Iter<T, S> {
+impl<'de, T: Debug + Ord + Clone + Deserialize<'de>> Iterator for Iter<T> {
     type Item = Result<T>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -328,21 +347,22 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Iterator for Iter<T, S> {
                 None => return None,
             };
 
-            let node = match self.store.get(&node_ref) {
+            let node: IndexNode<T> = match self.store.get_node(&node_ref) {
                 Ok(n) => n,
                 Err(e) => return Some(Err(e)),
             };
+
             match node {
                 IndexNode::Leaf { items } => {
                     if item_idx < items.len() {
-                        let res = items[item_idx].clone();
+                        let res: Result<T> = Ok(items.get(item_idx).unwrap().clone());
                         self.stack
                             .push(IterState {
                                       node_ref,
                                       link_idx,
                                       item_idx: item_idx + 1,
                                   });
-                        return Some(Ok(res));
+                        return Some(res);
                     } else {
                         continue; // pop the frame and continue
                     }
@@ -383,10 +403,46 @@ impl<T: Debug + Ord + Clone, S: KVStore<Item=T>> Iterator for Iter<T, S> {
     }
 }
 
+// FIXME: NodeStore is an awkward solution which could probably be avoided with
+// lifetimes on Iter references to a KVStore
+pub struct NodeStore {
+    pub backing_store: Arc<KVStore + 'static>
+}
+
+impl Clone for NodeStore {
+    fn clone(&self) -> NodeStore {
+        NodeStore { backing_store: self.backing_store.clone()}
+    }
+}
+
+impl NodeStore {
+    /// Generates a unique ID and stores the given node at that ID,
+    /// returning the ID if succsessful.
+    pub fn add_node<T>(&self, node: IndexNode<T>) -> Result<String>
+        where T: Serialize
+    {
+        let mut buf = Vec::new();
+        node.serialize(&mut Serializer::new(&mut buf))?;
+
+        let key = Uuid::new_v4().to_string();
+        self.backing_store.set(&key, &buf)?;
+        Ok(key)
+    }
+
+    /// Fetches and deserializes the node with the given key.
+    fn get_node<'de, T>(&self, key: &str) -> Result<IndexNode<T>>
+        where T: Deserialize<'de> + Clone
+    {
+        let serialized = self.backing_store.get(key)?;
+        let mut de = Deserializer::new(&serialized[..]);
+        let node: IndexNode<T> = Deserialize::deserialize(&mut de)?;
+        Ok(node.clone())
+    }
+}
 #[cfg(test)]
 mod tests {
     use super::*;
-    use itertools::{assert_equal};
+    use itertools::assert_equal;
 
     extern crate test;
     use self::test::Bencher;
@@ -404,9 +460,10 @@ mod tests {
     }
     #[test]
     fn test_leaf_insert() {
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
-        let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
+        let mut idx: Index<u64, NumComparator> =
             Index::new(root_ref, store, NumComparator).unwrap();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
@@ -416,22 +473,25 @@ mod tests {
 
     #[test]
     fn test_tree_iter() {
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
-        let mut idx: Index<u64, HeapStore<u64>, NumComparator> =
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
+        let mut idx: Index<u64, NumComparator> =
             Index::new(root_ref, store, NumComparator).unwrap();
-        let range = 0..65535;
+        let range = 0..4096;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
         }
+
         assert_eq!(idx.iter().map(|x| x.unwrap()).collect::<Vec<_>>(),
                    range.collect::<Vec<u64>>());
     }
 
     #[test]
     fn test_range_iter() {
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
         let mut idx = Index::new(root_ref, store, NumComparator).unwrap();
         let full_range = 0u64..10_000;
         let range = 1457u64..;
@@ -441,14 +501,17 @@ mod tests {
         }
 
         // yuck
-        assert_equal(idx.iter_range_from(range.clone()).unwrap().map(|item| item.unwrap()),
+        assert_equal(idx.iter_range_from(range.clone())
+                         .unwrap()
+                         .map(|item| item.unwrap()),
                      range.start..full_range.end);
     }
 
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
         b.iter(|| {
@@ -459,8 +522,9 @@ mod tests {
 
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         let mut n = 0;
         b.iter(|| {
@@ -473,8 +537,9 @@ mod tests {
     #[bench]
     fn bench_iter(b: &mut Bencher) {
         let n = 10_000;
-        let store = HeapStore::new();
-        let root_ref = store.add(IndexNode::Leaf { items: vec![]}).unwrap();
+        let store = NodeStore { backing_store: Arc::new(HeapStore::new())};
+        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root_ref = store.add_node(root).unwrap();
         let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         for i in 0..n {
             tree = tree.insert(i).unwrap();

@@ -1,12 +1,4 @@
-use std::marker::PhantomData;
-
-use btree::IndexNode;
-use {KVStore, DbContents, Result};
-
-use uuid::Uuid;
-use serde::ser::Serialize;
-use serde::de::Deserialize;
-use rmp_serde::{Deserializer, Serializer};
+use {KVStore, Result};
 
 use cdrs::connection_manager::ConnectionManager;
 use cdrs::query::{QueryBuilder};
@@ -18,24 +10,12 @@ use cdrs::types::value::{Value, Bytes};
 use r2d2;
 
 #[derive(Clone)]
-pub struct CassandraStore<V> {
-    phantom: PhantomData<V>,
+pub struct CassandraStore {
     pool: r2d2::Pool<ConnectionManager<NoneAuthenticator, TransportTcp>>
 }
 
-#[derive(Debug)]
-pub struct Error(String);
-
-impl<E: ToString> From<E> for Error {
-    fn from(other: E) -> Error {
-        Error(other.to_string())
-    }
-}
-
-impl<'de, V> CassandraStore<V>
-    where V: Serialize + Deserialize<'de> + Clone
-{
-    pub fn new(addr: &str) -> Result<CassandraStore<V>> {
+impl CassandraStore {
+    pub fn new(addr: &str) -> Result<CassandraStore> {
 
         let tcp = TransportTcp::new(addr)?;
         let config = r2d2::Config::builder().pool_size(15).build();
@@ -44,7 +24,6 @@ impl<'de, V> CassandraStore<V>
         let pool = r2d2::Pool::new(config, manager)?;
 
         let store = CassandraStore {
-            phantom: PhantomData,
             pool: pool.clone()
         };
 
@@ -62,12 +41,8 @@ impl<'de, V> CassandraStore<V>
     }
 }
 
-impl<'de, V> KVStore for CassandraStore<V>
-    where V: Serialize + Deserialize<'de> + Clone
-{
-    type Item = V;
-
-    fn get(&self, key: &str) -> Result<IndexNode<Self::Item>> {
+impl KVStore for CassandraStore {
+    fn get(&self, key: &str) -> Result<Vec<u8>> {
         let select_query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = ?")
             .values(vec![Value::new_normal(key)])
             .finalize();
@@ -78,66 +53,24 @@ impl<'de, V> KVStore for CassandraStore<V>
         {
             Ok(Some(rows)) => {
                 let v: Vec<u8> = rows[0].r_by_name("val").unwrap();
-                let mut de = Deserializer::new(&v[..]);
-                match Deserialize::deserialize(&mut de) {
-                    Ok(node) => Ok(node),
-                    Err(err) => Err(err.into())
-                }
-            },
+                Ok(v)
+           },
             Ok(None) => Err("node not found".into()),
             Err(e) => Err(e.into())
         }
     }
 
-    fn add(&self, value: IndexNode<Self::Item>) -> Result<String> {
-        let key = Uuid::new_v4().to_string();
-        let mut buf = Vec::new();
-        value.serialize(&mut Serializer::new(&mut buf)).unwrap();
-
+    fn set(&self, key: &str, value: &[u8]) -> Result<()> {
         let insert_query = QueryBuilder::new("INSERT INTO logos.logos_kvs (key, val) VALUES (?, ?)")
-            .values(vec![Value::new_normal(key.clone()), Value::from(Bytes::new(buf))])
+            .values(vec![Value::new_normal(key.clone()), Value::from(Bytes::new(value.to_vec()))])
             .finalize();
 
         let mut session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
-            Ok(_) => Ok(key),
+            Ok(_) => Ok(()),
             Err(e) => Err(e.into())
         }
-    }
-
-    fn set_contents(&self, contents: &DbContents) -> Result<()> {
-        let mut buf = Vec::new();
-        contents.serialize(&mut Serializer::new(&mut buf)).unwrap();
-        let query = QueryBuilder::new("INSERT INTO logos.logos_kvs (key, val) VALUES ('db_contents', ?)")
-            .values(vec![Value::from(Bytes::new(buf))])
-            .finalize();
-
-        let mut session = self.pool.get()?;
-        session.query(query, false, false)?;
-
-        Ok(())
-
-    }
-
-    fn get_contents(&self) -> Result<DbContents> {
-        let mut session = self.pool.get()?;
-        let query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = 'db_contents'")
-            .finalize();
-        match session.query(query, false, false)
-            .and_then(|frame| frame.get_body())
-            .map(|body| body.into_rows()) {
-                Ok(Some(rows)) => {
-                    let v: Vec<u8> = rows.get(0).ok_or("contents do not exist")?
-                        .r_by_name("val").unwrap();
-                    let mut de = Deserializer::new(&v[..]);
-                    match Deserialize::deserialize(&mut de) {
-                        Ok(contents) => Ok(contents),
-                        Err(err) => Err(err.into())
-                    }
-                },
-                _ => Err("could not retrieve contents".into())
-            }
     }
 }
 
@@ -145,10 +78,13 @@ impl<'de, V> KVStore for CassandraStore<V>
 mod tests {
 
     use super::*;
+    use btree::IndexNode;
+    use rmp_serde::{Serializer, Deserializer};
+    use serde::{Serialize, Deserialize};
 
     #[test]
     fn can_create() {
-        let _: CassandraStore<String> = CassandraStore::new("127.0.0.1:9042").unwrap();
+        let _: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
     }
 
     #[test]
@@ -157,10 +93,14 @@ mod tests {
             items: vec!["hi there".to_string()]
         };
 
-        let store: CassandraStore<String> = CassandraStore::new("127.0.0.1:9042").unwrap();
+        let mut buf = Vec::new();
+        node.serialize(&mut Serializer::new(&mut buf));
+        let store: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
 
-        let key = store.add(node.clone()).expect("Could not add node");
-        let roundtrip_node = store.get(&key).expect("Could not deserialize node");
-        assert_eq!(node, roundtrip_node);
+        store.set("my_thing", &buf).unwrap();
+        let roundtrip_node_bytes = store.get("my_thing").expect("Could not deserialize node");
+        let mut de = Deserializer::new(&roundtrip_node_bytes[..]);
+        let deserialized = Deserialize::deserialize(&mut de).unwrap();
+        assert_eq!(node, deserialized);
     }
 }

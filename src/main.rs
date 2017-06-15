@@ -1,39 +1,13 @@
-#![feature(slice_patterns)]
-#![feature(conservative_impl_trait)]
 extern crate logos;
 extern crate rustyline;
 
 use logos::*;
-use logos::backends::KVStore;
-use logos::backends::cassandra::CassandraStore;
-use logos::backends::mem::HeapStore;
-use logos::backends::sqlite::SqliteStore;
+use logos::db::{Db, store_from_uri};
 
 use std::error::Error;
 use std::env::args;
 
-fn run_uri(uri: &str) {
-    match &uri.split("//").collect::<Vec<_>>()[..] {
-        &["logos:mem:", _] => {
-            let store = HeapStore::new();
-            run(Db::new(store).unwrap());
-        }
-        &["logos:sqlite:", path] => {
-            let store = SqliteStore::new(path).unwrap();
-            run(Db::new(store).unwrap());
-        }
-        &["logos:cass:", url] => {
-            let store = CassandraStore::new(url).unwrap();
-            run(Db::new(store).unwrap());
-        }
-        _ => {
-            println!("Invalid uri!");
-            std::process::exit(1);
-        }
-    }
-}
-
-fn run<S: KVStore<Item = Record>>(mut db: Db<S>) {
+fn run(uri: &str) {
     println!("
 logos
 Commands:
@@ -41,6 +15,8 @@ Commands:
   test - load sample data (overwrites your current DB!)
   dump - display the contents of the DB as a table.
 ");
+    let store = store_from_uri(uri).expect("Couldn't create store");
+    let mut db = Db::new(store).unwrap();
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");
@@ -102,5 +78,5 @@ fn main() {
         std::process::exit(1);
     }
 
-    run_uri(&argv[1]);
+    run(&argv[1]);
 }

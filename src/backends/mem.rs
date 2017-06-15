@@ -1,59 +1,47 @@
-use uuid::Uuid;
 use std::sync::{Arc, Mutex};
-use std::fmt::Debug;
 use std::collections::HashMap;
 
-use ident::IdentMap;
-use btree::IndexNode;
 use super::{KVStore, DbContents};
+use btree;
+use ident::IdentMap;
 use Result;
 
 // HashMap pretending to be a database
 #[derive(Clone, Debug)]
-pub struct HeapStore<T: Debug + Ord + Clone> {
-    inner: Arc<Mutex<HashMap<String, IndexNode<T>>>>,
+pub struct HeapStore {
+    inner: Arc<Mutex<HashMap<String, Vec<u8>>>>,
 }
 
-impl<T: Ord + Debug + Clone> HeapStore<T> {
-    pub fn new() -> HeapStore<T> {
-        HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) }
+impl HeapStore {
+    pub fn new() -> HeapStore {
+        let store = HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) };
+        let node_store = btree::NodeStore { backing_store: Arc::new(store.clone()) };
+
+        let empty_root: btree::IndexNode<String> = btree::IndexNode::Leaf { items: vec![] };
+        let contents = DbContents {
+            next_id: 0,
+            idents: IdentMap::default(),
+            eav: node_store.add_node(empty_root.clone()).unwrap(),
+            ave: node_store.add_node(empty_root.clone()).unwrap(),
+            aev: node_store.add_node(empty_root).unwrap()
+        };
+
+        store.set_contents(&contents).unwrap();
+        store
     }
 }
 
-impl<T: Debug + Ord + Clone> KVStore for HeapStore<T> {
-    type Item = T;
-
-    fn add(&self, value: IndexNode<T>) -> Result<String> {
-        let key = Uuid::new_v4().to_string();
+impl KVStore for HeapStore {
+    fn set(&self, key: &str, value: &[u8]) -> Result<()> {
         let mut guard = self.inner.lock()?;
 
-        match (*guard).insert(key.clone(), value) {
-            Some(_) => Err("duplicate uuid?!?".into()),
-            None => Ok(key),
+        match (*guard).insert(key.to_string(), value.to_vec()) {
+            Some(_) => Ok(()),
+            None => Ok(()),
         }
     }
 
-    fn set_contents(&self, _contents: &DbContents) -> Result<()> {
-        // HeapStore can't survive a restart, so it doesn't need to set
-        // the DbContents.
-        Ok(())
-    }
-
-    fn get_contents(&self) -> Result<DbContents> {
-        // We don't bother storing contents in a HeapStore, so we just make
-        // a new one.
-        let empty_root = IndexNode::Leaf { items: vec![] };
-
-        Ok(DbContents {
-            next_id: 0,
-            idents: IdentMap::default(),
-            eav: self.add(empty_root.clone())?,
-            ave: self.add(empty_root.clone())?,
-            aev: self.add(empty_root)?
-        })
-    }
-
-    fn get(&self, key: &str) -> Result<IndexNode<T>> {
+    fn get(&self, key: &str) -> Result<Vec<u8>> {
         self.inner
             .lock()
             .unwrap()
