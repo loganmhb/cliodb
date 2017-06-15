@@ -36,22 +36,22 @@ impl Db {
             // because they need to reference one another.
 
             // Initial transaction entity
-            db.add(Record::new(Entity(0),
-                               Entity(2),
-                               Value::Timestamp(UTC::now()),
-                               Entity(0)));
+            db.add(Record::addition(Entity(0),
+                                    Entity(2),
+                                    Value::Timestamp(UTC::now()),
+                                    Entity(0)));
 
             // Entity for the db:ident attribute
-            db.add(Record::new(Entity(1),
-                               Entity(1),
-                               Value::Ident("db:ident".into()),
-                               Entity(0)));
+            db.add(Record::addition(Entity(1),
+                                    Entity(1),
+                                    Value::Ident("db:ident".into()),
+                                    Entity(0)));
 
             // Entity for the db:txInstant attribute
-            db.add(Record::new(Entity(2),
-                               Entity(1),
-                               Value::Ident("db:txInstant".into()),
-                               Entity(0)));
+            db.add(Record::addition(Entity(2),
+                                    Entity(1),
+                                    Value::Ident("db:txInstant".into()),
+                                    Entity(0)));
         }
 
         Ok(db)
@@ -108,7 +108,7 @@ impl Db {
             } => {
                 match self.idents.get_entity(a) {
                     Some(attr) => {
-                        let range_start = Record::new(Entity(0), attr, v.clone(), Entity(0));
+                        let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
                         Ok(self.ave
                                .iter_range_from(range_start..)
                                .unwrap()
@@ -128,7 +128,8 @@ impl Db {
                 match self.idents.get_entity(a) {
                     Some(attr) => {
                         // Value::String("") is the lowest-sorted value
-                        let range_start = Record::new(e, attr, Value::String("".into()), Entity(0));
+                        let range_start =
+                            Record::addition(e, attr, Value::String("".into()), Entity(0));
                         Ok(self.eav
                                .iter_range_from(range_start..)
                                .unwrap()
@@ -155,14 +156,14 @@ impl Db {
         let mut new_entities = vec![];
         let tx_entity = Entity(self.get_id());
         let attr = self.idents.get_entity("db:txInstant".to_string()).unwrap();
-        self.add(Record::new(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity));
+        self.add(Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity));
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => {
                     let attr = self.idents
                         .get_entity(f.attribute)
                         .ok_or("invalid attribute".to_string())?;
-                    self.add(Record::new(f.entity, attr, f.value, tx_entity))
+                    self.add(Record::addition(f.entity, attr, f.value, tx_entity))
                 }
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.get_id());
@@ -170,12 +171,16 @@ impl Db {
                         let attr = self.idents
                             .get_entity(k)
                             .ok_or("invalid attribute".to_string())?;
-                        self.add(Record::new(entity, attr, v, tx_entity))
+                        self.add(Record::addition(entity, attr, v, tx_entity))
                     }
                     new_entities.push(entity);
                 }
-                // TODO Implement retractions
-                _ => unimplemented!(),
+                TxItem::Retraction(f) => {
+                    let attr = self.idents
+                        .get_entity(f.attribute)
+                        .ok_or("invalid attribute".to_string())?;
+                    self.add(Record::retraction(f.entity, attr, f.value, tx_entity))
+                }
             }
         }
         self.save_contents()?;
@@ -193,9 +198,19 @@ impl Db {
                 for record in self.records_matching(clause, &binding)? {
                     match unify(&binding, &self.idents, clause, &record) {
                         Some(new_info) => {
-                            let mut new_env = binding.clone();
-                            new_env.extend(new_info);
-                            new_bindings.push(new_env)
+                            if record.retracted {
+                                // The binding matches the retraction
+                                // so we discard any existing bindings
+                                // that are the same.  Note that this
+                                // relies on the fact that additions
+                                // and retractions are sorted by
+                                // transaction, so an older retraction
+                                // won't delete the binding for a
+                                // newer addition.
+                                new_bindings.retain(|b| *b != new_info);
+                            } else {
+                                new_bindings.push(new_info)
+                            }
                         }
                         _ => continue,
                     }
@@ -223,7 +238,7 @@ impl Db {
 /// bound in the returned binding.  If bound fields in the clause
 /// conflict with fields in the record, unification fails.
 fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> Option<Binding> {
-    let mut new_info: Binding = Default::default();
+    let mut new_env: Binding = env.clone();
 
     match clause.entity {
         Term::Bound(ref e) => {
@@ -239,7 +254,7 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
                     }
                 }
                 _ => {
-                    new_info.insert(var.clone(), Value::Entity(record.entity));
+                    new_env.insert(var.clone(), Value::Entity(record.entity));
                 }
             }
         }
@@ -266,7 +281,7 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
                     }
                 }
                 _ => {
-                    new_info.insert(var.clone(), Value::Entity(record.attribute));
+                    new_env.insert(var.clone(), Value::Entity(record.attribute));
                 }
             }
         }
@@ -286,13 +301,13 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
                     }
                 }
                 _ => {
-                    new_info.insert(var.clone(), record.value.clone());
+                    new_env.insert(var.clone(), record.value.clone());
                 }
             }
         }
     }
 
-    Some(new_info)
+    Some(new_env)
 }
 
 /// A structure designed to be stored in the backing store that enables
@@ -322,7 +337,7 @@ pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
 }
 
 pub fn add_node<T>(store: &KVStore, node: IndexNode<T>) -> Result<String>
-        where T: Serialize
+    where T: Serialize
 {
     let mut buf = Vec::new();
     node.serialize(&mut Serializer::new(&mut buf))?;
@@ -516,7 +531,7 @@ mod tests {
                    let entity = Entity(e);
                    e += 1;
 
-                   db.add(Record::new(entity, a, Value::Entity(entity), Entity(0)));
+                   db.add(Record::addition(entity, a, Value::Entity(entity), Entity(0)));
                });
     }
 
@@ -535,7 +550,7 @@ mod tests {
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
             let attr = db.idents.get_entity(a).unwrap();
-            db.add(Record::new(Entity(i), attr, v, Entity(0)));
+            db.add(Record::addition(Entity(i), attr, v, Entity(0)));
         }
 
         db

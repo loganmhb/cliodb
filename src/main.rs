@@ -57,8 +57,8 @@ Commands:
                     }
                     Ok(Input::Dump) => {
                         println!("{}",
-                                 db.query(&parse_query("find ?ent ?att ?val where (?ent ?att \
-                                                       ?val)")
+                                 db.query(&parse_query("find ?ent ?attname ?val where (?ent ?att \
+                                                       ?val) (?att db:ident ?attname)")
                                                    .unwrap())
                                      .unwrap())
                     }

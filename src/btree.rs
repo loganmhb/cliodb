@@ -1,6 +1,4 @@
 use serde::{Serialize, Deserialize};
-use rmp_serde::{Serializer, Deserializer};
-use uuid::Uuid;
 
 use std::cmp::Ordering;
 use std::fmt::Debug;

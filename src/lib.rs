@@ -181,6 +181,8 @@ macro_rules! comparator {
                     .then(a.$second.cmp(&b.$second))
                     .then(a.$third.cmp(&b.$third))
                     .then(a.$fourth.cmp(&b.$fourth))
+                    // retracted is always last
+                    .then(a.retracted.cmp(&b.retracted))
             }
         }
     }

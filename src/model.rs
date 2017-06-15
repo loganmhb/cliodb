@@ -12,7 +12,12 @@ pub struct Record {
     pub entity: Entity,
     pub attribute: Entity,
     pub value: Value,
+    /// The entity of the transaction in which the record was created.
     pub tx: Entity,
+    /// Marks whether the fact is an addition or a retraction.
+    /// (It's "retracted" and not "added" to ensure that retractions are sorted
+    /// as greater than additions.)
+    pub retracted: bool
 }
 
 // We need a struct to represent facts that may not be in the database
@@ -36,12 +41,23 @@ impl Fact {
 }
 
 impl Record {
-    pub fn new<V: Into<Value>>(e: Entity, a: Entity, v: V, tx: Entity) -> Record {
+    pub fn addition<V: Into<Value>>(e: Entity, a: Entity, v: V, tx: Entity) -> Record {
         Record {
             entity: e,
             attribute: a,
             value: v.into(),
             tx: tx,
+            retracted: false
+        }
+    }
+
+    pub fn retraction<V: Into<Value>>(e: Entity, a: Entity, v: V, tx: Entity) -> Record {
+        Record {
+            entity: e,
+            attribute: a,
+            value: v.into(),
+            tx: tx,
+            retracted: true
         }
     }
 }
