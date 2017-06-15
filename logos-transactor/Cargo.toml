@@ -1,0 +1,11 @@
+[package]
+authors = ["Logan Buckley <logan.buckley@gmail.com>"]
+name = "logos-transactor"
+version = "0.1.0"
+
+[dependencies]
+clap = "2.24.2"
+
+[dependencies.logos]
+path = ".."
+version = "0.1.0"

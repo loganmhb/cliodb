@@ -1,6 +1,11 @@
 use super::*;
 use std::sync::Arc;
 
+use btree::IndexNode;
+use rmp_serde::{Serializer, Deserializer};
+use serde::{Serialize, Deserialize};
+use uuid::Uuid;
+
 pub struct Db {
     next_id: u64,
     idents: IdentMap,
@@ -314,6 +319,27 @@ pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
         }
         _ => Err("Invalid uri".into()),
     }
+}
+
+pub fn add_node<T>(store: &KVStore, node: IndexNode<T>) -> Result<String>
+        where T: Serialize
+{
+    let mut buf = Vec::new();
+    node.serialize(&mut Serializer::new(&mut buf))?;
+
+    let key: String = Uuid::new_v4().to_string();
+    store.set(&key, &buf)?;
+    Ok(key)
+}
+
+/// Fetches and deserializes the node with the given key.
+pub fn get_node<'de, T>(store: &KVStore, key: &str) -> Result<IndexNode<T>>
+    where T: Deserialize<'de> + Clone
+{
+    let serialized = store.get(key)?;
+    let mut de = Deserializer::new(&serialized[..]);
+    let node: IndexNode<T> = Deserialize::deserialize(&mut de)?;
+    Ok(node.clone())
 }
 
 #[cfg(test)]

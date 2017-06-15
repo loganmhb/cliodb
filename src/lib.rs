@@ -48,7 +48,7 @@ pub use model::{Fact, Record, Value, Entity};
 use query::{Query, Clause, Term, Var};
 use btree::{Index, Comparator};
 use backends::{KVStore};
-use ident::IdentMap;
+pub use ident::IdentMap;
 use backends::cassandra::CassandraStore;
 use backends::sqlite::SqliteStore;
 use backends::mem::HeapStore;
@@ -63,7 +63,7 @@ impl<S: ToString> From<S> for Error {
     }
 }
 
-type Result<T> = result::Result<T, Error>;
+pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug, PartialEq)]
 pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);

@@ -8,6 +8,7 @@ use std::ops::RangeFrom;
 use std::marker::PhantomData;
 use std::sync::Arc;
 use backends::KVStore;
+use db;
 use Result;
 
 pub const CAPACITY: usize = 512;
@@ -421,22 +422,14 @@ impl NodeStore {
     pub fn add_node<T>(&self, node: IndexNode<T>) -> Result<String>
         where T: Serialize
     {
-        let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf))?;
-
-        let key = Uuid::new_v4().to_string();
-        self.backing_store.set(&key, &buf)?;
-        Ok(key)
+        db::add_node(&(*self.backing_store), node)
     }
 
     /// Fetches and deserializes the node with the given key.
     fn get_node<'de, T>(&self, key: &str) -> Result<IndexNode<T>>
         where T: Deserialize<'de> + Clone
     {
-        let serialized = self.backing_store.get(key)?;
-        let mut de = Deserializer::new(&serialized[..]);
-        let node: IndexNode<T> = Deserialize::deserialize(&mut de)?;
-        Ok(node.clone())
+        db::get_node(&(*self.backing_store), key)
     }
 }
 #[cfg(test)]

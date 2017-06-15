@@ -1,7 +1,7 @@
 use {KVStore, Result};
 
 use cdrs::connection_manager::ConnectionManager;
-use cdrs::query::{QueryBuilder};
+use cdrs::query::QueryBuilder;
 use cdrs::compression::Compression;
 use cdrs::authenticators::NoneAuthenticator;
 use cdrs::transport::TransportTcp;
@@ -11,7 +11,7 @@ use r2d2;
 
 #[derive(Clone)]
 pub struct CassandraStore {
-    pool: r2d2::Pool<ConnectionManager<NoneAuthenticator, TransportTcp>>
+    pool: r2d2::Pool<ConnectionManager<NoneAuthenticator, TransportTcp>>,
 }
 
 impl CassandraStore {
@@ -23,9 +23,7 @@ impl CassandraStore {
         let manager = ConnectionManager::new(tcp, authenticator, Compression::Snappy);
         let pool = r2d2::Pool::new(config, manager)?;
 
-        let store = CassandraStore {
-            pool: pool.clone()
-        };
+        let store = CassandraStore { pool: pool.clone() };
 
         let mut session = pool.get()?;
         // TODO: detect new Cass cluster + set up logos keyspace & logos_kvs table
@@ -33,7 +31,8 @@ impl CassandraStore {
         let create = QueryBuilder::new("CREATE TABLE IF NOT EXISTS logos.logos_kvs (
             key text PRIMARY KEY,
             val blob
-        )").finalize();
+        )")
+                .finalize();
 
         session.query(create, false, false)?;
 
@@ -47,29 +46,35 @@ impl KVStore for CassandraStore {
             .values(vec![Value::new_normal(key)])
             .finalize();
         let mut session = self.pool.get()?;
-        match session.query(select_query, false, false)
-            .and_then(|r| r.get_body())
-            .map(|b| b.into_rows())
-        {
+        match session
+                  .query(select_query, false, false)
+                  .and_then(|r| r.get_body())
+                  .map(|b| b.into_rows()) {
             Ok(Some(rows)) => {
-                let v: Vec<u8> = rows[0].r_by_name("val").unwrap();
+                let v: Vec<u8> = rows.get(0)
+                    .ok_or("no rows found")?
+                    .r_by_name("val")
+                    .unwrap();
                 Ok(v)
-           },
+            }
             Ok(None) => Err("node not found".into()),
-            Err(e) => Err(e.into())
+            Err(e) => Err(e.into()),
         }
     }
 
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
-        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_kvs (key, val) VALUES (?, ?)")
-            .values(vec![Value::new_normal(key.clone()), Value::from(Bytes::new(value.to_vec()))])
+        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_kvs (key, val) VALUES (?, ?)",)
+            .values(vec![
+                Value::new_normal(key.clone()),
+                Value::from(Bytes::new(value.to_vec())),
+            ])
             .finalize();
 
         let mut session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(()),
-            Err(e) => Err(e.into())
+            Err(e) => Err(e.into()),
         }
     }
 }
@@ -89,9 +94,7 @@ mod tests {
 
     #[test]
     fn test_get_and_set() {
-        let node = IndexNode::Leaf {
-            items: vec!["hi there".to_string()]
-        };
+        let node = IndexNode::Leaf { items: vec!["hi there".to_string()] };
 
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf));
