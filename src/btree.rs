@@ -1,5 +1,6 @@
 use serde::{Serialize, Deserialize};
 
+use chrono::prelude::UTC;
 use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::ops::RangeFrom;
@@ -420,14 +421,20 @@ impl NodeStore {
     pub fn add_node<T>(&self, node: IndexNode<T>) -> Result<String>
         where T: Serialize
     {
-        db::add_node(&(*self.backing_store), node)
+        println!("Starting add_node: {}", UTC::now());
+        let node = db::add_node(&(*self.backing_store), node);
+        println!("Finishing add_node: {}", UTC::now());
+        node
     }
 
     /// Fetches and deserializes the node with the given key.
     fn get_node<'de, T>(&self, key: &str) -> Result<IndexNode<T>>
         where T: Deserialize<'de> + Clone
     {
-        db::get_node(&(*self.backing_store), key)
+        println!("Starting get_node: {}", UTC::now());
+        let node = db::get_node(&(*self.backing_store), key);
+        println!("Finishing get_node: {}", UTC::now());
+        node
     }
 }
 #[cfg(test)]

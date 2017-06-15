@@ -5,6 +5,13 @@ version = "0.1.0"
 
 [dependencies]
 clap = "2.24.2"
+rmp-serde = "0.13.3"
+serde = "1.0.8"
+zmq = "0.8.1"
+
+[dependencies.chrono]
+features = ["serde"]
+version = "0.3.1"
 
 [dependencies.logos]
 path = ".."

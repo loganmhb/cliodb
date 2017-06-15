@@ -16,7 +16,7 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let store = store_from_uri(uri).expect("Couldn't create store");
-    let mut db = Db::new(store).expect("Couldn't connect to DB -- does it exist?");
+    let mut db = Db::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");
@@ -39,6 +39,8 @@ Commands:
                             Ok(report) => println!("{:?}", report),
                             Err(e) => println!("ERROR: {:?}", e),
                         }
+                        // Need to get a refreshed copy of the DB.
+                        db = Db::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
                     }
                     Ok(Input::SampleDb) => {
                         let sample = [

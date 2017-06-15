@@ -21,6 +21,7 @@ extern crate rusqlite;
 extern crate r2d2;
 
 extern crate uuid;
+extern crate zmq;
 
 #[macro_use]
 extern crate lazy_static;
@@ -105,11 +106,11 @@ impl Display for QueryResult {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct Tx {
-    items: Vec<TxItem>,
+    pub items: Vec<TxItem>,
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
-enum TxItem {
+pub enum TxItem {
     Addition(Fact),
     Retraction(Fact),
     NewEntity(HashMap<String, Value>),
@@ -117,7 +118,7 @@ enum TxItem {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct TxReport {
-    new_entities: Vec<Entity>
+    pub new_entities: Vec<Entity>
 }
 
 type Binding = HashMap<Var, Value>;

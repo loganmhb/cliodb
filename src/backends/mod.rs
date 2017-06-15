@@ -5,7 +5,7 @@ pub mod cassandra;
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-use db::DbContents;
+use db::{DbContents};
 use super::Result;
 
 /// Abstracts over various backends; all that's required for a Logos

@@ -8,7 +8,7 @@ use uuid::Uuid;
 
 pub struct Db {
     next_id: u64,
-    idents: IdentMap,
+    pub idents: IdentMap,
     store: Arc<KVStore + 'static>,
     eav: Index<Record, EAVT>,
     ave: Index<Record, AVET>,
@@ -57,13 +57,13 @@ impl Db {
         Ok(db)
     }
 
-    fn get_id(&mut self) -> u64 {
+    pub fn get_id(&mut self) -> u64 {
         let id = self.next_id;
         self.next_id += 1;
         id
     }
 
-    fn add(&mut self, record: Record) {
+    pub fn add(&mut self, record: Record) {
         if record.entity.0 >= self.next_id {
             self.next_id = record.entity.0 + 1;
         }
@@ -84,7 +84,7 @@ impl Db {
     /// Saves the db metadata (index root nodes, entity ID state) to
     /// storage, when implemented by the storage backend (i.e. when
     /// not using in-memory storage).
-    fn save_contents(&self) -> Result<()> {
+    pub fn save_contents(&self) -> Result<()> {
         let contents = DbContents {
             next_id: self.next_id,
             idents: self.idents.clone(),
@@ -153,42 +153,23 @@ impl Db {
     }
 
     pub fn transact(&mut self, tx: Tx) -> Result<TxReport> {
-        let mut new_entities = vec![];
-        let tx_entity = Entity(self.get_id());
-        let attr = self.idents.get_entity("db:txInstant".to_string()).unwrap();
-        self.add(Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity));
-        for item in tx.items {
-            match item {
-                TxItem::Addition(f) => {
-                    let attr = self.idents
-                        .get_entity(f.attribute)
-                        .ok_or("invalid attribute".to_string())?;
-                    self.add(Record::addition(f.entity, attr, f.value, tx_entity))
-                }
-                TxItem::NewEntity(ht) => {
-                    let entity = Entity(self.get_id());
-                    for (k, v) in ht {
-                        let attr = self.idents
-                            .get_entity(k)
-                            .ok_or("invalid attribute".to_string())?;
-                        self.add(Record::addition(entity, attr, v, tx_entity))
-                    }
-                    new_entities.push(entity);
-                }
-                TxItem::Retraction(f) => {
-                    let attr = self.idents
-                        .get_entity(f.attribute)
-                        .ok_or("invalid attribute".to_string())?;
-                    self.add(Record::retraction(f.entity, attr, f.value, tx_entity))
-                }
-            }
-        }
-        self.save_contents()?;
-        Ok(TxReport { new_entities })
+        let mut msg_buf: Vec<u8> = Vec::new();
+        tx.serialize(&mut Serializer::new(&mut msg_buf)).unwrap();
+        let ctx = zmq::Context::new();
+        let socket = ctx.socket(zmq::REQ).unwrap();
+        socket.connect("tcp://localhost:10405").unwrap();
+        socket.send_msg(zmq::Message::from_slice(&msg_buf).unwrap(), 0).unwrap();
+
+        let result = socket.recv_msg(0)?;
+        let mut de = Deserializer::new(&result[..]);
+        let report: TxReport = Deserialize::deserialize(&mut de)?;
+        Ok(report)
+
     }
 
     pub fn query(&self, query: &Query) -> Result<QueryResult> {
         // TODO: automatically bind ?tx in queries
+        println!("Starting query: {}", UTC::now());
         let mut bindings = vec![HashMap::new()];
 
         for clause in &query.clauses {
@@ -228,6 +209,7 @@ impl Db {
                 .collect();
         }
 
+        println!("Finished query: {}", UTC::now());
         Ok(QueryResult(query.find.clone(), bindings))
     }
 }
