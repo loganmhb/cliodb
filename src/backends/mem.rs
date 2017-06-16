@@ -1,9 +1,10 @@
 use std::sync::{Arc, Mutex};
 use std::collections::HashMap;
+use std::fmt::Debug;
 
-use super::{KVStore, DbContents};
-use btree;
-use ident::IdentMap;
+use super::{KVStore};
+use db::TxClient;
+use tx;
 use Result;
 
 // HashMap pretending to be a database
@@ -13,20 +14,13 @@ pub struct HeapStore {
 }
 
 impl HeapStore {
-    pub fn new() -> HeapStore {
+    pub fn new<T: Debug + Ord + Clone>() -> HeapStore {
         let store = HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) };
-        let node_store = btree::NodeStore::new(Arc::new(store.clone()));
 
-        let empty_root: btree::IndexNode<String> = btree::IndexNode::Leaf { items: vec![] };
-        let contents = DbContents {
-            next_id: 0,
-            idents: IdentMap::default(),
-            eav: node_store.add_node(empty_root.clone()).unwrap(),
-            ave: node_store.add_node(empty_root.clone()).unwrap(),
-            aev: node_store.add_node(empty_root).unwrap()
-        };
+        let s = Arc::new(store.clone());
+        tx::create_db(s).unwrap();
 
-        store.set_contents(&contents).unwrap();
+        store.set_transactor(&TxClient::Local).unwrap();
         store
     }
 }

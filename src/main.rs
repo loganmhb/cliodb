@@ -2,7 +2,7 @@ extern crate logos;
 extern crate rustyline;
 
 use logos::*;
-use logos::db::{Db, store_from_uri};
+use logos::db::{Conn, store_from_uri};
 
 use std::error::Error;
 use std::env::args;
@@ -16,7 +16,7 @@ Commands:
   dump - display the contents of the DB as a table.
 ");
     let store = store_from_uri(uri).expect("Couldn't create store");
-    let mut db = Db::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
+    let conn = Conn::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");
@@ -29,18 +29,17 @@ Commands:
 
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => {
+                        let db = conn.db().unwrap();
                         match db.query(&q) {
                             Ok(res) => println!("{}", res),
                             Err(e) => println!("ERROR: {:?}", e),
                         }
                     }
                     Ok(Input::Tx(tx)) => {
-                        match db.transact(tx) {
+                        match conn.transact(tx) {
                             Ok(report) => println!("{:?}", report),
                             Err(e) => println!("ERROR: {:?}", e),
                         }
-                        // Need to get a refreshed copy of the DB.
-                        db = Db::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
                     }
                     Ok(Input::SampleDb) => {
                         let sample = [
@@ -54,12 +53,12 @@ Commands:
                         ];
 
                         for tx in sample.into_iter().map(|l| parse_tx(*l).unwrap()) {
-                            db.transact(tx).unwrap();
+                            conn.transact(tx).unwrap();
                         }
                     }
                     Ok(Input::Dump) => {
                         println!("{}",
-                                 db.query(&parse_query("find ?ent ?attname ?val where (?ent ?att \
+                                 conn.db().unwrap().query(&parse_query("find ?ent ?attname ?val where (?ent ?att \
                                                        ?val) (?att db:ident ?attname)")
                                                    .unwrap())
                                      .unwrap())

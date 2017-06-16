@@ -1,100 +1,101 @@
 use super::*;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
+use std::net::SocketAddr;
 
 use btree::IndexNode;
+use tx::Transactor;
+
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 use uuid::Uuid;
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub enum TxClient {
+    Network(SocketAddr),
+    Local,
+}
+
+// We need a way to ensure, for local stores, that only one thread is
+// transacting at a time.
+// FIXME: Super kludgy. There must be a better way to do this.
+lazy_static! {
+    static ref TX_LOCK: Mutex<()> = Mutex::new(());
+}
+
+pub struct Conn {
+    transactor: TxClient,
+    store: Arc<KVStore>,
+}
+
+impl Conn {
+    pub fn new(store: Arc<KVStore>) -> Result<Conn> {
+        let transactor = store.get_transactor()?;
+        Ok(Conn { transactor, store })
+    }
+}
+
+impl Conn {
+    pub fn db(&self) -> Result<Db> {
+        let contents: DbContents = self.store.get_contents()?;
+
+        let node_store = btree::NodeStore::new(self.store.clone());
+        Ok(Db {
+            store: self.store.clone(),
+            idents: contents.idents,
+            eav: Index::new(contents.eav, node_store.clone(), EAVT),
+            ave: Index::new(contents.ave, node_store.clone(), AVET),
+            aev: Index::new(contents.aev, node_store, AEVT),
+        })
+    }
+
+    pub fn transact(&self, tx: Tx) -> Result<TxReport> {
+        match self.transactor {
+            // TODO: Don't ignore the addr here.
+            TxClient::Network(_) => {
+                let mut msg_buf: Vec<u8> = Vec::new();
+                tx.serialize(&mut Serializer::new(&mut msg_buf))?;
+                let ctx = zmq::Context::new();
+                let socket = ctx.socket(zmq::REQ)?;
+                socket.connect("tcp://localhost:10405")?;
+                socket.send_msg(zmq::Message::from_slice(&msg_buf)?, 0)?;
+
+                let result = socket.recv_msg(0)?;
+                let mut de = Deserializer::new(&result[..]);
+                let report: TxReport = Deserialize::deserialize(&mut de)?;
+                Ok(report)
+            }
+            TxClient::Local => {
+                let store = self.store.clone();
+                let _ = TX_LOCK.lock()?;
+                let mut transactor = Transactor::new(store)?;
+                transactor.process_tx(tx)
+            }
+        }
+    }
+}
+
+/// An *immutable* view of the database at a point in time.
+/// Only used for querying; for transactions, you need a Conn.
 pub struct Db {
-    next_id: u64,
     pub idents: IdentMap,
-    store: Arc<KVStore + 'static>,
-    eav: Index<Record, EAVT>,
-    ave: Index<Record, AVET>,
-    aev: Index<Record, AEVT>,
+    pub store: Arc<KVStore + 'static>,
+    pub eav: Index<Record, EAVT>,
+    pub ave: Index<Record, AVET>,
+    pub aev: Index<Record, AEVT>,
 }
 
 impl Db {
-    pub fn new(store: Arc<KVStore>) -> Result<Db> {
-        let contents: DbContents = store.get_contents()?;
-
+    pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
         let node_store = btree::NodeStore::new(store.clone());
-        let mut db = Db {
-            next_id: contents.next_id,
+        let db = Db {
             store: store,
             idents: contents.idents,
-            eav: Index::new(contents.eav, node_store.clone(), EAVT)?,
-            ave: Index::new(contents.ave, node_store.clone(), AVET)?,
-            aev: Index::new(contents.aev, node_store, AEVT)?,
+            eav: Index::new(contents.eav, node_store.clone(), EAVT),
+            ave: Index::new(contents.ave, node_store.clone(), AVET),
+            aev: Index::new(contents.aev, node_store, AEVT),
         };
 
-        db.idents = db.idents.add("db:ident".to_string(), Entity(1));
-
-        if db.next_id == 0 {
-            // Bootstrap some attributes we need to run transactions,
-            // because they need to reference one another.
-
-            // Initial transaction entity
-            db.add(Record::addition(Entity(0),
-                                    Entity(2),
-                                    Value::Timestamp(UTC::now()),
-                                    Entity(0)));
-
-            // Entity for the db:ident attribute
-            db.add(Record::addition(Entity(1),
-                                    Entity(1),
-                                    Value::Ident("db:ident".into()),
-                                    Entity(0)));
-
-            // Entity for the db:txInstant attribute
-            db.add(Record::addition(Entity(2),
-                                    Entity(1),
-                                    Value::Ident("db:txInstant".into()),
-                                    Entity(0)));
-        }
-
-        Ok(db)
-    }
-
-    pub fn get_id(&mut self) -> u64 {
-        let id = self.next_id;
-        self.next_id += 1;
-        id
-    }
-
-    pub fn add(&mut self, record: Record) {
-        if record.entity.0 >= self.next_id {
-            self.next_id = record.entity.0 + 1;
-        }
-
-        self.eav = self.eav.insert(record.clone()).unwrap();
-        self.ave = self.ave.insert(record.clone()).unwrap();
-        self.aev = self.aev.insert(record.clone()).unwrap();
-
-        // If the record has a db:ident, we need to add it to the ident map.
-        if record.attribute == self.idents.get_entity("db:ident".to_string()).unwrap() {
-            match record.value {
-                Value::Ident(s) => self.idents = self.idents.add(s.clone(), record.entity),
-                _ => unimplemented!(), // FIXME: type error
-            };
-        }
-    }
-
-    /// Saves the db metadata (index root nodes, entity ID state) to
-    /// storage, when implemented by the storage backend (i.e. when
-    /// not using in-memory storage).
-    pub fn save_contents(&self) -> Result<()> {
-        let contents = DbContents {
-            next_id: self.next_id,
-            idents: self.idents.clone(),
-            eav: self.eav.root_ref.clone(),
-            aev: self.aev.root_ref.clone(),
-            ave: self.ave.root_ref.clone(),
-        };
-
-        self.store.set_contents(&contents)?;
-        Ok(())
+        db
     }
 
     fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
@@ -110,8 +111,7 @@ impl Db {
                     Some(attr) => {
                         let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
                         Ok(self.ave
-                               .iter_range_from(range_start..)
-                               .unwrap()
+                               .iter_range_from(range_start..)?
                                .map(|res| res.unwrap())
                                .take_while(|rec| rec.attribute == attr && rec.value == v)
                                .collect())
@@ -131,8 +131,7 @@ impl Db {
                         let range_start =
                             Record::addition(e, attr, Value::String("".into()), Entity(0));
                         Ok(self.eav
-                               .iter_range_from(range_start..)
-                               .unwrap()
+                               .iter_range_from(range_start..)?
                                .map(|res| res.unwrap())
                                .take_while(|rec| rec.entity == e && rec.attribute == attr)
                                .collect())
@@ -150,21 +149,6 @@ impl Db {
                     .collect())
             }
         }
-    }
-
-    pub fn transact(&mut self, tx: Tx) -> Result<TxReport> {
-        let mut msg_buf: Vec<u8> = Vec::new();
-        tx.serialize(&mut Serializer::new(&mut msg_buf)).unwrap();
-        let ctx = zmq::Context::new();
-        let socket = ctx.socket(zmq::REQ).unwrap();
-        socket.connect("tcp://localhost:10405").unwrap();
-        socket.send_msg(zmq::Message::from_slice(&msg_buf).unwrap(), 0).unwrap();
-
-        let result = socket.recv_msg(0)?;
-        let mut de = Deserializer::new(&result[..]);
-        let report: TxReport = Deserialize::deserialize(&mut de)?;
-        Ok(report)
-
     }
 
     pub fn query(&self, query: &Query) -> Result<QueryResult> {
@@ -305,7 +289,7 @@ pub struct DbContents {
 
 pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
     match &uri.split("//").collect::<Vec<_>>()[..] {
-        &["logos:mem:", _] => Ok(Arc::new(HeapStore::new()) as Arc<KVStore>),
+        &["logos:mem:", _] => Ok(Arc::new(HeapStore::new::<Record>()) as Arc<KVStore>),
         &["logos:sqlite:", path] => {
             let sqlite_store = SqliteStore::new(path)?;
             Ok(Arc::new(sqlite_store) as Arc<KVStore>)
@@ -357,9 +341,9 @@ mod tests {
         assert_eq!(expected, result);
     }
 
-    fn test_db() -> Db {
-        let store = HeapStore::new();
-        let mut db = Db::new(Arc::new(store)).unwrap();
+    fn test_conn() -> Conn {
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
         let records = vec![
             Fact::new(Entity(0), "name", "Bob"),
             Fact::new(Entity(1), "name", "John"),
@@ -368,11 +352,11 @@ mod tests {
         ];
 
         parse_tx("{db:ident name} {db:ident parent} {db:ident Hello}")
-            .map(|tx| db.transact(tx))
-            .unwrap()
+            .map_err(|e| e.into())
+            .and_then(|tx| conn.transact(tx))
             .unwrap();
 
-        db.transact(Tx {
+        conn.transact(Tx {
                           items: records
                               .iter()
                               .map(|x| TxItem::Addition(x.clone()))
@@ -380,10 +364,12 @@ mod tests {
                       })
             .unwrap();
 
-        db
+        conn
     }
 
-
+    fn test_db() -> Db {
+        test_conn().db().unwrap()
+    }
 
     #[test]
     fn test_query_unknown_entity() {
@@ -477,11 +463,16 @@ mod tests {
 
     #[test]
     fn test_retractions() {
-        let mut db = test_db();
-        db.transact(parse_tx("retract (1 parent 0)").unwrap()).unwrap();
-        let result = db.query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap()).unwrap();
+        let conn = test_conn();
+        conn.transact(parse_tx("retract (1 parent 0)").unwrap())
+            .unwrap();
+        let result = conn.db()
+            .unwrap()
+            .query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap())
+            .unwrap();
 
-        assert_eq!(result, QueryResult(vec![Var::new("a"), Var::new("b")], vec![]));
+        assert_eq!(result,
+                   QueryResult(vec![Var::new("a"), Var::new("b")], vec![]));
     }
     #[bench]
     // Parse + run a query on a small db
@@ -505,23 +496,27 @@ mod tests {
 
     #[bench]
     fn bench_add(b: &mut Bencher) {
-        let store = HeapStore::new();
-        let mut db = Db::new(Arc::new(store)).unwrap();
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
         parse_tx("{db:ident blah}")
-            .map(|tx| db.transact(tx))
+            .map(|tx| conn.transact(tx))
             .unwrap()
             .unwrap();
-
-        let a = db.idents.get_entity("blah".to_string()).unwrap();
 
         let mut e = 0;
 
         b.iter(|| {
-                   let entity = Entity(e);
-                   e += 1;
+            let entity = Entity(e);
+            e += 1;
 
-                   db.add(Record::addition(entity, a, Value::Entity(entity), Entity(0)));
-               });
+            conn.transact(Tx {
+                              items: vec![
+                TxItem::Addition(Fact::new(entity,
+                                           "blah",
+                                           Value::Entity(entity))),
+            ],
+                          }).unwrap();
+        });
     }
 
     #[cfg(not(debug_assertions))]

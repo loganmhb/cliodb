@@ -97,7 +97,7 @@ mod tests {
         let node = IndexNode::Leaf { items: vec!["hi there".to_string()] };
 
         let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf));
+        node.serialize(&mut Serializer::new(&mut buf)).unwrap();
         let store: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
 
         store.set("my_thing", &buf).unwrap();

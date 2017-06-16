@@ -5,7 +5,7 @@ pub mod cassandra;
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-use db::{DbContents};
+use db::{DbContents, TxClient};
 use super::Result;
 
 /// Abstracts over various backends; all that's required for a Logos
@@ -34,4 +34,20 @@ pub trait KVStore {
 
         self.set("db_contents", &buf)
     }
+
+    fn get_transactor(&self) -> Result<TxClient> {
+        let serialized = self.get("transactor")?;
+        let mut de = Deserializer::new(&serialized[..]);
+        let transactor: TxClient = Deserialize::deserialize(&mut de)?;
+
+        Ok(transactor.clone())
+     }
+
+    fn set_transactor(&self, transactor: &TxClient) -> Result<()> {
+        let mut buf = Vec::new();
+        transactor.serialize(&mut Serializer::new(&mut buf))?;
+
+        self.set("transactor", &buf)
+    }
+
 }

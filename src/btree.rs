@@ -1,6 +1,5 @@
 use serde::{Serialize, Deserialize};
 
-use chrono::prelude::UTC;
 use std::cmp::Ordering;
 use std::collections::HashMap;
 use std::fmt::Debug;
@@ -42,12 +41,12 @@ impl<'de, T, C> Index<T, C>
     where T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
           C: Comparator<Item = T>
 {
-    pub fn new(root_ref: String, store: NodeStore<T>, comparator: C) -> Result<Self> {
-        Ok(Index {
-               store,
-               root_ref,
-               comparator,
-           })
+    pub fn new(root_ref: String, store: NodeStore<T>, comparator: C) -> Self {
+        Index {
+            store,
+            root_ref,
+            comparator,
+        }
     }
 
     pub fn insert(&self, item: T) -> Result<Index<T, C>> {
@@ -465,13 +464,16 @@ mod tests {
         }
     }
 
+    fn test_idx() -> Index<u64, NumComparator> {
+        let ns: NodeStore<u64> = NodeStore::new(Arc::new(HeapStore::new::<u64>()));
+        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
+        let root_ref = ns.add_node(root).unwrap();
+        Index::new(root_ref, ns, NumComparator)
+    }
+
     #[test]
     fn test_leaf_insert() {
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut idx: Index<u64, NumComparator> = Index::new(root_ref, store, NumComparator)
-            .unwrap();
+        let mut idx = test_idx();
         let range: ::std::ops::Range<u64> = 0..(16 * 16 + 1);
         for i in range {
             idx = idx.insert(i).unwrap();
@@ -480,11 +482,7 @@ mod tests {
 
     #[test]
     fn test_tree_iter() {
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut idx: Index<u64, NumComparator> = Index::new(root_ref, store, NumComparator)
-            .unwrap();
+        let mut idx = test_idx();
         let range = 0..4096;
         for i in range.clone().rev().collect::<Vec<_>>() {
             idx = idx.insert(i).unwrap();
@@ -496,10 +494,8 @@ mod tests {
 
     #[test]
     fn test_range_iter() {
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut idx = Index::new(root_ref, store, NumComparator).unwrap();
+        let mut idx = test_idx();
+
         let full_range = 0u64..10_000;
         let range = 1457u64..;
 
@@ -516,10 +512,7 @@ mod tests {
 
     #[bench]
     fn bench_insert_sequence(b: &mut Bencher) {
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
+        let mut tree = test_idx();
         let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -529,10 +522,8 @@ mod tests {
 
     #[bench]
     fn bench_insert_range(b: &mut Bencher) {
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
+        let mut tree = test_idx();
+
         let mut n = 0;
         b.iter(|| {
                    tree = tree.insert(n).unwrap();
@@ -543,11 +534,8 @@ mod tests {
 
     #[bench]
     fn bench_iter(b: &mut Bencher) {
+        let mut tree = test_idx();
         let n = 10_000;
-        let store = NodeStore::new(Arc::new(HeapStore::new()));
-        let root: IndexNode<u64> = IndexNode::Leaf { items: vec![] };
-        let root_ref = store.add_node(root).unwrap();
-        let mut tree = Index::new(root_ref, store, NumComparator).unwrap();
         for i in 0..n {
             tree = tree.insert(i).unwrap();
         }

@@ -40,6 +40,7 @@ pub mod parser;
 pub mod string_ref;
 pub mod btree;
 pub mod backends;
+pub mod tx;
 mod query;
 mod model;
 mod ident;
@@ -117,8 +118,11 @@ pub enum TxItem {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
-pub struct TxReport {
-    pub new_entities: Vec<Entity>
+pub enum TxReport {
+    Success {
+        new_entities: Vec<Entity>
+    },
+    Failure(String)
 }
 
 type Binding = HashMap<Var, Value>;
@@ -172,7 +176,7 @@ impl Clause {
 macro_rules! comparator {
     ($name:ident, $first:ident, $second:ident, $third:ident, $fourth:ident) => {
         #[derive(Debug, Clone)]
-        struct $name;
+        pub struct $name;
 
         impl Comparator for $name {
             type Item = Record;
