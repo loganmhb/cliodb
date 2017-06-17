@@ -1,0 +1,11 @@
+[package]
+name = "logos-ffi"
+version = "0.1.0"
+authors = ["Logan Buckley <logan.buckley@gmail.com>"]
+
+[lib]
+name = "logosffi"
+crate-type = ["dylib"]
+
+[dependencies]
+logos = { version = "0.1.0", path = ".." }

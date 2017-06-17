@@ -68,7 +68,7 @@ impl<S: ToString> From<S> for Error {
 pub type Result<T> = result::Result<T, Error>;
 
 #[derive(Debug, PartialEq)]
-pub struct QueryResult(Vec<Var>, Vec<HashMap<Var, Value>>);
+pub struct QueryResult(pub Vec<Var>, pub Vec<HashMap<Var, Value>>);
 
 impl Display for QueryResult {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
