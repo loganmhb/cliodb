@@ -1,6 +1,6 @@
 extern crate logos;
 
-use std::ffi::{CStr, OsString, CString};
+use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::{c_void, c_char, c_int};
 
@@ -44,19 +44,23 @@ pub struct QueryResult {
     /// The width of each tuple, i.e. how many variables the query bound.
     tuple_width: usize,
     /// They key; an array containing a tag for each tuple position.
-    tuple_types: *const c_void,
-    /// The results themselves, an array of arrays.
+    tuple_types: *const ValueTag,
+    /// The results themselves, an array of arrays. The outer array
+    /// represents the set of tuples; each tuple is represented by an
+    /// inner array. The items in the inner array are either pointers
+    /// to variably-sized values (string, idents, timestamps) or
+    /// inlined entity IDs.
     results: *const *const c_void,
     /// A field indicating an error. Null when no error.
     error: *const c_char,
 }
 
-#[repr(C)]
+#[repr(u8)]
 pub enum ValueTag {
-    Entity,
-    Ident,
-    String,
-    Timestamp,
+    Entity = 0,
+    Ident = 1,
+    String = 2,
+    Timestamp = 3,
 }
 
 fn value_tag(v: Value) -> ValueTag {
@@ -65,6 +69,15 @@ fn value_tag(v: Value) -> ValueTag {
         Value::Entity(_) => ValueTag::Entity,
         Value::Ident(_) => ValueTag::Ident,
         Value::Timestamp(_) => ValueTag::Timestamp,
+    }
+}
+
+fn to_c_value(v: &Value) -> *const c_void {
+    match *v {
+        Value::String(ref s) => CString::new(s.clone()).unwrap().into_raw() as *const c_void,
+        Value::Entity(logos::Entity(e)) => e as *const c_void,
+        Value::Ident(ref i) => CString::new(i.clone()).unwrap().into_raw() as *const c_void,
+        Value::Timestamp(t) => CString::new(t.to_string()).unwrap().into_raw() as *const c_void,
     }
 }
 
@@ -84,21 +97,20 @@ unsafe fn format_query_result(result: logos::QueryResult) -> *const QueryResult 
     } else {
         let mut results = vec![];
         // Set up the tuple key.
-        let tuple_types: Vec<ValueTag> = vars.iter()
-            .map(|v| value_tag(maps[0][v].clone()))
-            .collect();
+        let tuple_types: Vec<ValueTag> =
+            vars.iter().map(|v| value_tag(maps[0][v].clone())).collect();
 
         for m in maps {
-            let mut tuple = vec![];
+            let mut tuple: Vec<*const c_void> = vec![];
             for var in vars.iter() {
-                tuple.push(m[&var].clone());
+                tuple.push(to_c_value(&m[&var]));
             }
             let tuple_ptr = tuple.as_ptr();
             mem::forget(tuple_ptr);
             results.push(tuple_ptr);
         }
 
-        let tuple_types_ptr = tuple_types.as_ptr() as *const _ as *const c_void;
+        let tuple_types_ptr = tuple_types.as_ptr() as *const _;
         let results_ptr = results.as_ptr() as *const _ as *const *const c_void;
 
         mem::forget(tuple_types);
@@ -130,13 +142,13 @@ pub extern "C" fn query(ptr: *mut Conn, query: *const c_char) -> *const QueryRes
     let query_str = unsafe { CStr::from_ptr(query) };
     let db = match conn.db() {
         Ok(db) => db,
-        Err(e) => return unsafe {format_error_result(e)},
+        Err(e) => return unsafe { format_error_result(e) },
     };
     let q = parse_query(query_str.to_str().unwrap()).unwrap();
 
     match db.query(&q) {
         Ok(res) => unsafe { format_query_result(res) },
-        Err(e) => unsafe { format_error_result(e) }
+        Err(e) => unsafe { format_error_result(e) },
     }
 }
 
