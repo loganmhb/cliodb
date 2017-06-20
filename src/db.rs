@@ -521,12 +521,13 @@ mod tests {
 
     #[cfg(not(debug_assertions))]
     fn test_db_large() -> Db {
-        let store = HeapStore::new();
-        let mut db = Db::new(Arc::new(store)).unwrap();
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
+        let db = conn.db().unwrap();
         let n = 10_000_000;
 
         for i in 0..n {
-            let a = if i % 23 < 10 {
+            let a = if i % 23 <= 10 {
                 "name".to_string()
             } else {
                 "Hello".to_string()
@@ -534,8 +535,9 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            let attr = db.idents.get_entity(a).unwrap();
-            db.add(Record::addition(Entity(i), attr, v, Entity(0)));
+            conn.transact( Tx { items: vec![
+                TxItem::Addition(Fact::new(Entity(i), a, v))
+            ]});
         }
 
         db
