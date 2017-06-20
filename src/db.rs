@@ -524,7 +524,7 @@ mod tests {
         let store = HeapStore::new::<Record>();
         let conn = Conn::new(Arc::new(store)).unwrap();
         let db = conn.db().unwrap();
-        let n = 10_000_000;
+        let n = 10_000;
 
         for i in 0..n {
             let a = if i % 23 <= 10 {

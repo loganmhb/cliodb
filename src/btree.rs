@@ -206,12 +206,12 @@ impl<'de, T> IndexNode<T>
 
         match self {
             &Leaf { ref items } => {
-                if items.len() < CAPACITY {
-                    let idx = match items.binary_search_by(|other| C::compare(other, &item)) {
-                        Ok(_) => return Ok(Insertion::Duplicate),
-                        Err(idx) => idx,
-                    };
+                let idx = match items.binary_search_by(|other| C::compare(other, &item)) {
+                    Ok(_) => return Ok(Insertion::Duplicate),
+                    Err(idx) => idx
+                };
 
+                if items.len() < CAPACITY {
                     let mut new_items = items.clone();
                     new_items.insert(idx, item);
 
