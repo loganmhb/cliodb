@@ -4,7 +4,7 @@ name = "logos"
 version = "0.1.0"
 
 [[bin]]
-name = "logos"
+name = "logos-repl"
 path = "src/main.rs"
 
 [dependencies]

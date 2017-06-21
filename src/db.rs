@@ -153,7 +153,6 @@ impl Db {
 
     pub fn query(&self, query: &Query) -> Result<QueryResult> {
         // TODO: automatically bind ?tx in queries
-        println!("Starting query: {}", UTC::now());
         let mut bindings = vec![HashMap::new()];
 
         for clause in &query.clauses {
@@ -193,7 +192,6 @@ impl Db {
                 .collect();
         }
 
-        println!("Finished query: {}", UTC::now());
         Ok(QueryResult(query.find.clone(), bindings))
     }
 }

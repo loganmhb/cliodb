@@ -42,6 +42,7 @@ pub mod btree;
 pub mod backends;
 pub mod tx;
 mod query;
+mod rbtree;
 mod model;
 mod ident;
 
