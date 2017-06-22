@@ -169,8 +169,73 @@ impl<T: Ord + Clone> RBTree<T> {
     fn insert(&self, x: T) -> RBTree<T> {
         RBTree { root: Some(ins(self.root.clone(), x).make_black()) }
     }
+
+    fn iter(&self) -> Iter<T> {
+        let mut stack = Vec::new();
+        let mut node = self.root.clone();
+
+        // Push left children onto the stack to initialize the search.
+        while let Some(node_ptr) = node {
+            stack.push(node_ptr.clone());
+            node = node_ptr.left.clone();
+            continue;
+        }
+
+        Iter { stack }
+    }
+
+    fn range_from(&self, start: T) -> Iter<T> {
+        let mut stack = Vec::new();
+        let mut node = self.root.clone();
+
+        while let Some(node_ptr) = node.clone() {
+            if node_ptr.item > start {
+                node = node_ptr.left.clone();
+                stack.push(node_ptr);
+                continue;
+            } else if node_ptr.item == start {
+                stack.push(node_ptr);
+                break;
+            } else {
+                // This node is too small and should be skipped, but
+                // we might still need to start in its right subtree.
+                node = node_ptr.right.clone();
+                continue;
+            }
+        }
+
+        Iter { stack }
+    }
 }
 
+pub struct Iter<T> {
+    stack: Vec<Arc<RBTreeNode<T>>>,
+}
+
+impl<T: Clone> Iterator for Iter<T> {
+    type Item = T;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // The node at the top of the stack, if any, contains the value to yield.
+        // But before yielding, we need to push the node's right child (if any)
+        // and all of its left children.
+        if let Some(node) = self.stack.pop() {
+            let val = node.item.clone();
+            let mut next_node = node.right.clone();
+
+            while let Some(child) = next_node {
+                next_node = child.left.clone();
+                self.stack.push(child);
+            }
+
+            Some(val)
+        } else {
+            None
+        }
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
 
@@ -201,17 +266,30 @@ mod tests {
         assert!(!needs_balancing(&with_red_child));
     }
 
-
-    #[test]
-    fn test_inserts() {
+    fn thousand_tree() -> RBTree<usize> {
         let mut t = RBTree::default();
 
         for i in 0..1000 {
             t = t.insert(999 - i);
         }
 
+        t
+    }
+
+    #[test]
+    fn test_inserts() {
+        let t = thousand_tree();
         let mut enumerated = vec![];
-        enumerate_tree(t.root, &mut enumerated);
-        assert_eq!(enumerated, (0..1000).collect::<Vec<_>>())
+        enumerate_tree(t.root.clone(), &mut enumerated);
+        assert_eq!(enumerated, (0..1000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_iter() {
+        let t = thousand_tree();
+
+        assert_eq!((0..1000).collect::<Vec<_>>(), t.iter().collect::<Vec<_>>());
+        assert_eq!(t.range_from(500).collect::<Vec<_>>(),
+                   (500..1000).collect::<Vec<_>>());
     }
 }
