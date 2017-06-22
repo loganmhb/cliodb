@@ -83,7 +83,7 @@ impl KVStore for CassandraStore {
 mod tests {
 
     use super::*;
-    use btree::IndexNode;
+    use index::IndexNode;
     use rmp_serde::{Serializer, Deserializer};
     use serde::{Serialize, Deserialize};
 

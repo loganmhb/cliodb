@@ -3,7 +3,7 @@ use std::sync::Arc;
 use chrono::prelude::UTC;
 
 use backends::KVStore;
-use btree::IndexNode;
+use index::IndexNode;
 use db::{add_node, Db, DbContents};
 use {Tx, TxReport, Entity, Record, Value, TxItem, Result, IdentMap};
 

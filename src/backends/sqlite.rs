@@ -50,7 +50,7 @@ impl KVStore for SqliteStore {
 mod tests {
     use super::*;
     extern crate test;
-    use btree::IndexNode;
+    use index::IndexNode;
 
     use rmp_serde::Serializer;
     use serde::{Serialize};

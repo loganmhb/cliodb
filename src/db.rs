@@ -2,7 +2,7 @@ use super::*;
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
-use btree::IndexNode;
+use index::IndexNode;
 use tx::Transactor;
 
 use rmp_serde::{Serializer, Deserializer};
@@ -38,7 +38,7 @@ impl Conn {
     pub fn db(&self) -> Result<Db> {
         let contents: DbContents = self.store.get_contents()?;
 
-        let node_store = btree::NodeStore::new(self.store.clone());
+        let node_store = index::NodeStore::new(self.store.clone());
         Ok(Db {
             store: self.store.clone(),
             idents: contents.idents,
@@ -86,7 +86,7 @@ pub struct Db {
 
 impl Db {
     pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
-        let node_store = btree::NodeStore::new(store.clone());
+        let node_store = index::NodeStore::new(store.clone());
         let db = Db {
             store: store,
             idents: contents.idents,

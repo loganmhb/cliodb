@@ -3,12 +3,9 @@ authors = ["Logan Buckley <logan.buckley@gmail.com>"]
 name = "logos"
 version = "0.1.0"
 
-[[bin]]
-name = "logos-repl"
-path = "src/main.rs"
-
 [dependencies]
 cdrs = "1.0.0-rc.2"
+clap = "2.24.2"
 combine = "2.3.2"
 itertools = "0.6.0"
 lazy_static = "0.2.8"

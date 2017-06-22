@@ -33,12 +33,10 @@ use std::collections::HashMap;
 use std::iter;
 use std::result;
 
-use chrono::prelude::UTC;
-
 pub mod db;
 pub mod parser;
 pub mod string_ref;
-pub mod btree;
+pub mod index;
 pub mod backends;
 pub mod tx;
 mod query;
@@ -49,7 +47,7 @@ mod ident;
 pub use parser::*;
 pub use model::{Fact, Record, Value, Entity};
 use query::{Query, Clause, Term, Var};
-use btree::{Index, Comparator};
+use index::{Index, Comparator};
 use backends::{KVStore};
 pub use ident::IdentMap;
 use backends::cassandra::CassandraStore;
