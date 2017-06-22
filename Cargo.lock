@@ -8,6 +8,7 @@ dependencies = [
  "combine 2.3.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "itertools 0.6.0 (registry+https://github.com/rust-lang/crates.io-index)",
  "lazy_static 0.2.8 (registry+https://github.com/rust-lang/crates.io-index)",
+ "lru-cache 0.1.1 (registry+https://github.com/rust-lang/crates.io-index)",
  "prettytable-rs 0.6.6 (registry+https://github.com/rust-lang/crates.io-index)",
  "r2d2 0.7.2 (registry+https://github.com/rust-lang/crates.io-index)",
  "rmp-serde 0.13.3 (registry+https://github.com/rust-lang/crates.io-index)",

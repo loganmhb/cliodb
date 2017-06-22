@@ -20,6 +20,7 @@ extern crate cdrs;
 extern crate rusqlite;
 extern crate r2d2;
 
+extern crate lru_cache;
 extern crate uuid;
 extern crate zmq;
 
@@ -41,6 +42,7 @@ pub mod backends;
 pub mod tx;
 mod query;
 mod rbtree;
+mod durable_tree;
 mod model;
 mod ident;
 
