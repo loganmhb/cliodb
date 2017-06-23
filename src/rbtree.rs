@@ -1,5 +1,6 @@
 //! Persistent red-black trees
 use std::sync::Arc;
+use index::Comparator;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 enum Color {
@@ -21,11 +22,14 @@ struct RBTreeNode<T> {
 /// NOT enforce invariants in the base case (leaving that to `balance`
 /// in the recursive cases), and it does not color the root of the
 /// tree black.
-fn ins<T: Ord + Clone>(tree: Child<T>, x: T) -> Arc<RBTreeNode<T>> {
+fn ins<T, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
+    where T: Ord + Clone,
+          C: Comparator<Item = T> + Copy
+{
     match tree {
         Some(ref t) => {
             if x < t.item {
-                balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x)),
+                balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x, comparator)),
                                                      t.item.clone(),
                                                      t.right.clone())))
             } else if x == t.item {
@@ -33,7 +37,7 @@ fn ins<T: Ord + Clone>(tree: Child<T>, x: T) -> Arc<RBTreeNode<T>> {
             } else {
                 balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
                                                      t.item.clone(),
-                                                     Some(ins(t.right.clone(), x)))))
+                                                     Some(ins(t.right.clone(), x, comparator)))))
             }
         }
         None => Arc::new(RBTreeNode::new_red(None, x, None)),
@@ -134,8 +138,9 @@ fn balance<T: Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RBTree<T> {
+pub struct RBTree<T, C> {
     root: Child<T>,
+    comparator: C,
 }
 
 impl<T: Ord + Clone> RBTreeNode<T> {
@@ -165,12 +170,22 @@ impl<T: Ord + Clone> RBTreeNode<T> {
     }
 }
 
-impl<T: Ord + Clone> RBTree<T> {
-    fn insert(&self, x: T) -> RBTree<T> {
-        RBTree { root: Some(ins(self.root.clone(), x).make_black()) }
+impl<T: Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
+    pub fn new(comparator: C) -> RBTree<T, C> {
+        RBTree {
+            root: None,
+            comparator
+        }
     }
 
-    fn iter(&self) -> Iter<T> {
+    pub fn insert(&self, x: T) -> RBTree<T, C> {
+        RBTree {
+            root: Some(ins(self.root.clone(), x, self.comparator).make_black()),
+            comparator: self.comparator
+        }
+    }
+
+    pub fn iter(&self) -> Iter<T> {
         let mut stack = Vec::new();
         let mut node = self.root.clone();
 
@@ -184,7 +199,7 @@ impl<T: Ord + Clone> RBTree<T> {
         Iter { stack }
     }
 
-    fn range_from(&self, start: T) -> Iter<T> {
+    pub fn range_from(&self, start: T) -> Iter<T> {
         let mut stack = Vec::new();
         let mut node = self.root.clone();
 
@@ -238,6 +253,7 @@ impl<T: Clone> Iterator for Iter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use index::NumComparator;
 
     fn enumerate_tree<T: Clone>(tree: Child<T>, mut vec: &mut Vec<T>) {
         match tree {
@@ -266,7 +282,7 @@ mod tests {
         assert!(!needs_balancing(&with_red_child));
     }
 
-    fn thousand_tree() -> RBTree<usize> {
+    fn thousand_tree() -> RBTree<u64, NumComparator> {
         let mut t = RBTree::default();
 
         for i in 0..1000 {

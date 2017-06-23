@@ -18,7 +18,6 @@ impl HeapStore {
         let store = HeapStore { inner: Arc::new(Mutex::new(HashMap::default())) };
 
         let s = Arc::new(store.clone());
-        tx::create_db(s).unwrap();
 
         store.set_transactor(&TxClient::Local).unwrap();
         store

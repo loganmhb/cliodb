@@ -34,7 +34,7 @@ const NODE_CAPACITY: usize = 1024;
 /// to the node in memory. The pointers are used only during the
 /// construction of the index.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
-enum Link<T> {
+pub enum Link<T> {
     Pointer(Box<Node<T>>),
     DbKey(String),
 }
@@ -49,7 +49,7 @@ enum Link<T> {
 /// the directory node is always exactly one less than the number of
 /// links.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
-enum Node<T> {
+pub enum Node<T> {
     Leaf { items: Vec<T> },
     Interior { keys: Vec<T>, links: Vec<Link<T>> },
 }
@@ -113,20 +113,21 @@ impl<'de, T> Node<T>
     }
 }
 
-struct DurableTree<T, C> {
+#[derive(Clone)]
+pub struct DurableTree<T, C> {
+    pub root: Link<T>,
     store: NodeStore<T>,
-    root: Link<T>,
     _comparator: C
 }
 
 impl<'de, T, C> DurableTree<T, C>
-    where T: Serialize + Deserialize<'de> + Clone,
+    where T: Serialize + Deserialize<'de> + Clone + Debug,
           C: Comparator<Item = T>
 {
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C)
+    pub fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C)
                           -> DurableTree<T, C>
         where I: Iterator<Item = T>
     {
@@ -151,7 +152,11 @@ impl<'de, T, C> DurableTree<T, C>
         }
     }
 
-    fn iter(&self) -> Iter<T> {
+    pub fn from_ref(db_ref: String, node_store: NodeStore<T>, _comparator: C) -> DurableTree<T, C> {
+        DurableTree { root: Link::DbKey(db_ref), store: node_store, _comparator }
+    }
+
+    pub fn iter(&self) -> Iter<T> {
         Iter {
             store: self.store.clone(),
             stack: vec![
@@ -164,7 +169,7 @@ impl<'de, T, C> DurableTree<T, C>
         }
     }
 
-    fn range_from(&self, start: T) -> Result<Iter<T>> {
+    pub fn range_from(&self, start: T) -> Result<Iter<T>> {
         let mut stack = vec![
             IterState {
                 node_ref: self.root.clone(),
@@ -327,7 +332,14 @@ pub struct NodeStore<T> {
 impl<'de, T> NodeStore<T>
     where T: Serialize + Deserialize<'de> + Clone
 {
-    fn add_node(&self, node: &Node<T>) -> Result<String> {
+    pub fn new(store: Arc<KVStore>) -> NodeStore<T> {
+        NodeStore {
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
+            store: store,
+        }
+    }
+
+    pub fn add_node(&self, node: &Node<T>) -> Result<String> {
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf))?;
 
@@ -343,7 +355,6 @@ impl<'de, T> NodeStore<T>
         match res {
             Some(node) => Ok(node.clone()),
             None => {
-                println!("getting node: {}", key);
                 let serialized = self.store.get(key)?;
                 let mut de = Deserializer::new(&serialized[..]);
                 let node: Node<T> = Deserialize::deserialize(&mut de)?;
@@ -363,10 +374,7 @@ mod tests {
 
     fn test_tree<I: Clone + Iterator<Item = u64>>(iter: I) -> DurableTree<u64, NumComparator> {
         let store = Arc::new(HeapStore::new::<u64>());
-        let node_store = NodeStore {
-            cache: Arc::new(Mutex::new(LruCache::new(1024))),
-            store: store.clone(),
-        };
+        let node_store = NodeStore::new(store.clone());
 
         DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator)
     }

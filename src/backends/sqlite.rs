@@ -50,14 +50,14 @@ impl KVStore for SqliteStore {
 mod tests {
     use super::*;
     extern crate test;
-    use index::IndexNode;
 
     use rmp_serde::Serializer;
     use serde::{Serialize};
+    use durable_tree::Node;
 
     #[test]
     fn test_kv_store() {
-        let root: IndexNode<String> = IndexNode::Leaf { items: vec![] };
+        let root: Node<String> = Node::Leaf { items: vec![] };
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
         let mut buf = Vec::new();
         root.serialize(&mut Serializer::new(&mut buf)).unwrap();

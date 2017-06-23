@@ -176,7 +176,7 @@ impl Clause {
 
 macro_rules! comparator {
     ($name:ident, $first:ident, $second:ident, $third:ident, $fourth:ident) => {
-        #[derive(Debug, Clone)]
+        #[derive(Debug, Clone, Copy)]
         pub struct $name;
 
         impl Comparator for $name {
