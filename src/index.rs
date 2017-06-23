@@ -445,6 +445,9 @@ impl<T: Debug> NodeStore<T> {
 }
 
 #[cfg(test)]
+pub use self::tests::NumComparator;
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use itertools::assert_equal;
@@ -454,7 +457,7 @@ mod tests {
     use backends::mem::HeapStore;
 
     #[derive(Clone)]
-    struct NumComparator;
+    pub struct NumComparator;
 
     impl Comparator for NumComparator {
         type Item = u64;

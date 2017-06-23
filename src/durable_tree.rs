@@ -1,5 +1,5 @@
 use std::fmt::Debug;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use itertools::Itertools;
 use lru_cache::LruCache;
@@ -8,6 +8,7 @@ use rmp_serde::{Serializer, Deserializer};
 use uuid::Uuid;
 
 use backends::KVStore;
+use index::Comparator;
 use Result;
 
 ///! This module defines a data structure for storing facts in the
@@ -112,18 +113,21 @@ impl<'de, T> Node<T>
     }
 }
 
-struct DurableTree<T> {
+struct DurableTree<T, C> {
     store: NodeStore<T>,
     root: Link<T>,
+    _comparator: C
 }
 
-impl<'de, T> DurableTree<T>
-    where T: Serialize + Deserialize<'de> + Clone
+impl<'de, T, C> DurableTree<T, C>
+    where T: Serialize + Deserialize<'de> + Clone,
+          C: Comparator<Item = T>
 {
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    fn build_from_iter<I>(mut store: NodeStore<T>, iter: I) -> DurableTree<T>
+    fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C)
+                          -> DurableTree<T, C>
         where I: Iterator<Item = T>
     {
         let mut root: Node<T> = Node::Interior {
@@ -143,22 +147,92 @@ impl<'de, T> DurableTree<T>
         DurableTree {
             store: store,
             root: Link::DbKey(root_ref),
+            _comparator
         }
     }
 
     fn iter(&self) -> Iter<T> {
-        let stack = vec![
+        Iter {
+            store: self.store.clone(),
+            stack: vec![
+                IterState {
+                    node_ref: self.root.clone(),
+                    link_idx: 0,
+                    item_idx: 0,
+                },
+            ],
+        }
+    }
+
+    fn range_from(&self, start: T) -> Result<Iter<T>> {
+        let mut stack = vec![
             IterState {
                 node_ref: self.root.clone(),
                 link_idx: 0,
                 item_idx: 0,
             },
         ];
-        Iter {
-            // FIXME: Share a single node store instead of cloning it.
-            // Should be an Arc<Mutex<NodeStore<T>>>, probably.
-            store: self.store.clone(),
-            stack: stack,
+
+        // Find the beginning of the range.
+        loop {
+            let state = stack.pop().unwrap();
+            let node_ref = match state.node_ref {
+                Link::Pointer(_) => unreachable!(),
+                Link::DbKey(ref s) => s.clone(),
+            };
+
+            let node = self.store.get_node(&node_ref)?;
+
+            match node {
+                Node::Leaf { items } => {
+                    match items.binary_search_by(|other| C::compare(other, &start)) {
+                        Ok(idx) => {
+                            stack.push(IterState {
+                                           item_idx: idx,
+                                           link_idx: idx + 1,
+                                           ..state
+                                       });
+
+                            return Ok(Iter {
+                                          stack,
+                                          store: self.store.clone(),
+                                      });
+                        }
+                        Err(idx) => {
+                            stack.push(IterState {
+                                           item_idx: idx,
+                                           ..state
+                                       });
+
+                            return Ok(Iter {
+                                          stack,
+                                          store: self.store.clone(),
+                                      });
+                        }
+                    }
+                },
+                Node::Interior { keys, links } => {
+                    match keys.binary_search_by(|other| C::compare(other, &start)) {
+                        Ok(idx) | Err(idx) => {
+                            // If the key is found in an interior
+                            // node, that means the actual item is the
+                            // first one of the right child, so it
+                            // doesn't actually make a difference if
+                            // the key exists in this node or not.
+                            stack.push(IterState {
+                                item_idx: idx,
+                                link_idx: idx + 1,
+                                ..state
+                            });
+                            stack.push(IterState {
+                                node_ref: links[idx].clone(),
+                                item_idx: 0,
+                                link_idx: 0
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
 }
@@ -246,14 +320,14 @@ impl<'de, T> Iterator for Iter<T>
 /// network and deserialization overhead.
 #[derive(Clone)]
 pub struct NodeStore<T> {
-    cache: LruCache<String, Node<T>>,
+    cache: Arc<Mutex<LruCache<String, Node<T>>>>,
     store: Arc<KVStore>,
 }
 
 impl<'de, T> NodeStore<T>
     where T: Serialize + Deserialize<'de> + Clone
 {
-    fn add_node(&mut self, node: &Node<T>) -> Result<String> {
+    fn add_node(&self, node: &Node<T>) -> Result<String> {
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf))?;
 
@@ -263,8 +337,9 @@ impl<'de, T> NodeStore<T>
     }
 
     /// Fetches and deserializes the node with the given key.
-    fn get_node(&mut self, key: &str) -> Result<Node<T>> {
-        let res = self.cache.get_mut(key).map(|n| n.clone());
+    fn get_node(&self, key: &str) -> Result<Node<T>> {
+        let mut cache = self.cache.lock().unwrap();
+        let res = cache.get_mut(key).map(|n| n.clone());
         match res {
             Some(node) => Ok(node.clone()),
             None => {
@@ -272,7 +347,7 @@ impl<'de, T> NodeStore<T>
                 let serialized = self.store.get(key)?;
                 let mut de = Deserializer::new(&serialized[..]);
                 let node: Node<T> = Deserialize::deserialize(&mut de)?;
-                self.cache.insert(key.to_string(), node.clone());
+                cache.insert(key.to_string(), node.clone());
                 Ok(node.clone())
             }
         }
@@ -284,44 +359,60 @@ mod tests {
     use super::*;
     use backends::mem::HeapStore;
     use itertools::assert_equal;
+    use index::NumComparator;
 
-    #[test]
-    fn test_build_and_iter() {
-        let store = Arc::new(HeapStore::new::<usize>());
+    fn test_tree<I: Clone + Iterator<Item = u64>>(iter: I) -> DurableTree<u64, NumComparator> {
+        let store = Arc::new(HeapStore::new::<u64>());
         let node_store = NodeStore {
-            cache: LruCache::new(1024),
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store.clone(),
         };
 
-        let iter = 0..10_000;
-        let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone());
+        DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator)
+    }
 
-        println!("Built tree.");
+    #[test]
+    fn test_build_and_iter() {
+        let iter = 0..10_000;
+        let tree = test_tree(iter.clone());
+
         assert_equal(tree.iter().map(|r| r.unwrap()), iter);
     }
 
     #[test]
-    #[ignore]
-    fn test_node_height() {
-        let store = Arc::new(HeapStore::new::<usize>());
-        let mut node_store = NodeStore {
-            cache: LruCache::new(1024),
-            store: store.clone(),
-        };
+    fn test_range_from() {
+        use std::ops::Range;
 
-        let iter = 0..10_000_000;
-        let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone());
+        let tree = test_tree(0..10_000);
+        let first_range: Range<u64> = 500..10_000;
+        assert_equal(tree.range_from(500).unwrap().map(|r| r.unwrap()), first_range);
+        let second_range: Range<u64> = 8459..10_000;
+        assert_equal(tree.range_from(8459).unwrap().map(|r| r.unwrap()), second_range);
+     }
 
-        let root_ref = match tree.root {
-            Link::DbKey(s) => s,
-            _ => unreachable!(),
-        };
+    // When new parents are implemented (comes into play circa 10e5-10e6 datoms) this should pass:
+    // #[test]
+    // #[ignore]
+    // fn test_node_height() {
+    //     let store = Arc::new(HeapStore::new::<u64>());
+    //     let mut node_store = NodeStore {
+    //         cache: LruCache::new(1024),
+    //         store: store.clone(),
+    //     };
 
-        let root_node_links: Vec<Link<usize>> = match node_store.get_node(&root_ref).unwrap() {
-            Node::Interior { links, .. } => links,
-            _ => unreachable!(),
-        };
+    //     let iter = 0..10_000_000;
+    //     let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone());
 
-        assert!(root_node_links.len() <= NODE_CAPACITY)
-    }
+    //     let root_ref = match tree.root {
+    //         Link::DbKey(s) => s,
+    //         _ => unreachable!(),
+    //     };
+
+    //     let root_node_links: Vec<Link<u64>> = match node_store.get_node(&root_ref).unwrap() {
+    //         Node::Interior { links, .. } => links,
+    //         _ => unreachable!(),
+    //     };
+
+    //     assert!(root_node_links.len() <= NODE_CAPACITY)
+    // }
 }
