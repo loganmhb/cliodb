@@ -517,14 +517,17 @@ mod tests {
         });
     }
 
-    #[cfg(not(debug_assertions))]
     fn test_db_large() -> Db {
         let store = HeapStore::new::<Record>();
         let conn = Conn::new(Arc::new(store)).unwrap();
-        let db = conn.db().unwrap();
         let n = 10_000;
 
-        for i in 0..n {
+        parse_tx("{db:ident name} {db:ident Hello}")
+            .map_err(|e| e.into())
+            .and_then(|tx| conn.transact(tx))
+            .unwrap();
+
+        let items = (0..n).into_iter().map(|i| {
             let a = if i % 23 <= 10 {
                 "name".to_string()
             } else {
@@ -533,11 +536,12 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            conn.transact( Tx { items: vec![
-                TxItem::Addition(Fact::new(Entity(i), a, v))
-            ]});
-        }
+            TxItem::Addition(Fact::new(Entity(i), a, v))
+        }).collect();
 
+        let _ = conn.transact(Tx{items}).unwrap();
+
+        let db = conn.db().unwrap();
         db
     }
 
@@ -555,13 +559,15 @@ mod tests {
         assert_eq!(rec.entity, Entity(0));
         assert_eq!(rec.value, Value::String("Bob".into()));
     }
-    // Don't run on 'cargo test', only 'cargo bench'
-    #[cfg(not(debug_assertions))]
-    #[bench]
-    fn large_db_simple(b: &mut Bencher) {
-        let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
-        let db = test_db_large();
 
-        b.iter(|| db.query(&query));
+    #[bench]
+    fn bench_large_db_simple(b: &mut Bencher) {
+        // Don't run on 'cargo test', only 'cargo bench'
+        if cfg!(not(debug_assertions)) {
+            let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
+            let db = test_db_large();
+
+            b.iter(|| db.query(&query).unwrap());
+        }
     }
 }
