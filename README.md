@@ -19,7 +19,7 @@ database, first run the transactor:
 
 Then, in a different terminal:
 
-    target/debug/logos-repl logos:sqlite:///path/to/sqlite/file.db
+    target/debug/logos-cli logos:sqlite:///path/to/sqlite/file.db
 
 Adding a fact looks like this:
 
