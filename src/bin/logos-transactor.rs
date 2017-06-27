@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use logos::db::{store_from_uri, TxClient};
 use logos::Tx;
-use logos::tx::Transactor;
+use logos::tx::{Transactor};
 
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
@@ -37,13 +37,8 @@ fn main() {
     let store = store_from_uri(uri).expect("could not use backing store");
     let addr = SocketAddr::from_str("127.0.0.1:10405").unwrap();
     store.set_transactor(&TxClient::Network(addr)).unwrap();
-    let mut transactor = Transactor::new(store.clone()).expect("could not create transactor");
 
-    if matches.is_present("create") {
-        // FIXME: Make sure the store is not already initialized.
-        logos::tx::create_db(store).expect("Failed to initialize store");
-        println!("Created new database at uri {}", uri);
-    }
+    let mut transactor = Transactor::new(store).expect("could not create transactor");
 
     let ctx = zmq::Context::new();
     let socket = ctx.socket(zmq::REP).unwrap();
@@ -58,6 +53,8 @@ fn main() {
 
         let mut msg_buf = Vec::new();
         report.serialize(&mut Serializer::new(&mut msg_buf)).unwrap();
-        socket.send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0).unwrap()
+        socket.send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0).unwrap();
+
+//        transactor.rebuild_indices().unwrap();
     }
 }

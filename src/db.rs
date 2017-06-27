@@ -2,12 +2,11 @@ use super::*;
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
-use index::IndexNode;
-use tx::Transactor;
-
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
-use uuid::Uuid;
+
+use durable_tree::NodeStore;
+use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TxClient {
@@ -32,20 +31,28 @@ impl Conn {
         let transactor = store.get_transactor()?;
         Ok(Conn { transactor, store })
     }
-}
 
-impl Conn {
     pub fn db(&self) -> Result<Db> {
         let contents: DbContents = self.store.get_contents()?;
 
-        let node_store = index::NodeStore::new(self.store.clone());
-        Ok(Db {
+        let node_store = NodeStore::new(self.store.clone());
+
+        let mut db = Db {
             store: self.store.clone(),
             idents: contents.idents,
             eav: Index::new(contents.eav, node_store.clone(), EAVT),
             ave: Index::new(contents.ave, node_store.clone(), AVET),
             aev: Index::new(contents.aev, node_store, AEVT),
-        })
+        };
+
+        // Read in latest transactions from the log.
+        for tx in self.store.get_txs(contents.last_indexed_tx)? {
+            for record in tx.records {
+                db = tx::add(&db, record)?;
+            }
+        }
+
+        Ok(db)
     }
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
@@ -66,9 +73,11 @@ impl Conn {
             }
             TxClient::Local => {
                 let store = self.store.clone();
-                let _ = TX_LOCK.lock()?;
-                let mut transactor = Transactor::new(store)?;
-                transactor.process_tx(tx)
+                #[allow(unused_variables)]
+                let l = TX_LOCK.lock()?;
+                let mut transactor = tx::Transactor::new(store)?;
+                let result = transactor.process_tx(tx);
+                result
             }
         }
     }
@@ -86,7 +95,7 @@ pub struct Db {
 
 impl Db {
     pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
-        let node_store = index::NodeStore::new(store.clone());
+        let node_store = NodeStore::new(store.clone());
         let db = Db {
             store: store,
             idents: contents.idents,
@@ -111,8 +120,7 @@ impl Db {
                     Some(attr) => {
                         let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
                         Ok(self.ave
-                               .iter_range_from(range_start..)?
-                               .map(|res| res.unwrap())
+                               .range_from(range_start)
                                .take_while(|rec| rec.attribute == attr && rec.value == v)
                                .collect())
                     }
@@ -131,8 +139,7 @@ impl Db {
                         let range_start =
                             Record::addition(e, attr, Value::String("".into()), Entity(0));
                         Ok(self.eav
-                               .iter_range_from(range_start..)?
-                               .map(|res| res.unwrap())
+                               .range_from(range_start)
                                .take_while(|rec| rec.entity == e && rec.attribute == attr)
                                .collect())
                     }
@@ -143,10 +150,9 @@ impl Db {
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
                 Ok(self.eav
-                    .iter()
-                    .map(|f| f.unwrap()) // FIXME this is not safe :D
-                    .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
-                    .collect())
+                       .iter()
+                       .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
+                       .collect())
             }
         }
     }
@@ -278,7 +284,8 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
 /// a process to locate the indexes, tx log, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContents {
-    pub next_id: u64,
+    pub next_id: i64,
+    pub last_indexed_tx: i64,
     pub idents: IdentMap,
     pub eav: String,
     pub ave: String,
@@ -298,27 +305,6 @@ pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
         }
         _ => Err("Invalid uri".into()),
     }
-}
-
-pub fn add_node<T>(store: &KVStore, node: IndexNode<T>) -> Result<String>
-    where T: Serialize
-{
-    let mut buf = Vec::new();
-    node.serialize(&mut Serializer::new(&mut buf))?;
-
-    let key: String = Uuid::new_v4().to_string();
-    store.set(&key, &buf)?;
-    Ok(key)
-}
-
-/// Fetches and deserializes the node with the given key.
-pub fn get_node<'de, T>(store: &KVStore, key: &str) -> Result<IndexNode<T>>
-    where T: Deserialize<'de> + Clone
-{
-    let serialized = store.get(key)?;
-    let mut de = Deserializer::new(&serialized[..]);
-    let node: IndexNode<T> = Deserialize::deserialize(&mut de)?;
-    Ok(node.clone())
 }
 
 #[cfg(test)]
@@ -343,10 +329,10 @@ mod tests {
         let store = HeapStore::new::<Record>();
         let conn = Conn::new(Arc::new(store)).unwrap();
         let records = vec![
-            Fact::new(Entity(0), "name", "Bob"),
-            Fact::new(Entity(1), "name", "John"),
-            Fact::new(Entity(2), "Hello", "World"),
-            Fact::new(Entity(1), "parent", Entity(0)),
+            Fact::new(Entity(10), "name", "Bob"),
+            Fact::new(Entity(11), "name", "John"),
+            Fact::new(Entity(12), "Hello", "World"),
+            Fact::new(Entity(11), "parent", Entity(10)),
         ];
 
         parse_tx("{db:ident name} {db:ident parent} {db:ident Hello}")
@@ -375,15 +361,16 @@ mod tests {
         expect_query_result(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                             QueryResult(vec![Var::new("a")],
                                         vec![
-            iter::once((Var::new("a"), Value::Entity(Entity(0))))
-                .collect(),
+            iter::once((Var::new("a"),
+                        Value::Entity(Entity(10))))
+                    .collect(),
         ]));
     }
 
     #[test]
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
-        expect_query_result(&parse_query("find ?a where (0 name ?a)").unwrap(),
+        expect_query_result(&parse_query("find ?a where (10 name ?a)").unwrap(),
                             QueryResult(vec![Var::new("a")],
                                         vec![
             iter::once((Var::new("a"),
@@ -414,13 +401,13 @@ mod tests {
                             QueryResult(vec![Var::new("a"), Var::new("b")],
                                         vec![
             vec![
-                (Var::new("a"), Value::Entity(Entity(0))),
+                (Var::new("a"), Value::Entity(Entity(10))),
                 (Var::new("b"), Value::String("Bob".into())),
             ]
                     .into_iter()
                     .collect(),
             vec![
-                (Var::new("a"), Value::Entity(Entity(1))),
+                (Var::new("a"), Value::Entity(Entity(11))),
                 (Var::new("b"), Value::String("John".into())),
             ]
                     .into_iter()
@@ -430,19 +417,18 @@ mod tests {
 
     #[test]
     fn test_query_explicit_join() {
-        // find ?b where (?a name Bob) (?b parent ?a)
         expect_query_result(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)")
                                  .unwrap(),
                             QueryResult(vec![Var::new("b")],
                                         vec![
-            iter::once((Var::new("b"), Value::Entity(Entity(1))))
-                .collect(),
+            iter::once((Var::new("b"),
+                        Value::Entity(Entity(11))))
+                    .collect(),
         ]));
     }
 
     #[test]
     fn test_query_implicit_join() {
-        // find ?c where (?a name Bob) (?b name ?c) (?b parent ?a)
         expect_query_result(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
                     .unwrap(),
                QueryResult(vec![Var::new("c")],
@@ -462,7 +448,7 @@ mod tests {
     #[test]
     fn test_retractions() {
         let conn = test_conn();
-        conn.transact(parse_tx("retract (1 parent 0)").unwrap())
+        conn.transact(parse_tx("retract (11 parent 10)").unwrap())
             .unwrap();
         let result = conn.db()
             .unwrap()
@@ -509,11 +495,12 @@ mod tests {
 
             conn.transact(Tx {
                               items: vec![
-                TxItem::Addition(Fact::new(entity,
-                                           "blah",
-                                           Value::Entity(entity))),
-            ],
-                          }).unwrap();
+                    TxItem::Addition(Fact::new(entity,
+                                               "blah",
+                                               Value::Entity(entity))),
+                ],
+                          })
+                .unwrap();
         });
     }
 
@@ -527,7 +514,7 @@ mod tests {
             .and_then(|tx| conn.transact(tx))
             .unwrap();
 
-        let items = (0..n).into_iter().map(|i| {
+        for i in (0..n).into_iter() {
             let a = if i % 23 <= 10 {
                 "name".to_string()
             } else {
@@ -536,13 +523,10 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            TxItem::Addition(Fact::new(Entity(i), a, v))
-        }).collect();
+            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] }).unwrap();
+        }
 
-        let _ = conn.transact(Tx{items}).unwrap();
-
-        let db = conn.db().unwrap();
-        db
+        conn.db().unwrap()
     }
 
 
@@ -556,7 +540,7 @@ mod tests {
             .unwrap();
         assert_eq!(matching.len(), 1);
         let rec = &matching[0];
-        assert_eq!(rec.entity, Entity(0));
+        assert_eq!(rec.entity, Entity(10));
         assert_eq!(rec.value, Value::String("Bob".into()));
     }
 

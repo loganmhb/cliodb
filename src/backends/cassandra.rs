@@ -1,4 +1,8 @@
-use {KVStore, Result};
+use {KVStore, Result, Record};
+use tx::TxRaw;
+
+use serde::{Serialize, Deserialize};
+use rmp_serde::{Serializer, Deserializer};
 
 use cdrs::connection_manager::ConnectionManager;
 use cdrs::query::QueryBuilder;
@@ -28,13 +32,23 @@ impl CassandraStore {
         let mut session = pool.get()?;
         // TODO: detect new Cass cluster + set up logos keyspace & logos_kvs table
         // real TODO: do that in a different `create-db` function
-        let create = QueryBuilder::new("CREATE TABLE IF NOT EXISTS logos.logos_kvs (
+        // FIXME: This seems to fail when the tables don't already exist.
+        let create_kvs = QueryBuilder::new("CREATE TABLE IF NOT EXISTS logos.logos_kvs (
             key text PRIMARY KEY,
             val blob
         )")
                 .finalize();
 
-        session.query(create, false, false)?;
+        session.query(create_kvs, false, false)?;
+
+        let create_txs = QueryBuilder::new("CREATE TABLE IF NOT EXISTS logos.logos_txs (
+            id bigint PRIMARY KEY,
+            val blob
+        )")
+                .finalize();
+
+        session.query(create_txs, false, false)?;
+
 
         Ok(store)
     }
@@ -77,13 +91,69 @@ impl KVStore for CassandraStore {
             Err(e) => Err(e.into()),
         }
     }
+
+    fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
+        let select_query = QueryBuilder::new("SELECT id, val FROM logos.logos_txs WHERE id >= ?")
+            .values(vec![Value::new_normal(from)])
+            .finalize();
+        let mut session = self.pool.get()?;
+        match session
+                  .query(select_query, false, false)
+                  .and_then(|r| r.get_body())
+                  .map(|b| b.into_rows()) {
+            Ok(Some(rows)) => {
+                let results = rows.iter().map(|row| {
+                    let v: Vec<u8> = row
+                    .r_by_name("val")
+                    .unwrap();
+                    let mut de = Deserializer::new(&v[..]);
+                    let records: Vec<Record> = Deserialize::deserialize(&mut de)?;
+
+                    let id: i64 = row.r_by_name("id").unwrap();
+                    Ok(TxRaw {
+                        id: id,
+                        records
+                    })
+                }).collect::<Vec<Result<TxRaw>>>();
+
+                // Convert Vec<Result<TxRaw>> to Result<Vec<TxRaw>>
+                let mut unwrapped_results = vec!();
+                for result in results {
+                    unwrapped_results.push(result?);
+                }
+
+                Ok(unwrapped_results)
+            }
+            Ok(None) => Ok(vec!()),
+            Err(e) => Err(e.into()),
+        }
+    }
+
+    fn add_tx(&self, tx: &TxRaw) -> Result<()> {
+        let mut serialized: Vec<u8> = vec!();
+        tx.records.serialize(&mut Serializer::new(&mut serialized))?;
+
+        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_txs (id, val) VALUES (?, ?)",)
+            .values(vec![
+                Value::new_normal(tx.id),
+                Value::from(Bytes::new(serialized)),
+            ])
+            .finalize();
+
+        let mut session = self.pool.get()?;
+
+        match session.query(insert_query, false, false) {
+            Ok(_) => Ok(()),
+            Err(e) => Err(e.into()),
+        }
+    }
 }
 
 #[cfg(test)]
 mod tests {
 
     use super::*;
-    use index::IndexNode;
+    use durable_tree::Node;
     use rmp_serde::{Serializer, Deserializer};
     use serde::{Serialize, Deserialize};
 
@@ -94,7 +164,7 @@ mod tests {
 
     #[test]
     fn test_get_and_set() {
-        let node = IndexNode::Leaf { items: vec!["hi there".to_string()] };
+        let node = Node::Leaf { items: vec!["hi there".to_string()] };
 
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf)).unwrap();

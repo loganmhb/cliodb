@@ -6,6 +6,7 @@ use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
 use db::{DbContents, TxClient};
+use tx::TxRaw;
 use super::Result;
 
 /// Abstracts over various backends; all that's required for a Logos
@@ -50,4 +51,6 @@ pub trait KVStore {
         self.set("transactor", &buf)
     }
 
+    fn add_tx(&self, raw_tx: &TxRaw) -> Result<()>;
+    fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>>;
 }

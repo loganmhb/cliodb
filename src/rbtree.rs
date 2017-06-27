@@ -1,5 +1,7 @@
 //! Persistent red-black trees
+use std::cmp::Ordering;
 use std::sync::Arc;
+use index::Comparator;
 
 #[derive(Debug, Clone, PartialEq, Eq, Copy)]
 enum Color {
@@ -21,19 +23,28 @@ struct RBTreeNode<T> {
 /// NOT enforce invariants in the base case (leaving that to `balance`
 /// in the recursive cases), and it does not color the root of the
 /// tree black.
-fn ins<T: Ord + Clone>(tree: Child<T>, x: T) -> Arc<RBTreeNode<T>> {
+fn ins<T, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
+    where T: Ord + Clone,
+          C: Comparator<Item = T> + Copy
+{
     match tree {
         Some(ref t) => {
-            if x < t.item {
-                balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x)),
-                                                     t.item.clone(),
-                                                     t.right.clone())))
-            } else if x == t.item {
-                t.clone() // duplicate
-            } else {
-                balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
-                                                     t.item.clone(),
-                                                     Some(ins(t.right.clone(), x)))))
+            match C::compare(&x, &t.item) {
+                Ordering::Less => {
+                    balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x, comparator)),
+                                                         t.item.clone(),
+                                                         t.right.clone())))
+                }
+                Ordering::Equal => {
+                    t.clone() // duplicate
+                }
+                Ordering::Greater => {
+                    balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
+                                                         t.item.clone(),
+                                                         Some(ins(t.right.clone(),
+                                                                  x,
+                                                                  comparator)))))
+                }
             }
         }
         None => Arc::new(RBTreeNode::new_red(None, x, None)),
@@ -134,8 +145,9 @@ fn balance<T: Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
 }
 
 #[derive(Debug, Clone, Default)]
-pub struct RBTree<T> {
+pub struct RBTree<T, C> {
     root: Child<T>,
+    comparator: C,
 }
 
 impl<T: Ord + Clone> RBTreeNode<T> {
@@ -165,12 +177,22 @@ impl<T: Ord + Clone> RBTreeNode<T> {
     }
 }
 
-impl<T: Ord + Clone> RBTree<T> {
-    fn insert(&self, x: T) -> RBTree<T> {
-        RBTree { root: Some(ins(self.root.clone(), x).make_black()) }
+impl<T: Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
+    pub fn new(comparator: C) -> RBTree<T, C> {
+        RBTree {
+            root: None,
+            comparator,
+        }
     }
 
-    fn iter(&self) -> Iter<T> {
+    pub fn insert(&self, x: T) -> RBTree<T, C> {
+        RBTree {
+            root: Some(ins(self.root.clone(), x, self.comparator).make_black()),
+            comparator: self.comparator,
+        }
+    }
+
+    pub fn iter(&self) -> Iter<T> {
         let mut stack = Vec::new();
         let mut node = self.root.clone();
 
@@ -184,23 +206,27 @@ impl<T: Ord + Clone> RBTree<T> {
         Iter { stack }
     }
 
-    fn range_from(&self, start: T) -> Iter<T> {
+    pub fn range_from(&self, start: T) -> Iter<T> {
         let mut stack = Vec::new();
         let mut node = self.root.clone();
 
         while let Some(node_ptr) = node.clone() {
-            if node_ptr.item > start {
-                node = node_ptr.left.clone();
-                stack.push(node_ptr);
-                continue;
-            } else if node_ptr.item == start {
-                stack.push(node_ptr);
-                break;
-            } else {
-                // This node is too small and should be skipped, but
-                // we might still need to start in its right subtree.
-                node = node_ptr.right.clone();
-                continue;
+            match C::compare(&node_ptr.item, &start) {
+                Ordering::Greater => {
+                    node = node_ptr.left.clone();
+                    stack.push(node_ptr);
+                    continue;
+                }
+                Ordering::Equal => {
+                    stack.push(node_ptr);
+                    break;
+                }
+                Ordering::Less => {
+                    // This node is too small and should be skipped, but
+                    // we might still need to start in its right subtree.
+                    node = node_ptr.right.clone();
+                    continue;
+                }
             }
         }
 
@@ -238,6 +264,7 @@ impl<T: Clone> Iterator for Iter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use index::NumComparator;
 
     fn enumerate_tree<T: Clone>(tree: Child<T>, mut vec: &mut Vec<T>) {
         match tree {
@@ -266,7 +293,7 @@ mod tests {
         assert!(!needs_balancing(&with_red_child));
     }
 
-    fn thousand_tree() -> RBTree<usize> {
+    fn thousand_tree() -> RBTree<i64, NumComparator> {
         let mut t = RBTree::default();
 
         for i in 0..1000 {
@@ -282,6 +309,35 @@ mod tests {
         let mut enumerated = vec![];
         enumerate_tree(t.root.clone(), &mut enumerated);
         assert_eq!(enumerated, (0..1000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_pluggable_comparator() {
+        use std::cmp::Ordering;
+        use itertools::assert_equal;
+
+        #[derive(Clone, Default, Copy)]
+        struct RevComparator;
+
+        impl Comparator for RevComparator {
+            type Item = i64;
+
+            fn compare(a: &i64, b: &i64) -> Ordering {
+                b.cmp(a) // backwards!
+            }
+        }
+
+        let mut t: RBTree<i64, RevComparator> = RBTree::default();
+
+        for i in 0..1000 {
+            t = t.insert(i);
+        }
+
+        let mut reversed: Vec<i64> = (0..1000).collect();
+        reversed.reverse();
+
+        assert_equal(t.iter(), reversed.into_iter())
+
     }
 
     #[test]
