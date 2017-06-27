@@ -11,6 +11,7 @@ pub struct Transactor {
     current_db: Db,
     store: Arc<KVStore>,
     latest_tx: i64,
+    last_indexed_tx: i64
 }
 
 #[derive(Clone, Debug)]
@@ -47,6 +48,7 @@ impl Transactor {
                     next_id,
                     store: store.clone(),
                     latest_tx: latest_tx,
+                    last_indexed_tx: last_id,
                     current_db: db
                 })
             },
@@ -55,6 +57,7 @@ impl Transactor {
                     next_id: 3,
                     store: store.clone(),
                     latest_tx: 0,
+                    last_indexed_tx: -1,
                     current_db: create_db(store)?
                 };
 
@@ -88,7 +91,7 @@ impl Transactor {
             }
         };
 
-        // FIXME: incorrect
+        // FIXME: Make all this async-safe.
         save_contents(&new_db, self.next_id, self.latest_tx)?;
         self.current_db = new_db;
 
@@ -153,7 +156,7 @@ impl Transactor {
 
         self.store.add_tx(&raw_tx)?;
         self.latest_tx = raw_tx.id;
-        save_contents(&db_after, self.next_id, self.latest_tx)?;
+        save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
         self.current_db = db_after;
         Ok(TxReport::Success { new_entities })
     }

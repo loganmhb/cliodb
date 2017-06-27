@@ -41,9 +41,12 @@ impl CassandraStore {
 
         session.query(create_kvs, false, false)?;
 
+        // tx is a dummy field to force the whole tx log to be stored in one cassandra partition
         let create_txs = QueryBuilder::new("CREATE TABLE IF NOT EXISTS logos.logos_txs (
-            id bigint PRIMARY KEY,
-            val blob
+            id bigint,
+            val blob,
+            tx text,
+            PRIMARY KEY (tx, id)
         )")
                 .finalize();
 
@@ -93,7 +96,7 @@ impl KVStore for CassandraStore {
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
-        let select_query = QueryBuilder::new("SELECT id, val FROM logos.logos_txs WHERE id >= ?")
+        let select_query = QueryBuilder::new("SELECT id, val FROM logos.logos_txs WHERE tx = 'tx' and id > ?")
             .values(vec![Value::new_normal(from)])
             .finalize();
         let mut session = self.pool.get()?;
@@ -130,7 +133,7 @@ impl KVStore for CassandraStore {
         let mut serialized: Vec<u8> = vec![];
         tx.records.serialize(&mut Serializer::new(&mut serialized))?;
 
-        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_txs (id, val) VALUES (?, ?)")
+        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_txs (id, val, tx) VALUES (?, ?, 'tx')")
             .values(vec![
                 Value::new_normal(tx.id),
                 Value::from(Bytes::new(serialized)),

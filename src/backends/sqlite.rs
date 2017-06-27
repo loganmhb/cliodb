@@ -52,7 +52,7 @@ impl KVStore for SqliteStore {
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
-        let mut stmt = self.conn.prepare("SELECT id, val FROM logos_txs WHERE id >= ?1")
+        let mut stmt = self.conn.prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
             .unwrap();
         let results: Vec<Result<TxRaw>> = stmt.query_map(&[&from], |ref row| {
             let bytes: Vec<u8> = row.get(1);
