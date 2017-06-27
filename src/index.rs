@@ -88,13 +88,11 @@ pub struct NumComparator;
 
 #[cfg(test)]
 impl Comparator for NumComparator {
-    type Item = u64;
+    type Item = i64;
 
-    fn compare(a: &u64, b: &u64) -> Ordering {
+    fn compare(a: &i64, b: &i64) -> Ordering {
         a.cmp(b)
     }
-
-
 }
 
 #[cfg(test)]
@@ -108,7 +106,7 @@ mod tests {
     fn test_rebuild() {
         use durable_tree::Node;
 
-        let store = HeapStore::new::<u64>();
+        let store = HeapStore::new::<i64>();
         let ns = NodeStore::new(Arc::new(store));
         let root_node = Node::Interior {
             keys: vec!(),

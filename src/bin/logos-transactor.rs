@@ -55,6 +55,6 @@ fn main() {
         report.serialize(&mut Serializer::new(&mut msg_buf)).unwrap();
         socket.send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0).unwrap();
 
-        transactor.rebuild_indices().unwrap();
+//        transactor.rebuild_indices().unwrap();
     }
 }

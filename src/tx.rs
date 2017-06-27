@@ -7,20 +7,54 @@ use db::{Db, DbContents};
 use {Tx, TxReport, Entity, Record, Value, TxItem, Result, IdentMap};
 
 pub struct Transactor {
-    next_id: u64,
+    next_id: i64,
     current_db: Db,
+    store: Arc<KVStore>,
+    latest_tx: i64,
+}
+
+#[derive(Clone, Debug)]
+pub struct TxRaw {
+    pub id: i64,
+    pub records: Vec<Record>
 }
 
 impl Transactor {
+    /// Creates a transactor by retrieving the database metadata from
+    /// the store (if it exists already) or creating the metadata for
+    /// a new database (if no metadata is present in the store).
     pub fn new(store: Arc<KVStore>) -> Result<Transactor> {
         match store.get_contents() {
-            Ok(contents) => Ok(Transactor {
-                next_id: contents.next_id,
-                current_db: Db::new(contents, store.clone()),
-            }),
+            Ok(contents) => {
+                let mut next_id = contents.next_id;
+                let last_id = contents.last_indexed_tx;
+                let mut latest_tx = last_id;
+                let mut db = Db::new(contents, store.clone());
+                let novelty = store.get_txs(last_id)?;
+                for tx in novelty {
+                    for record in tx.records {
+                        let Entity(e) = record.entity;
+                        if e > next_id {
+                            next_id = e + 1;
+                        }
+                        db = add(&db, record)?;
+                    }
+
+                    latest_tx = tx.id;
+                }
+
+                Ok(Transactor {
+                    next_id,
+                    store: store.clone(),
+                    latest_tx: latest_tx,
+                    current_db: db
+                })
+            },
             Err(_) => {
                 let mut tx = Transactor {
                     next_id: 3,
+                    store: store.clone(),
+                    latest_tx: 0,
                     current_db: create_db(store)?
                 };
 
@@ -30,6 +64,8 @@ impl Transactor {
         }
     }
 
+    /// Builds a new set of durable indices by combining the existing
+    /// durable indices and the in-memory indices.
     pub fn rebuild_indices(&mut self) -> Result<()> {
         let new_db = {
             let Db {
@@ -52,7 +88,8 @@ impl Transactor {
             }
         };
 
-        save_contents(&new_db, self.next_id)?;
+        // FIXME: incorrect
+        save_contents(&new_db, self.next_id, self.latest_tx)?;
         self.current_db = new_db;
 
         Ok(())
@@ -60,14 +97,29 @@ impl Transactor {
 
     pub fn process_tx(&mut self, tx: Tx) -> Result<TxReport> {
         let mut new_entities = vec![];
-        let tx_entity = Entity(self.get_id());
+        let tx_id = self.get_id();
+        let tx_entity = Entity(tx_id);
+        let mut raw_tx = TxRaw { id: tx_id, records: vec!() };
+
+        // This is a macro and not a helper function or closure
+        // because it's inconvenient to mutably borrow raw_tx and then
+        // drop it in time.
+        macro_rules! add {
+            ( $db:expr, $rec:expr ) => {
+                {
+                    let rec: Record = $rec.clone();
+                    raw_tx.records.push(rec.clone());
+                    add($db, rec)
+                }
+            }
+        }
+
         let attr = self.current_db
             .idents
             .get_entity("db:txInstant".to_string())
             .unwrap();
         let mut db_after =
-            add(&self.current_db,
-                Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity))?;
+            add!(&self.current_db, Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity))?;
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => {
@@ -75,8 +127,7 @@ impl Transactor {
                         Some(attr) => attr,
                         None => return Ok(TxReport::Failure("invalid attribute".into())),
                     };
-                    db_after = add(&db_after,
-                                   Record::addition(f.entity, attr, f.value, tx_entity))?;
+                    db_after = add!(&self.current_db, Record::addition(f.entity, attr, f.value, tx_entity))?;
                 }
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.get_id());
@@ -86,7 +137,7 @@ impl Transactor {
                             None => return Ok(TxReport::Failure("invalid attribute".into())),
                         };
 
-                        db_after = add(&db_after, Record::addition(entity, attr, v, tx_entity))?;
+                        db_after = add!(&self.current_db, Record::addition(entity, attr, v, tx_entity))?;
                     }
                     new_entities.push(entity);
                 }
@@ -95,18 +146,19 @@ impl Transactor {
                         Some(attr) => attr,
                         None => return Ok(TxReport::Failure("invalid attribute".into())),
                     };
-                    db_after = add(&db_after,
-                                   Record::retraction(f.entity, attr, f.value, tx_entity))?;
+                    db_after = add!(&self.current_db, Record::retraction(f.entity, attr, f.value, tx_entity))?;
                 }
             }
         }
 
-        save_contents(&db_after, self.next_id)?;
+        self.store.add_tx(&raw_tx)?;
+        self.latest_tx = raw_tx.id;
+        save_contents(&db_after, self.next_id, self.latest_tx)?;
         self.current_db = db_after;
         Ok(TxReport::Success { new_entities })
     }
 
-    fn get_id(&mut self) -> u64 {
+    fn get_id(&mut self) -> i64 {
         let id = self.next_id;
         self.next_id += 1;
         id
@@ -116,9 +168,10 @@ impl Transactor {
 /// Saves the db metadata (index root nodes, entity ID state) to
 /// storage, when implemented by the storage backend (i.e. when
 /// not using in-memory storage).
-fn save_contents(db: &Db, next_id: u64) -> Result<()> {
+fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
     let contents = DbContents {
         next_id,
+        last_indexed_tx,
         idents: db.idents.clone(),
         eav: db.eav.durable_root(),
         aev: db.aev.durable_root(),
@@ -129,7 +182,7 @@ fn save_contents(db: &Db, next_id: u64) -> Result<()> {
     Ok(())
 }
 
-fn add(db: &Db, record: Record) -> Result<Db> {
+pub fn add(db: &Db, record: Record) -> Result<Db> {
     let new_eav = db.eav.insert(record.clone());
     let new_ave = db.ave.insert(record.clone());
     let new_aev = db.aev.insert(record.clone());
@@ -168,6 +221,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
 
         let contents = DbContents {
             next_id: 0,
+            last_indexed_tx: 0,
             idents: IdentMap::default(),
             eav: eav_root,
             ave: ave_root,

@@ -1,4 +1,5 @@
 //! Persistent red-black trees
+use std::cmp::Ordering;
 use std::sync::Arc;
 use index::Comparator;
 
@@ -28,16 +29,22 @@ fn ins<T, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
 {
     match tree {
         Some(ref t) => {
-            if x < t.item {
-                balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x, comparator)),
-                                                     t.item.clone(),
-                                                     t.right.clone())))
-            } else if x == t.item {
-                t.clone() // duplicate
-            } else {
-                balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
-                                                     t.item.clone(),
-                                                     Some(ins(t.right.clone(), x, comparator)))))
+            match C::compare(&x, &t.item) {
+                Ordering::Less => {
+                    balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x, comparator)),
+                                                         t.item.clone(),
+                                                         t.right.clone())))
+                }
+                Ordering::Equal => {
+                    t.clone() // duplicate
+                }
+                Ordering::Greater => {
+                    balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
+                                                         t.item.clone(),
+                                                         Some(ins(t.right.clone(),
+                                                                  x,
+                                                                  comparator)))))
+                }
             }
         }
         None => Arc::new(RBTreeNode::new_red(None, x, None)),
@@ -174,14 +181,14 @@ impl<T: Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
     pub fn new(comparator: C) -> RBTree<T, C> {
         RBTree {
             root: None,
-            comparator
+            comparator,
         }
     }
 
     pub fn insert(&self, x: T) -> RBTree<T, C> {
         RBTree {
             root: Some(ins(self.root.clone(), x, self.comparator).make_black()),
-            comparator: self.comparator
+            comparator: self.comparator,
         }
     }
 
@@ -204,18 +211,22 @@ impl<T: Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
         let mut node = self.root.clone();
 
         while let Some(node_ptr) = node.clone() {
-            if node_ptr.item > start {
-                node = node_ptr.left.clone();
-                stack.push(node_ptr);
-                continue;
-            } else if node_ptr.item == start {
-                stack.push(node_ptr);
-                break;
-            } else {
-                // This node is too small and should be skipped, but
-                // we might still need to start in its right subtree.
-                node = node_ptr.right.clone();
-                continue;
+            match C::compare(&node_ptr.item, &start) {
+                Ordering::Greater => {
+                    node = node_ptr.left.clone();
+                    stack.push(node_ptr);
+                    continue;
+                }
+                Ordering::Equal => {
+                    stack.push(node_ptr);
+                    break;
+                }
+                Ordering::Less => {
+                    // This node is too small and should be skipped, but
+                    // we might still need to start in its right subtree.
+                    node = node_ptr.right.clone();
+                    continue;
+                }
             }
         }
 
@@ -282,7 +293,7 @@ mod tests {
         assert!(!needs_balancing(&with_red_child));
     }
 
-    fn thousand_tree() -> RBTree<u64, NumComparator> {
+    fn thousand_tree() -> RBTree<i64, NumComparator> {
         let mut t = RBTree::default();
 
         for i in 0..1000 {
@@ -298,6 +309,35 @@ mod tests {
         let mut enumerated = vec![];
         enumerate_tree(t.root.clone(), &mut enumerated);
         assert_eq!(enumerated, (0..1000).collect::<Vec<_>>());
+    }
+
+    #[test]
+    fn test_pluggable_comparator() {
+        use std::cmp::Ordering;
+        use itertools::assert_equal;
+
+        #[derive(Clone, Default, Copy)]
+        struct RevComparator;
+
+        impl Comparator for RevComparator {
+            type Item = i64;
+
+            fn compare(a: &i64, b: &i64) -> Ordering {
+                b.cmp(a) // backwards!
+            }
+        }
+
+        let mut t: RBTree<i64, RevComparator> = RBTree::default();
+
+        for i in 0..1000 {
+            t = t.insert(i);
+        }
+
+        let mut reversed: Vec<i64> = (0..1000).collect();
+        reversed.reverse();
+
+        assert_equal(t.iter(), reversed.into_iter())
+
     }
 
     #[test]

@@ -107,4 +107,4 @@ impl From<Entity> for Value {
 }
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord)]
-pub struct Entity(pub u64);
+pub struct Entity(pub i64);

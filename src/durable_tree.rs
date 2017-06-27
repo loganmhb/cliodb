@@ -372,8 +372,8 @@ mod tests {
     use itertools::assert_equal;
     use index::NumComparator;
 
-    fn test_tree<I: Clone + Iterator<Item = u64>>(iter: I) -> DurableTree<u64, NumComparator> {
-        let store = Arc::new(HeapStore::new::<u64>());
+    fn test_tree<I: Clone + Iterator<Item = i64>>(iter: I) -> DurableTree<i64, NumComparator> {
+        let store = Arc::new(HeapStore::new::<i64>());
         let node_store = NodeStore::new(store.clone());
 
         DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator)
@@ -392,9 +392,9 @@ mod tests {
         use std::ops::Range;
 
         let tree = test_tree(0..10_000);
-        let first_range: Range<u64> = 500..10_000;
+        let first_range: Range<i64> = 500..10_000;
         assert_equal(tree.range_from(500).unwrap().map(|r| r.unwrap()), first_range);
-        let second_range: Range<u64> = 8459..10_000;
+        let second_range: Range<i64> = 8459..10_000;
         assert_equal(tree.range_from(8459).unwrap().map(|r| r.unwrap()), second_range);
      }
 
@@ -402,7 +402,7 @@ mod tests {
     // #[test]
     // #[ignore]
     // fn test_node_height() {
-    //     let store = Arc::new(HeapStore::new::<u64>());
+    //     let store = Arc::new(HeapStore::new::<i64>());
     //     let mut node_store = NodeStore {
     //         cache: LruCache::new(1024),
     //         store: store.clone(),
@@ -416,7 +416,7 @@ mod tests {
     //         _ => unreachable!(),
     //     };
 
-    //     let root_node_links: Vec<Link<u64>> = match node_store.get_node(&root_ref).unwrap() {
+    //     let root_node_links: Vec<Link<i64>> = match node_store.get_node(&root_ref).unwrap() {
     //         Node::Interior { links, .. } => links,
     //         _ => unreachable!(),
     //     };

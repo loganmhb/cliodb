@@ -6,7 +6,7 @@ use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
 use durable_tree::NodeStore;
-use tx::Transactor;
+use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum TxClient {
@@ -36,13 +36,23 @@ impl Conn {
         let contents: DbContents = self.store.get_contents()?;
 
         let node_store = NodeStore::new(self.store.clone());
-        Ok(Db {
-               store: self.store.clone(),
-               idents: contents.idents,
-               eav: Index::new(contents.eav, node_store.clone(), EAVT),
-               ave: Index::new(contents.ave, node_store.clone(), AVET),
-               aev: Index::new(contents.aev, node_store, AEVT),
-           })
+
+        let mut db = Db {
+            store: self.store.clone(),
+            idents: contents.idents,
+            eav: Index::new(contents.eav, node_store.clone(), EAVT),
+            ave: Index::new(contents.ave, node_store.clone(), AVET),
+            aev: Index::new(contents.aev, node_store, AEVT),
+        };
+
+        // Read in latest transactions from the log.
+        for tx in self.store.get_txs(contents.last_indexed_tx)? {
+            for record in tx.records {
+                db = tx::add(&db, record)?;
+            }
+        }
+
+        Ok(db)
     }
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
@@ -63,10 +73,10 @@ impl Conn {
             }
             TxClient::Local => {
                 let store = self.store.clone();
-                let _ = TX_LOCK.lock()?;
-                let mut transactor = Transactor::new(store)?;
+                #[allow(unused_variables)]
+                let l = TX_LOCK.lock()?;
+                let mut transactor = tx::Transactor::new(store)?;
                 let result = transactor.process_tx(tx);
-                transactor.rebuild_indices()?;
                 result
             }
         }
@@ -140,9 +150,9 @@ impl Db {
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
                 Ok(self.eav
-                    .iter()
-                    .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
-                    .collect())
+                       .iter()
+                       .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
+                       .collect())
             }
         }
     }
@@ -274,7 +284,8 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
 /// a process to locate the indexes, tx log, etc.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DbContents {
-    pub next_id: u64,
+    pub next_id: i64,
+    pub last_indexed_tx: i64,
     pub idents: IdentMap,
     pub eav: String,
     pub ave: String,
@@ -350,8 +361,9 @@ mod tests {
         expect_query_result(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
                             QueryResult(vec![Var::new("a")],
                                         vec![
-            iter::once((Var::new("a"), Value::Entity(Entity(10))))
-                .collect(),
+            iter::once((Var::new("a"),
+                        Value::Entity(Entity(10))))
+                    .collect(),
         ]));
     }
 
@@ -409,8 +421,9 @@ mod tests {
                                  .unwrap(),
                             QueryResult(vec![Var::new("b")],
                                         vec![
-            iter::once((Var::new("b"), Value::Entity(Entity(11))))
-                .collect(),
+            iter::once((Var::new("b"),
+                        Value::Entity(Entity(11))))
+                    .collect(),
         ]));
     }
 
@@ -495,7 +508,6 @@ mod tests {
     fn test_db_large() -> Db {
         let store = HeapStore::new::<Record>();
         let conn = Conn::new(Arc::new(store)).unwrap();
-        let db = conn.db().unwrap();
         let n = 10_000;
 
         for i in 0..n {
@@ -507,10 +519,10 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] });
+            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] }).unwrap();
         }
 
-        db
+        conn.db().unwrap()
     }
 
 
