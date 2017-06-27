@@ -102,38 +102,35 @@ impl KVStore for CassandraStore {
                   .and_then(|r| r.get_body())
                   .map(|b| b.into_rows()) {
             Ok(Some(rows)) => {
-                let results = rows.iter().map(|row| {
-                    let v: Vec<u8> = row
-                    .r_by_name("val")
-                    .unwrap();
-                    let mut de = Deserializer::new(&v[..]);
-                    let records: Vec<Record> = Deserialize::deserialize(&mut de)?;
+                let results = rows.iter()
+                    .map(|row| {
+                             let v: Vec<u8> = row.r_by_name("val").unwrap();
+                             let mut de = Deserializer::new(&v[..]);
+                             let records: Vec<Record> = Deserialize::deserialize(&mut de)?;
 
-                    let id: i64 = row.r_by_name("id").unwrap();
-                    Ok(TxRaw {
-                        id: id,
-                        records
-                    })
-                }).collect::<Vec<Result<TxRaw>>>();
+                             let id: i64 = row.r_by_name("id").unwrap();
+                             Ok(TxRaw { id: id, records })
+                         })
+                    .collect::<Vec<Result<TxRaw>>>();
 
                 // Convert Vec<Result<TxRaw>> to Result<Vec<TxRaw>>
-                let mut unwrapped_results = vec!();
+                let mut unwrapped_results = vec![];
                 for result in results {
                     unwrapped_results.push(result?);
                 }
 
                 Ok(unwrapped_results)
             }
-            Ok(None) => Ok(vec!()),
+            Ok(None) => Ok(vec![]),
             Err(e) => Err(e.into()),
         }
     }
 
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
-        let mut serialized: Vec<u8> = vec!();
+        let mut serialized: Vec<u8> = vec![];
         tx.records.serialize(&mut Serializer::new(&mut serialized))?;
 
-        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_txs (id, val) VALUES (?, ?)",)
+        let insert_query = QueryBuilder::new("INSERT INTO logos.logos_txs (id, val) VALUES (?, ?)")
             .values(vec![
                 Value::new_normal(tx.id),
                 Value::from(Bytes::new(serialized)),
@@ -158,11 +155,13 @@ mod tests {
     use serde::{Serialize, Deserialize};
 
     #[test]
+    #[ignore]
     fn can_create() {
         let _: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
     }
 
     #[test]
+    #[ignore]
     fn test_get_and_set() {
         let node = Node::Leaf { items: vec!["hi there".to_string()] };
 
