@@ -7,15 +7,16 @@ concurrent reads while writes are serialized through a transactor.
 
 # Running
 
-You will need a recent nightly version of Rust to compile the project.
+You will need a recent nightly version of Rust to compile the project,
+as well as ZeroMQ 3.2 or newer. (On recent Debian or Ubuntu releases,
+you should be able to install `libzmq3-dev`.) Then:
 
     cargo build
 
 To start a repl where you can add facts and query a SQLite-backed
 database, first run the transactor:
 
-    # The --create flag will initialize a new DB.
-    target/debug/logos-transactor --create --uri logos:sqlite:///path/to/sqlite/file.db
+    target/debug/logos-transactor --uri logos:sqlite:///path/to/sqlite/file.db
 
 Then, in a different terminal:
 
