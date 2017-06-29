@@ -23,7 +23,7 @@ struct RBTreeNode<T> {
 /// NOT enforce invariants in the base case (leaving that to `balance`
 /// in the recursive cases), and it does not color the root of the
 /// tree black.
-fn ins<T, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
+fn ins<T: ::std::fmt::Debug, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
     where T: Ord + Clone,
           C: Comparator<Item = T> + Copy
 {
@@ -31,19 +31,21 @@ fn ins<T, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
         Some(ref t) => {
             match C::compare(&x, &t.item) {
                 Ordering::Less => {
-                    balance(Arc::new(RBTreeNode::new_red(Some(ins(t.left.clone(), x, comparator)),
-                                                         t.item.clone(),
-                                                         t.right.clone())))
+                    balance(Arc::new(RBTreeNode::new(t.color,
+                                                     Some(ins(t.left.clone(), x, comparator)),
+                                                     t.item.clone(),
+                                                     t.right.clone())))
                 }
                 Ordering::Equal => {
                     t.clone() // duplicate
                 }
                 Ordering::Greater => {
-                    balance(Arc::new(RBTreeNode::new_red(t.left.clone(),
-                                                         t.item.clone(),
-                                                         Some(ins(t.right.clone(),
-                                                                  x,
-                                                                  comparator)))))
+                    balance(Arc::new(RBTreeNode::new(t.color,
+                                                     t.left.clone(),
+                                                     t.item.clone(),
+                                                     Some(ins(t.right.clone(),
+                                                              x,
+                                                              comparator)))))
                 }
             }
         }
@@ -58,7 +60,7 @@ fn has_red_child<T>(tree: &RBTreeNode<T>) -> bool {
 
 /// A tree needs balancing if it is a black node which has a red child
 /// which itself has a red child.
-fn needs_balancing<T>(tree: &RBTreeNode<T>) -> bool {
+fn needs_balancing<T: ::std::fmt::Debug>(tree: &RBTreeNode<T>) -> bool {
     tree.color == Color::Black && has_red_child(tree) &&
     (tree.left.as_ref().map_or(false, |t| has_red_child(&*t)) ||
      tree.right.as_ref().map_or(false, |t| has_red_child(&*t)))
@@ -68,7 +70,7 @@ fn needs_balancing<T>(tree: &RBTreeNode<T>) -> bool {
 /// balanced equivalent tree, per Okasaki
 /// (http://www.westpoint.edu/eecs/SiteAssets/SitePages/Faculty%20Publication
 ///  %20Documents/Okasaki/jfp99redblack.pdf).
-fn balance<T: Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
+fn balance<T: ::std::fmt::Debug + Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
     if needs_balancing(&tree) {
         if tree.left.clone().map(|ref c| c.color) == Some(Color::Red) &&
            has_red_child(&*tree.left.clone().unwrap()) {
@@ -140,56 +142,67 @@ fn balance<T: Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
             }
         }
     } else {
-        tree.clone()
+        tree
     }
 }
 
 #[derive(Debug, Clone, Default)]
 pub struct RBTree<T, C> {
     root: Child<T>,
+    size: usize,
     comparator: C,
 }
 
-impl<T: Ord + Clone> RBTreeNode<T> {
-    fn new_black(left: Child<T>, item: T, right: Child<T>) -> RBTreeNode<T> {
+impl<T: ::std::fmt::Debug + Ord + Clone> RBTreeNode<T> {
+    fn new(color: Color, left: Child<T>, item: T, right: Child<T>) -> RBTreeNode<T> {
         RBTreeNode {
-            color: Color::Black,
+            color,
             left,
             right,
             item,
         }
     }
 
+    fn new_black(left: Child<T>, item: T, right: Child<T>) -> RBTreeNode<T> {
+        RBTreeNode::new(Color::Black, left, item, right)
+    }
+
     fn new_red(left: Child<T>, item: T, right: Child<T>) -> RBTreeNode<T> {
-        RBTreeNode {
-            color: Color::Red,
-            left,
-            right,
-            item,
-        }
+        RBTreeNode::new(Color::Red, left, item, right)
     }
 
     fn make_black(&self) -> Arc<RBTreeNode<T>> {
         Arc::new(RBTreeNode {
                      color: Color::Black,
-                     ..self.clone()
+                     left: self.left.clone(),
+                     right: self.right.clone(),
+                     item: self.item.clone(),
                  })
     }
 }
 
-impl<T: Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
+impl<T: ::std::fmt::Debug + Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<T, C> {
     pub fn new(comparator: C) -> RBTree<T, C> {
         RBTree {
             root: None,
+            size: 0,
             comparator,
         }
     }
 
+    pub fn size(&self) -> usize {
+        self.size
+    }
+
     pub fn insert(&self, x: T) -> RBTree<T, C> {
-        RBTree {
-            root: Some(ins(self.root.clone(), x, self.comparator).make_black()),
+        let tree = RBTree {
+            root: Some(ins(self.root.clone(), x, self.comparator)
+                       .make_black()
+            ),
+            size: self.size + 1,
             comparator: self.comparator,
-        }
+        };
+        tree
     }
 
     pub fn iter(&self) -> Iter<T> {
@@ -347,5 +360,68 @@ mod tests {
         assert_eq!((0..1000).collect::<Vec<_>>(), t.iter().collect::<Vec<_>>());
         assert_eq!(t.range_from(500).collect::<Vec<_>>(),
                    (500..1000).collect::<Vec<_>>());
+    }
+
+    fn assert_invariants<T>(root: &RBTreeNode<T>) {
+        // Root must be black
+        assert_eq!(root.color, Color::Black);
+
+        // No red node with a red child
+        fn assert_color_invariants<T>(node: &RBTreeNode<T>) {
+            match node.left {
+                Some(ref left) => assert_color_invariants(&left),
+                None => ()
+            }
+
+            match node.right {
+                Some(ref right) => assert_color_invariants(&right),
+                None => ()
+            }
+
+            match node.color {
+                Color::Red => assert!(!has_red_child(&node)),
+                _ => ()
+            }
+        }
+
+        assert_color_invariants(&root);
+
+        // All branches have the same number of black nodes
+        // (DFS saving the black depth of the first leaf seen)
+        fn check_black_depth<T>(node: &RBTreeNode<T>) -> usize {
+            let child_depth = match (&node.right, &node.left) {
+                (&Some(ref right), &Some(ref left)) => {
+                    let child_depth = check_black_depth(&right);
+                    assert_eq!(child_depth, check_black_depth(&left));
+                    child_depth
+                },
+                (&None, &Some(ref child)) | (&Some(ref child), &None) => {
+                    let child_depth = check_black_depth(&child);
+                    assert_eq!(child_depth, 0);
+                    child_depth
+                },
+                _ => 0
+            };
+
+            match node.color {
+                Color::Black => 1 + child_depth,
+                Color::Red => child_depth
+            }
+        }
+
+        check_black_depth(&root);
+    }
+
+    #[test]
+    fn test_large_tree() {
+        // This overflowed the stack when there was a bug that caused the tree
+        // not to balance properly.
+        let mut t: RBTree<i64, NumComparator> = RBTree::default();
+
+        for i in 1..100000 {
+            t = t.insert(i);
+        }
+
+        assert_invariants(&t.root.unwrap());
     }
 }

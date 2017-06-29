@@ -36,6 +36,10 @@ impl<'de, T, C> Index<T, C>
         }
     }
 
+    pub fn mem_index_size(&self) -> usize {
+        self.mem_index.size()
+    }
+
     pub fn range_from(&self, range_start: T) -> impl Iterator<Item = T> {
         self.mem_index
             .range_from(range_start.clone())

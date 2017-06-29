@@ -158,6 +158,12 @@ impl Transactor {
         self.latest_tx = raw_tx.id;
         save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
         self.current_db = db_after;
+
+        if self.current_db.mem_index_size() > 10000 {
+            println!("Rebuilding indices...");
+            self.rebuild_indices()?;
+        }
+
         Ok(TxReport::Success { new_entities })
     }
 

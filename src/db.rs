@@ -107,6 +107,10 @@ impl Db {
         db
     }
 
+    pub fn mem_index_size(&self) -> usize {
+        self.eav.mem_index_size()
+    }
+
     fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
         let expanded = clause.substitute(binding)?;
         match expanded {
