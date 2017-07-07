@@ -197,3 +197,4 @@ macro_rules! comparator {
 comparator!(EAVT, entity, attribute, value, tx);
 comparator!(AEVT, attribute, entity, value, tx);
 comparator!(AVET, attribute, value, entity, tx);
+comparator!(VAET, value, attribute, entity, tx);

@@ -75,17 +75,20 @@ impl Transactor {
                 ref eav,
                 ref ave,
                 ref aev,
+                ref vae,
                 ..
             } = self.current_db;
 
             let new_eav = eav.rebuild();
             let new_ave = ave.rebuild();
             let new_aev = aev.rebuild();
+            let new_vae = vae.rebuild();
 
             Db {
                 eav: new_eav,
                 ave: new_ave,
                 aev: new_aev,
+                vae: new_vae,
                 idents: self.current_db.idents.clone(),
                 store: self.current_db.store.clone(),
             }
@@ -185,6 +188,7 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
         eav: db.eav.durable_root(),
         aev: db.aev.durable_root(),
         ave: db.ave.durable_root(),
+        vae: db.vae.durable_root(),
     };
 
     db.store.set_contents(&contents)?;
@@ -195,6 +199,7 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
     let new_eav = db.eav.insert(record.clone());
     let new_ave = db.ave.insert(record.clone());
     let new_aev = db.aev.insert(record.clone());
+    let new_vae = db.vae.insert(record.clone());
 
     // If the record has a db:ident, we need to add it to the ident map.
     let new_idents = if record.attribute == db.idents.get_entity("db:ident".to_string()).unwrap() {
@@ -210,6 +215,7 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
            eav: new_eav,
            ave: new_ave,
            aev: new_aev,
+           vae: new_vae,
            idents: new_idents,
            store: db.store.clone(),
        })
@@ -227,6 +233,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
         let eav_root = node_store.add_node(&empty_root)?;
         let aev_root = node_store.add_node(&empty_root)?;
         let ave_root = node_store.add_node(&empty_root)?;
+        let vae_root = node_store.add_node(&empty_root)?;
 
         let contents = DbContents {
             next_id: 0,
@@ -235,6 +242,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
             eav: eav_root,
             ave: ave_root,
             aev: aev_root,
+            vae: vae_root,
         };
 
         let mut db = Db::new(contents, store);

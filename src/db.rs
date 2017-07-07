@@ -42,7 +42,8 @@ impl Conn {
             idents: contents.idents,
             eav: Index::new(contents.eav, node_store.clone(), EAVT),
             ave: Index::new(contents.ave, node_store.clone(), AVET),
-            aev: Index::new(contents.aev, node_store, AEVT),
+            aev: Index::new(contents.aev, node_store.clone(), AEVT),
+            vae: Index::new(contents.vae, node_store, VAET),
         };
 
         // Read in latest transactions from the log.
@@ -91,6 +92,7 @@ pub struct Db {
     pub eav: Index<Record, EAVT>,
     pub ave: Index<Record, AVET>,
     pub aev: Index<Record, AEVT>,
+    pub vae: Index<Record, VAET>,
 }
 
 impl Db {
@@ -101,7 +103,8 @@ impl Db {
             idents: contents.idents,
             eav: Index::new(contents.eav, node_store.clone(), EAVT),
             ave: Index::new(contents.ave, node_store.clone(), AVET),
-            aev: Index::new(contents.aev, node_store, AEVT),
+            aev: Index::new(contents.aev, node_store.clone(), AEVT),
+            vae: Index::new(contents.vae, node_store, VAET),
         };
 
         db
@@ -294,6 +297,7 @@ pub struct DbContents {
     pub eav: String,
     pub ave: String,
     pub aev: String,
+    pub vae: String,
 }
 
 pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
