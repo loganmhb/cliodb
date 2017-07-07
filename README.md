@@ -29,8 +29,17 @@ Adding a fact looks like this:
 `(0 name "Logan")` is a fact in `entity, attribute, value` form. To see
 all the facts currently in the database, you can type `dump`.
 
-You can add a number of attributes about the same entity more
-concisely using this dictionary-style syntax:
+Facts are never deleted from the database. Instead, when a fact should
+no longer be true, you can issue a retraction:
+
+    retract (0 name "Logan")
+    add (0 name "Logan's new name")
+
+In the future, this will enable querying the database *as of* some
+earlier point in time, leaving an auditable trail of changes to the DB.
+
+You can add a number of attributes about the same entity
+more concisely using this dictionary-style syntax:
 
     {name "Logan" github:username "loganmhb" project "Logos"}
 
@@ -63,4 +72,43 @@ sophisticated relationships.
 
 # Contributing
 
-Help is most welcome! Let me know if you're interested.
+Help is most welcome! Let me know if you're interested and I am happy
+to provide direction and assistance.
+
+Specific features that I've thought about and have ideas on implementing are:
+
+1. Attribute-level schemas (enforcing that e.g. `person:name` must be
+a string and `person:age` must be a number)
+
+2. Idents as shorthand for entities -- in Datomic, when you register
+the `:db/ident` attribute for an entity, you can use that value as a
+shorthand to refer to the entity. This allows you to define enumerated
+types, among other things; for example (shown without any schema):
+
+    # Define attributes
+    {db:ident color:red}
+    {db:ident color:blue}
+    {db:ident person:favcolor}
+    {db:ident person:name}
+
+    # Add some facts
+    {person:name "Logan" person:favcolor color:red}
+    {person:name "John" person:favcolor color:blue}
+
+3. Improvments to the query language (negation, basic comparisons;
+eventually there should be a way of extending the query language with
+a programming language, just as in Datomic you can use arbitrary
+Clojure in your queries)
+
+4. Ability to query the database as of a particular transaction or
+point in time
+
+# Known issues
+
+There are many problems, and FIXMEs littered throughout the code
+base. It does not work very well!
+
+The biggest issue right now is probably that most of the networking
+code doesn't handle failure cases or include timeouts; lots of
+`unwrap`s will need to be replaced with an actual error handling
+story.
