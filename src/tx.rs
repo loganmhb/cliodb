@@ -205,7 +205,7 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
     let new_idents = if record.attribute == db.idents.get_entity("db:ident".to_string()).unwrap() {
         match record.value {
             Value::Ident(s) => db.idents.add(s.clone(), record.entity),
-            _ => unimplemented!(), // FIXME: type error
+            _ => return Err("db:ident value must be an identifier".into()), // FIXME: type error
         }
     } else {
         db.idents.clone()
