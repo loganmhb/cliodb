@@ -9,7 +9,8 @@ concurrent reads while writes are serialized through a transactor.
 
 You will need a recent nightly version of Rust to compile the project,
 as well as ZeroMQ 3.2 or newer. (On recent Debian or Ubuntu releases,
-you should be able to install `libzmq3-dev`.) Then:
+you should be able to install `libzmq3-dev`.) In order to use the
+SQLite backend you also need sqlite-devel. Then:
 
     cargo build
 
