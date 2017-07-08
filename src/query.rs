@@ -1,4 +1,4 @@
-use model::{Entity, Value};
+use {Entity, Value};
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
 #[derive(Debug, PartialEq)]
