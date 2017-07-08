@@ -43,7 +43,6 @@ pub mod tx;
 mod query;
 mod rbtree;
 mod durable_tree;
-mod model;
 mod ident;
 
 pub use parser::*;
