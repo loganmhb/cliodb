@@ -37,6 +37,7 @@ impl Conn {
         let mut db = Db {
             store: self.store.clone(),
             idents: contents.idents,
+            schema: contents.schema,
             eav: Index::new(contents.eav, self.store.clone(), EAVT),
             ave: Index::new(contents.ave, self.store.clone(), AVET),
             aev: Index::new(contents.aev, self.store.clone(), AEVT),
@@ -88,10 +89,19 @@ impl Conn {
     }
 }
 
+#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
+pub enum ValueType {
+    String,
+    Ident,
+    Entity,
+    Timestamp,
+}
+
 /// An *immutable* view of the database at a point in time.
 /// Only used for querying; for transactions, you need a Conn.
 pub struct Db {
     pub idents: IdentMap,
+    pub schema: HashMap<Entity, ValueType>,
     pub store: Arc<KVStore + 'static>,
     pub eav: Index<Record, EAVT>,
     pub ave: Index<Record, AVET>,
@@ -104,6 +114,7 @@ impl Db {
         let db = Db {
             store: store.clone(),
             idents: contents.idents,
+            schema: contents.schema,
             eav: Index::new(contents.eav, store.clone(), EAVT),
             ave: Index::new(contents.ave, store.clone(), AVET),
             aev: Index::new(contents.aev, store.clone(), AEVT),
@@ -126,7 +137,7 @@ impl Db {
                 attribute: Term::Bound(a),
                 value: Term::Bound(v),
             } => {
-                match self.idents.get_entity(a) {
+                match self.idents.get_entity(&a) {
                     Some(attr) => {
                         let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
                         Ok(self.ave
@@ -143,7 +154,7 @@ impl Db {
                 attribute: Term::Bound(a),
                 value: Term::Unbound(_),
             } => {
-                match self.idents.get_entity(a) {
+                match self.idents.get_entity(&a) {
                     Some(attr) => {
                         // Value::String("") is the lowest-sorted value
                         let range_start =
@@ -244,7 +255,7 @@ fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> 
         Term::Bound(ref a) => {
             // The query will use an ident to refer to the attribute, but we need the
             // actual attribute entity.
-            match idents.get_entity(a.to_owned()) {
+            match idents.get_entity(a) {
                 Some(e) => {
                     if e != record.attribute {
                         return None;
@@ -297,6 +308,7 @@ pub struct DbContents {
     pub next_id: i64,
     pub last_indexed_tx: i64,
     pub idents: IdentMap,
+    pub schema: HashMap<Entity, ValueType>,
     pub eav: String,
     pub ave: String,
     pub aev: String,
@@ -340,16 +352,27 @@ mod tests {
         let store = HeapStore::new::<Record>();
         let conn = Conn::new(Arc::new(store)).unwrap();
         let records = vec![
-            Fact::new(Entity(10), "name", "Bob"),
-            Fact::new(Entity(11), "name", "John"),
-            Fact::new(Entity(12), "Hello", "World"),
+            Fact::new(Entity(10), "name", Value::String("Bob".into())),
+            Fact::new(Entity(11), "name", Value::String("John".into())),
+            Fact::new(Entity(12), "Hello", Value::String("World".into())),
             Fact::new(Entity(11), "parent", Entity(10)),
         ];
 
-        parse_tx("{db:ident name} {db:ident parent} {db:ident Hello}")
-            .map_err(|e| e.into())
-            .and_then(|tx| conn.transact(tx))
-            .unwrap();
+        parse_tx("{db:ident name db:valueType db:valueType:string}
+                  {db:ident parent db:valueType db:valueType:entity}
+                  {db:ident Hello db:valueType db:valueType:string}")
+                .map_err(|e| e.into())
+                .and_then(|tx| conn.transact(tx))
+                .map(|tx_result| {
+                    use TxReport;
+                    match tx_result {
+                        TxReport::Success { .. } => (),
+                        TxReport::Failure(msg) => {
+                            panic!(format!("failed in schema with '{}'", msg))
+                        }
+                    };
+                })
+                .unwrap();
 
         conn.transact(Tx {
                           items: records
@@ -357,6 +380,13 @@ mod tests {
                               .map(|x| TxItem::Addition(x.clone()))
                               .collect(),
                       })
+            .map(|tx_result| {
+                use TxReport;
+                match tx_result {
+                    TxReport::Success { .. } => (),
+                    TxReport::Failure(msg) => panic!(format!("failed in insert with '{}'", msg)),
+                };
+            })
             .unwrap();
 
         conn
@@ -534,7 +564,8 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] }).unwrap();
+            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] })
+                .unwrap();
         }
 
         conn.db().unwrap()

@@ -24,8 +24,8 @@ impl IdentMap {
         }
     }
 
-    pub fn get_entity(&self, ident: String) -> Option<Entity> {
-        self.mappings.iter().find(|&&(ref i, _)| *i == ident)
+    pub fn get_entity(&self, ident: &str) -> Option<Entity> {
+        self.mappings.iter().find(|&&(ref i, _)| i == ident)
             .map(|&(_, e)| e.clone())
     }
 

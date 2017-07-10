@@ -1,23 +1,24 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use chrono::prelude::UTC;
 
 use backends::KVStore;
-use db::{Db, DbContents};
-use {Tx, TxReport, Entity, Record, Value, TxItem, Result, IdentMap};
+use db::{Db, DbContents, ValueType};
+use {Tx, TxReport, Entity, Record, Value, TxItem, Result, IdentMap, Fact};
 
 pub struct Transactor {
     next_id: i64,
     current_db: Db,
     store: Arc<KVStore>,
     latest_tx: i64,
-    last_indexed_tx: i64
+    last_indexed_tx: i64,
 }
 
 #[derive(Clone, Debug)]
 pub struct TxRaw {
     pub id: i64,
-    pub records: Vec<Record>
+    pub records: Vec<Record>,
 }
 
 impl Transactor {
@@ -45,20 +46,20 @@ impl Transactor {
                 }
 
                 Ok(Transactor {
-                    next_id,
-                    store: store.clone(),
-                    latest_tx: latest_tx,
-                    last_indexed_tx: last_id,
-                    current_db: db
-                })
-            },
+                       next_id,
+                       store: store.clone(),
+                       latest_tx: latest_tx,
+                       last_indexed_tx: last_id,
+                       current_db: db,
+                   })
+            }
             Err(_) => {
                 let mut tx = Transactor {
                     next_id: 3,
                     store: store.clone(),
                     latest_tx: 0,
                     last_indexed_tx: -1,
-                    current_db: create_db(store)?
+                    current_db: create_db(store)?,
                 };
 
                 tx.rebuild_indices()?;
@@ -90,6 +91,7 @@ impl Transactor {
                 aev: new_aev,
                 vae: new_vae,
                 idents: self.current_db.idents.clone(),
+                schema: self.current_db.schema.clone(),
                 store: self.current_db.store.clone(),
             }
         };
@@ -105,7 +107,10 @@ impl Transactor {
         let mut new_entities = vec![];
         let tx_id = self.get_id();
         let tx_entity = Entity(tx_id);
-        let mut raw_tx = TxRaw { id: tx_id, records: vec!() };
+        let mut raw_tx = TxRaw {
+            id: tx_id,
+            records: vec![],
+        };
 
         // This is a macro and not a helper function or closure
         // because it's inconvenient to mutably borrow raw_tx and then
@@ -120,39 +125,45 @@ impl Transactor {
             }
         }
 
-        let attr = self.current_db
-            .idents
-            .get_entity("db:txInstant".to_string())
-            .unwrap();
+        let attr = self.current_db.idents.get_entity("db:txInstant").unwrap();
         let mut db_after =
-            add!(&self.current_db, Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity))?;
+            add!(&self.current_db,
+                 Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity))?;
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => {
-                    let attr = match db_after.idents.get_entity(f.attribute) {
-                        Some(attr) => attr,
-                        None => return Ok(TxReport::Failure("invalid attribute".into())),
-                    };
-                    db_after = add!(&self.current_db, Record::addition(f.entity, attr, f.value, tx_entity))?;
+                    let attr =
+                        match check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema) {
+                            Ok(attr) => attr,
+                            Err(e) => return Ok(TxReport::Failure(e.to_string())),
+                        };
+                    db_after = add!(&self.current_db,
+                                    Record::addition(f.entity, attr, f.value, tx_entity))?;
                 }
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.get_id());
                     for (k, v) in ht {
-                        let attr = match db_after.idents.get_entity(k) {
-                            Some(attr) => attr,
-                            None => return Ok(TxReport::Failure("invalid attribute".into())),
-                        };
+                        let attr =
+                            match check_schema_and_get_attr(&Fact::new(entity, k, v.clone()),
+                                                            &db_after.idents,
+                                                            &db_after.schema) {
+                                Ok(attr) => attr,
+                                Err(e) => return Ok(TxReport::Failure(e)),
+                            };
 
-                        db_after = add!(&self.current_db, Record::addition(entity, attr, v, tx_entity))?;
+                        db_after = add!(&self.current_db,
+                                        Record::addition(entity, attr, v, tx_entity))?;
                     }
                     new_entities.push(entity);
                 }
                 TxItem::Retraction(f) => {
-                    let attr = match db_after.idents.get_entity(f.attribute) {
-                        Some(attr) => attr,
-                        None => return Ok(TxReport::Failure("invalid attribute".into())),
-                    };
-                    db_after = add!(&self.current_db, Record::retraction(f.entity, attr, f.value, tx_entity))?;
+                    let attr =
+                        match check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema) {
+                            Ok(attr) => attr,
+                            Err(e) => return Ok(TxReport::Failure(e)),
+                        };
+                    db_after = add!(&self.current_db,
+                                    Record::retraction(f.entity, attr, f.value, tx_entity))?;
                 }
             }
         }
@@ -185,6 +196,7 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
         next_id,
         last_indexed_tx,
         idents: db.idents.clone(),
+        schema: db.schema.clone(),
         eav: db.eav.durable_root(),
         aev: db.aev.durable_root(),
         ave: db.ave.durable_root(),
@@ -195,6 +207,48 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
     Ok(())
 }
 
+/// Checks the fact's attribute and value against the schema,
+/// returning the corresponding attribute entity if successful and an
+/// error otherwise.
+fn check_schema_and_get_attr(fact: &Fact,
+                             idents: &IdentMap,
+                             schema: &HashMap<Entity, ValueType>)
+                             -> ::std::result::Result<Entity, String> {
+    let attr = match idents.get_entity(&fact.attribute) {
+        Some(a) => a,
+        None => {
+            return Err(format!("invalid attribute: ident '{}' does not exist",
+                               &fact.attribute)
+                               .into())
+        }
+    };
+
+    let actual_type = match fact.value {
+        Value::String(_) => ValueType::String,
+        Value::Entity(_) => ValueType::Entity,
+        Value::Timestamp(_) => ValueType::Timestamp,
+        Value::Ident(_) => ValueType::Ident,
+    };
+
+    match schema.get(&attr) {
+        Some(schema_type) => {
+            if *schema_type == actual_type {
+                return Ok(attr);
+            } else {
+                return Err(format!("type mismatch: expected {:?}, got {:?}",
+                                   schema_type,
+                                   actual_type)
+                                   .into());
+            }
+        }
+        None => {
+            return Err(format!("invalid attribute: '{}' does not specify value type",
+                               &fact.attribute)
+                               .into())
+        }
+    }
+}
+
 pub fn add(db: &Db, record: Record) -> Result<Db> {
     let new_eav = db.eav.insert(record.clone());
     let new_ave = db.ave.insert(record.clone());
@@ -202,13 +256,33 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
     let new_vae = db.vae.insert(record.clone());
 
     // If the record has a db:ident, we need to add it to the ident map.
-    let new_idents = if record.attribute == db.idents.get_entity("db:ident".to_string()).unwrap() {
+    let new_idents = if record.attribute == db.idents.get_entity("db:ident").unwrap() {
         match record.value {
-            Value::Ident(s) => db.idents.add(s.clone(), record.entity),
-            _ => return Err("db:ident value must be an identifier".into()), // FIXME: type error
+            Value::Ident(ref s) => db.idents.add(s.clone(), record.entity),
+            _ => return Err("db:ident value must be an identifier".into()), // unreachable?
         }
     } else {
         db.idents.clone()
+    };
+
+    let new_schema = if record.attribute == db.idents.get_entity("db:valueType").unwrap() {
+        let value_type = match record.value {
+            Value::Ident(s) => {
+                match s.as_str() {
+                    "db:valueType:string" => ValueType::String,
+                    "db:valueType:ident" => ValueType::Ident,
+                    "db:valueType:timestamp" => ValueType::Timestamp,
+                    "db:valueType:entity" => ValueType::Entity,
+                    _ => return Err(format!("{} is not a valid primitive type", s).into()),
+                }
+            }
+            _ => return Err("db:valueType must be an identifier".into()),
+        };
+        let mut new_schema = db.schema.clone();
+        new_schema.insert(record.entity, value_type);
+        new_schema
+    } else {
+        db.schema.clone()
     };
 
     Ok(Db {
@@ -217,60 +291,112 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
            aev: new_aev,
            vae: new_vae,
            idents: new_idents,
+           schema: new_schema,
            store: db.store.clone(),
        })
 }
 
 fn create_db(store: Arc<KVStore>) -> Result<Db> {
-        use durable_tree;
+    use durable_tree;
 
-        let empty_root: durable_tree::Node<Record> = durable_tree::Node::Interior {
-            keys: vec![],
-            links: vec![],
-        };
+    let empty_root: durable_tree::Node<Record> = durable_tree::Node::Interior {
+        keys: vec![],
+        links: vec![],
+    };
 
-        let node_store = durable_tree::NodeStore::new(store.clone());
-        let eav_root = node_store.add_node(&empty_root)?;
-        let aev_root = node_store.add_node(&empty_root)?;
-        let ave_root = node_store.add_node(&empty_root)?;
-        let vae_root = node_store.add_node(&empty_root)?;
+    let node_store = durable_tree::NodeStore::new(store.clone());
+    let eav_root = node_store.add_node(&empty_root)?;
+    let aev_root = node_store.add_node(&empty_root)?;
+    let ave_root = node_store.add_node(&empty_root)?;
+    let vae_root = node_store.add_node(&empty_root)?;
 
-        let contents = DbContents {
-            next_id: 0,
-            last_indexed_tx: 0,
-            idents: IdentMap::default(),
-            eav: eav_root,
-            ave: ave_root,
-            aev: aev_root,
-            vae: vae_root,
-        };
+    let contents = DbContents {
+        next_id: 0,
+        last_indexed_tx: 0,
+        idents: IdentMap::default(),
+        schema: HashMap::default(),
+        eav: eav_root,
+        ave: ave_root,
+        aev: aev_root,
+        vae: vae_root,
+    };
 
-        let mut db = Db::new(contents, store);
-        db.idents = db.idents.add("db:ident".to_string(), Entity(1));
+    let mut db = Db::new(contents, store);
+    db.idents = db.idents.add("db:ident".to_string(), Entity(1));
+    db.idents = db.idents.add("db:valueType".to_string(), Entity(3));
 
-        // Bootstrap some attributes we need to run transactions,
-        // because they need to reference one another.
+    db.schema.insert(Entity(1), ValueType::Ident);
+    db.schema.insert(Entity(3), ValueType::Ident);
 
-        // Initial transaction entity
-        db = add(&db,
-                 Record::addition(Entity(0),
-                                  Entity(2),
-                                  Value::Timestamp(UTC::now()),
-                                  Entity(0)))?;
+    // Bootstrap some attributes we need to run transactions,
+    // because they need to reference one another.
 
-        // Entity for the db:ident attribute
-        db = add(&db,
-                 Record::addition(Entity(1),
-                                  Entity(1),
-                                  Value::Ident("db:ident".into()),
-                                  Entity(0)))?;
+    // Initial transaction entity
+    db = add(&db,
+             Record::addition(Entity(0),
+                              Entity(2),
+                              Value::Timestamp(UTC::now()),
+                              Entity(0)))?;
 
-        // Entity for the db:txInstant attribute
-        db = add(&db,
-                 Record::addition(Entity(2),
-                                  Entity(1),
-                                  Value::Ident("db:txInstant".into()),
-                                  Entity(0)))?;
+    // Entity for the db:ident attribute
+    db = add(&db,
+             Record::addition(Entity(1),
+                              Entity(1),
+                              Value::Ident("db:ident".into()),
+                              Entity(0)))?;
 
-        Ok(db)
-    }
+    // Entity for the db:txInstant attribute
+    db = add(&db,
+             Record::addition(Entity(2),
+                              Entity(1),
+                              Value::Ident("db:txInstant".into()),
+                              Entity(0)))?;
+
+    // Entity for the db:valueType attribute
+    db = add(&db,
+             Record::addition(Entity(3),
+                              Entity(1),
+                              Value::Ident("db:valueType".into()),
+                              Entity(0)))?;
+
+    // Value type for the db:ident attribute
+    // FIXME: this should be a reference, not an ident.
+    db = add(&db,
+             Record::addition(Entity(1),
+                              Entity(3),
+                              Value::Ident("db:valueType:ident".into()),
+                              Entity(0)))?;
+
+    // Value type for the db:valueType attribute
+    // FIXME: this should be a reference, not an ident.
+    db = add(&db,
+             Record::addition(Entity(3),
+                              Entity(3),
+                              Value::Ident("db:valueType:ident".into()),
+                              Entity(0)))?;
+
+
+    // Idents for primitive types
+    db = add(&db,
+             Record::addition(Entity(4),
+                              Entity(1),
+                              Value::Ident("db:valueType:ident".into()),
+                              Entity(0)))?;
+    db = add(&db,
+             Record::addition(Entity(5),
+                              Entity(1),
+                              Value::Ident("db:valueType:string".into()),
+                              Entity(0)))?;
+    db = add(&db,
+             Record::addition(Entity(6),
+                              Entity(1),
+                              Value::Ident("db:valueType:timestamp".into()),
+                              Entity(0)))?;
+    db = add(&db,
+             Record::addition(Entity(7),
+                              Entity(1),
+                              Value::Ident("db:valueType:entity".into()),
+                              Entity(0)))?;
+
+    Ok(db)
+}
