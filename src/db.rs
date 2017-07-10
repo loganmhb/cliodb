@@ -5,7 +5,6 @@ use std::net::SocketAddr;
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-use durable_tree::NodeStore;
 use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -35,18 +34,23 @@ impl Conn {
     pub fn db(&self) -> Result<Db> {
         let contents: DbContents = self.store.get_contents()?;
 
-        let node_store = NodeStore::new(self.store.clone());
-
         let mut db = Db {
             store: self.store.clone(),
             idents: contents.idents,
-            eav: Index::new(contents.eav, node_store.clone(), EAVT),
-            ave: Index::new(contents.ave, node_store.clone(), AVET),
-            aev: Index::new(contents.aev, node_store.clone(), AEVT),
-            vae: Index::new(contents.vae, node_store, VAET),
+            eav: Index::new(contents.eav, self.store.clone(), EAVT),
+            ave: Index::new(contents.ave, self.store.clone(), AVET),
+            aev: Index::new(contents.aev, self.store.clone(), AEVT),
+            vae: Index::new(contents.vae, self.store.clone(), VAET),
         };
 
         // Read in latest transactions from the log.
+        // FIXME: This will re-read transactions again and again each
+        // time you call db(), but it should be possible to keep track
+        // of the latest tx that this connection knows about and only
+        // read ones more recent than that, instead of using
+        // `contents.last_indexed_tx`.  (This might require some
+        // rethinking of retrieving the db contents each time db() is
+        // called.)
         for tx in self.store.get_txs(contents.last_indexed_tx)? {
             for record in tx.records {
                 db = tx::add(&db, record)?;
@@ -97,14 +101,13 @@ pub struct Db {
 
 impl Db {
     pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
-        let node_store = NodeStore::new(store.clone());
         let db = Db {
-            store: store,
+            store: store.clone(),
             idents: contents.idents,
-            eav: Index::new(contents.eav, node_store.clone(), EAVT),
-            ave: Index::new(contents.ave, node_store.clone(), AVET),
-            aev: Index::new(contents.aev, node_store.clone(), AEVT),
-            vae: Index::new(contents.vae, node_store, VAET),
+            eav: Index::new(contents.eav, store.clone(), EAVT),
+            ave: Index::new(contents.ave, store.clone(), AVET),
+            aev: Index::new(contents.aev, store.clone(), AEVT),
+            vae: Index::new(contents.vae, store, VAET),
         };
 
         db

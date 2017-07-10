@@ -1,9 +1,11 @@
 use std::cmp::Ordering;
 use std::fmt::Debug;
+use std::sync::Arc;
 
 use serde::{Serialize, Deserialize};
 use itertools::Itertools;
 
+use backends::KVStore;
 use durable_tree::{DurableTree, NodeStore};
 use rbtree::RBTree;
 
@@ -27,12 +29,13 @@ impl<'de, T, C> Index<T, C>
     where T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
           C: Comparator<Item = T> + Copy
 {
-    pub fn new(root_ref: String, store: NodeStore<T>, comparator: C) -> Index<T, C> {
+    pub fn new(root_ref: String, store: Arc<KVStore>, comparator: C) -> Index<T, C> {
+        let node_store = NodeStore::new(store);
         Index {
             _comparator: comparator,
-            store: store.clone(),
+            store: node_store.clone(),
             mem_index: RBTree::new(comparator),
-            durable_index: DurableTree::from_ref(root_ref, store, comparator),
+            durable_index: DurableTree::from_ref(root_ref, node_store, comparator),
         }
     }
 
@@ -110,14 +113,14 @@ mod tests {
     fn test_rebuild() {
         use durable_tree::Node;
 
-        let store = HeapStore::new::<i64>();
-        let ns = NodeStore::new(Arc::new(store));
+        let store = Arc::new(HeapStore::new::<i64>());
+        let ns: NodeStore<i64> = NodeStore::new(store.clone());
         let root_node = Node::Interior {
-            keys: vec!(),
-            links: vec!()
+            keys: vec![],
+            links: vec![],
         };
         let root_ref = ns.add_node(&root_node).unwrap();
-        let mut index = Index::new(root_ref, ns, NumComparator);
+        let mut index = Index::new(root_ref, store, NumComparator);
 
         for i in 0..1000 {
             index = index.insert(i);

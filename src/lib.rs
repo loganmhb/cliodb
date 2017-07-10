@@ -48,7 +48,7 @@ mod ident;
 pub use parser::*;
 use query::{Query, Clause, Term, Var};
 use index::{Index, Comparator};
-use backends::{KVStore};
+use backends::KVStore;
 pub use ident::IdentMap;
 use backends::cassandra::CassandraStore;
 use backends::sqlite::SqliteStore;
