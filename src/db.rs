@@ -358,9 +358,9 @@ mod tests {
             Fact::new(Entity(11), "parent", Entity(10)),
         ];
 
-        parse_tx("{db:ident name db:valueType db:valueType:string}
-                  {db:ident parent db:valueType db:valueType:entity}
-                  {db:ident Hello db:valueType db:valueType:string}")
+        parse_tx("{db:ident name db:valueType db:type:string}
+                  {db:ident parent db:valueType db:type:entity}
+                  {db:ident Hello db:valueType db:type:string}")
                 .map_err(|e| e.into())
                 .and_then(|tx| conn.transact(tx))
                 .map(|tx_result| {

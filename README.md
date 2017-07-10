@@ -45,12 +45,14 @@ more concisely using this dictionary-style syntax:
     {name "Logan" github:username "loganmhb" project "Logos"}
 
 In order to use an attribute in a fact, you must first register it in
-the database. You do this by adding an entity with the `db:ident`
-attribute:
+the database. You do this by adding an entity with the `db:ident` and
+`db:valueType` attributes (the `db:ident` attribute defines the
+identifier, and the `db:valueType` attribute specifies which primitive
+type the attribute's value can be):
 
-    {db:ident name}
+    {db:ident name db:valueType db:type:string}
 
-In the future, information about the attribute's type and cardinality
+In the future, information about the attribute's uniqueness and cardinality
 will be required as well.
 
 Queries look like this:
@@ -66,10 +68,10 @@ the query is executed by trying to unify the variables in all the
 clauses. So the above query is asking, "What is the name of the child
 of the person named "Bob"?
 
-Currently there is no type checking of attributes, and values can only
-be strings or references to other entities, but I hope to extend the
-query language soon to support more primitive types and more
-sophisticated relationships.
+Currently values can only be strings, timestamps, identifiers or
+references to other entities, but I hope to extend the query language
+soon to support more primitive types and more sophisticated
+relationships.
 
 # Contributing
 
@@ -78,10 +80,7 @@ to provide direction and assistance.
 
 Specific features that I've thought about and have ideas on implementing are:
 
-1. Attribute-level schemas (enforcing that e.g. `person:name` must be
-a string and `person:age` must be a number)
-
-2. Idents as shorthand for entities -- in Datomic, when you register
+1. Idents as shorthand for entities -- in Datomic, when you register
 the `:db/ident` attribute for an entity, you can use that value as a
 shorthand to refer to the entity. This allows you to define enumerated
 types, among other things; for example (shown without any schema):
@@ -96,12 +95,19 @@ types, among other things; for example (shown without any schema):
     {person:name "Logan" person:favcolor color:red}
     {person:name "John" person:favcolor color:blue}
 
-3. Improvments to the query language (negation, basic comparisons;
+Something similar is possible now by relying on identifiers rather
+than entities as the enumerated types, but without interning the
+identifiers as entities this is much less efficient and provides less
+security -- adding a reference to a non-existent entity would fail,
+whereas a typo in a non-interned ident would just give you a new,
+different ident.
+
+2. Improvments to the query language (negation, basic comparisons;
 eventually there should be a way of extending the query language with
 a programming language, just as in Datomic you can use arbitrary
 Clojure in your queries)
 
-4. Ability to query the database as of a particular transaction or
+3. Ability to query the database as of a particular transaction or
 point in time
 
 # Known issues
@@ -109,7 +115,9 @@ point in time
 There are many problems, and FIXMEs littered throughout the code
 base. It does not work very well!
 
-The biggest issue right now is probably that most of the networking
-code doesn't handle failure cases or include timeouts; lots of
-`unwrap`s will need to be replaced with an actual error handling
-story.
+The biggest reliability issue right now is probably that most of the
+networking code doesn't handle failure cases or include timeouts; lots
+of `unwrap`s will need to be replaced with an actual error handling
+story. "Background" reindexing also does not occur in the background,
+so when it happens one unlucky transaction will take a long time to
+complete.

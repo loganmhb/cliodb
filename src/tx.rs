@@ -269,10 +269,10 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
         let value_type = match record.value {
             Value::Ident(s) => {
                 match s.as_str() {
-                    "db:valueType:string" => ValueType::String,
-                    "db:valueType:ident" => ValueType::Ident,
-                    "db:valueType:timestamp" => ValueType::Timestamp,
-                    "db:valueType:entity" => ValueType::Entity,
+                    "db:type:string" => ValueType::String,
+                    "db:type:ident" => ValueType::Ident,
+                    "db:type:timestamp" => ValueType::Timestamp,
+                    "db:type:entity" => ValueType::Entity,
                     _ => return Err(format!("{} is not a valid primitive type", s).into()),
                 }
             }
@@ -364,7 +364,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     db = add(&db,
              Record::addition(Entity(1),
                               Entity(3),
-                              Value::Ident("db:valueType:ident".into()),
+                              Value::Ident("db:type:ident".into()),
                               Entity(0)))?;
 
     // Value type for the db:valueType attribute
@@ -372,7 +372,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     db = add(&db,
              Record::addition(Entity(3),
                               Entity(3),
-                              Value::Ident("db:valueType:ident".into()),
+                              Value::Ident("db:type:ident".into()),
                               Entity(0)))?;
 
 
@@ -380,22 +380,22 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     db = add(&db,
              Record::addition(Entity(4),
                               Entity(1),
-                              Value::Ident("db:valueType:ident".into()),
+                              Value::Ident("db:type:ident".into()),
                               Entity(0)))?;
     db = add(&db,
              Record::addition(Entity(5),
                               Entity(1),
-                              Value::Ident("db:valueType:string".into()),
+                              Value::Ident("db:type:string".into()),
                               Entity(0)))?;
     db = add(&db,
              Record::addition(Entity(6),
                               Entity(1),
-                              Value::Ident("db:valueType:timestamp".into()),
+                              Value::Ident("db:type:timestamp".into()),
                               Entity(0)))?;
     db = add(&db,
              Record::addition(Entity(7),
                               Entity(1),
-                              Value::Ident("db:valueType:entity".into()),
+                              Value::Ident("db:type:entity".into()),
                               Entity(0)))?;
 
     Ok(db)
