@@ -1,5 +1,4 @@
 use std::path::Path;
-use std::sync::Arc;
 
 use rusqlite as sql;
 
@@ -9,10 +8,12 @@ use rmp_serde::{Serializer, Deserializer};
 use {Result, KVStore, Record};
 use tx::TxRaw;
 
-#[derive(Clone)]
 pub struct SqliteStore {
-    conn: Arc<sql::Connection>,
+    conn: sql::Connection,
 }
+
+// FIXME: this is irresponsible!!
+unsafe impl ::std::marker::Sync for SqliteStore {}
 
 impl SqliteStore {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<SqliteStore> {
@@ -29,7 +30,7 @@ impl SqliteStore {
         )?;
 
 
-        let store = SqliteStore { conn: Arc::new(conn) };
+        let store = SqliteStore { conn: conn };
 
         Ok(store)
     }
