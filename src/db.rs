@@ -8,7 +8,6 @@ use tokio_core::reactor::Core;
 use tokio_service::Service;
 
 use network::LineProto;
-use durable_tree::NodeStore;
 use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
