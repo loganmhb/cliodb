@@ -55,7 +55,7 @@ impl Transactor {
             }
             Err(_) => {
                 let mut tx = Transactor {
-                    next_id: 3,
+                    next_id: 8,
                     store: store.clone(),
                     latest_tx: 0,
                     last_indexed_tx: -1,
