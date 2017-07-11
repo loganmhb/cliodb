@@ -19,10 +19,14 @@ impl SqliteStore {
         let conn = sql::Connection::open(path)?;
 
         // Set up SQLite tables to track index data
-        conn.execute("CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
-                     &[])?;
-        conn.execute("CREATE TABLE IF NOT EXISTS logos_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
-                     &[])?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
+            &[],
+        )?;
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS logos_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
+            &[],
+        )?;
 
 
         let store = SqliteStore { conn: Arc::new(conn) };
@@ -37,9 +41,9 @@ impl KVStore for SqliteStore {
             .prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
         stmt.query_row(&[&key], |row| {
-                let s: Vec<u8> = row.get(0);
-                s
-            }).map_err(|e| e.into())
+            let s: Vec<u8> = row.get(0);
+            s
+        }).map_err(|e| e.into())
     }
 
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
@@ -52,18 +56,24 @@ impl KVStore for SqliteStore {
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
-        let mut stmt = self.conn.prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
+        let mut stmt = self.conn
+            .prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
             .unwrap();
         let results: Vec<Result<TxRaw>> = stmt.query_map(&[&from], |ref row| {
             let bytes: Vec<u8> = row.get(1);
             let mut de = Deserializer::new(&bytes[..]);
             let res: Vec<Record> = Deserialize::deserialize(&mut de)?;
             let id: i64 = row.get(0);
-            Ok(TxRaw { id: id, records: res })
-                // FIXME: why does this end up as a nested result?
-        }).unwrap().map(|r| r.unwrap()).collect();
+            Ok(TxRaw {
+                id: id,
+                records: res,
+            })
+            // FIXME: why does this end up as a nested result?
+        }).unwrap()
+            .map(|r| r.unwrap())
+            .collect();
 
-        let mut txs = vec!();
+        let mut txs = vec![];
         for result in results {
             txs.push(result?);
         }
@@ -71,10 +81,11 @@ impl KVStore for SqliteStore {
     }
 
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
-        let mut serialized: Vec<u8> = vec!();
+        let mut serialized: Vec<u8> = vec![];
         tx.records.serialize(&mut Serializer::new(&mut serialized))?;
 
-        let mut stmt = self.conn.prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
+        let mut stmt = self.conn
+            .prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
             .unwrap();
 
         stmt.execute(&[&tx.id, &serialized])?;
@@ -89,7 +100,7 @@ mod tests {
     extern crate test;
 
     use rmp_serde::Serializer;
-    use serde::{Serialize};
+    use serde::Serialize;
     use durable_tree::Node;
 
     #[test]

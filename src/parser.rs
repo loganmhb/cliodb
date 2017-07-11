@@ -13,36 +13,42 @@ pub enum Input {
 }
 
 pub fn parse_input<I>(input: I) -> result::Result<Input, ParseError<I>>
-    where I: combine::Stream<Item = char>
+where
+    I: combine::Stream<Item = char>,
 {
-    choice!(query_parser().map(Input::Query),
-            tx_parser().map(Input::Tx),
-            sample_db_parser(),
-            dump_parser())
-            .parse(input)
-            .map(|(r, _)| r)
+    choice!(
+        query_parser().map(Input::Query),
+        tx_parser().map(Input::Tx),
+        sample_db_parser(),
+        dump_parser()
+    ).parse(input)
+        .map(|(r, _)| r)
 }
 
 pub fn parse_query<I>(input: I) -> result::Result<Query, ParseError<I>>
-    where I: Stream<Item = char>
+where
+    I: Stream<Item = char>,
 {
     query_parser().parse(input).map(|(r, _)| r)
 }
 
 pub fn parse_tx<I>(input: I) -> result::Result<Tx, ParseError<I>>
-    where I: Stream<Item = char>
+where
+    I: Stream<Item = char>,
 {
     tx_parser().parse(input).map(|(r, _)| r)
 }
 
 fn sample_db_parser<I>() -> impl Parser<Input = I, Output = Input>
-    where I: combine::Stream<Item = char>
+where
+    I: combine::Stream<Item = char>,
 {
     lex_string("test").and(eof()).map(|_| Input::SampleDb)
 }
 
 fn dump_parser<I>() -> impl Parser<Input = I, Output = Input>
-    where I: combine::Stream<Item = char>
+where
+    I: combine::Stream<Item = char>,
 {
     lex_string("dump").and(eof()).map(|_| Input::Dump)
 }
@@ -69,7 +75,8 @@ fn ident<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = S
 }
 
 fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
-    where I: combine::Stream<Item = char>
+where
+    I: combine::Stream<Item = char>,
 {
     // FIXME: Number literals should be able to be entities or just
     // integers; this probably requires a change to the types/maybe
@@ -77,9 +84,9 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
     // for entity ids that allows the parser to distinguish them.
 
     let entity = number_lit;
-    let value = string_lit()
-        .or(number_lit().map(|e| Value::Entity(e)))
-        .or(ident().map(|i| Value::Ident(i)));
+    let value = string_lit().or(number_lit().map(|e| Value::Entity(e))).or(
+        ident().map(|i| Value::Ident(i)),
+    );
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
     let entity_term = free_var()
@@ -97,8 +104,9 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
 
     // Clause structure
     let clause_contents = (entity_term, ident_term, value_term);
-    let clause = between(lex_char('('), lex_char(')'), clause_contents)
-        .map(|(e, a, v)| Clause::new(e, a, v));
+    let clause = between(lex_char('('), lex_char(')'), clause_contents).map(
+        |(e, a, v)| Clause::new(e, a, v),
+    );
     let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);
     let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
 
@@ -110,19 +118,22 @@ fn query_parser<I>() -> impl Parser<Input = I, Output = Query>
 }
 
 fn lex_string<I>(s: &'static str) -> impl Parser<Input = I>
-    where I: Stream<Item = char>
+where
+    I: Stream<Item = char>,
 {
     string(s).skip(spaces())
 }
 
 fn lex_char<I>(c: char) -> impl Parser<Input = I>
-    where I: Stream<Item = char>
+where
+    I: Stream<Item = char>,
 {
     char(c).skip(spaces())
 }
 
 fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
-    where I: combine::Stream<Item = char>
+where
+    I: combine::Stream<Item = char>,
 {
     let entity = || number_lit().skip(spaces());
     let value = || {
@@ -133,18 +144,17 @@ fn tx_parser<I>() -> impl Parser<Input = I, Output = Tx>
     };
 
     let fact = || {
-        between(lex_char('('),
-                lex_char(')'),
-                (entity(), ident(), value()))
-                .map(|f| Fact::new(f.0, f.1, f.2))
+        between(lex_char('('), lex_char(')'), (entity(), ident(), value()))
+            .map(|f| Fact::new(f.0, f.1, f.2))
     };
 
     let attr_pair = || (ident(), value());
     let new_entity = || {
-        between(lex_char('{'),
-                lex_char('}'),
-                many1::<HashMap<_, _>, _>(attr_pair()))
-                .map(|x| TxItem::NewEntity(x))
+        between(
+            lex_char('{'),
+            lex_char('}'),
+            many1::<HashMap<_, _>, _>(attr_pair()),
+        ).map(|x| TxItem::NewEntity(x))
     };
 
     let addition = || {
@@ -172,25 +182,33 @@ mod tests {
 
     #[test]
     fn test_parse_query() {
-        assert_eq!(parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-                   Query {
-                       find: vec![Var::new("a")],
-                       clauses: vec![
-            Clause::new(Term::Unbound("a".into()),
+        assert_eq!(
+            parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+            Query {
+                find: vec![Var::new("a")],
+                clauses: vec![
+                    Clause::new(
+                        Term::Unbound("a".into()),
                         Term::Bound("name".into()),
-                        Term::Bound(Value::String("Bob".into()))),
-        ],
-                   })
+                        Term::Bound(Value::String("Bob".into()))
+                    ),
+                ],
+            }
+        )
     }
 
     #[test]
     fn test_parse_tx() {
-        assert_eq!(parse_tx("add (0 name \"Bob\")").unwrap(),
-                   Tx {
-                       items: vec![TxItem::Addition(Fact::new(Entity(0),
-                                                              "name",
-                                                              Value::String("Bob".into())))],
-                   });
+        assert_eq!(
+            parse_tx("add (0 name \"Bob\")").unwrap(),
+            Tx {
+                items: vec![
+                    TxItem::Addition(
+                        Fact::new(Entity(0), "name", Value::String("Bob".into()))
+                    ),
+                ],
+            }
+        );
         parse_tx("{name \"Bob\" batch \"S1'17\"}").unwrap();
     }
 
@@ -199,14 +217,17 @@ mod tests {
         let q = Query {
             find: vec![Var::new("p")],
             clauses: vec![
-                Clause::new(Term::Unbound("p".into()),
-                            Term::Bound("country".into()),
-                            Term::Bound(Value::Ident("country:US".into()))
-               )
-            ]
+                Clause::new(
+                    Term::Unbound("p".into()),
+                    Term::Bound("country".into()),
+                    Term::Bound(Value::Ident("country:US".into()))
+                ),
+            ],
         };
 
-        assert_eq!(parse_query("find ?p where (?p country country:US)").unwrap(),
-                   q);
+        assert_eq!(
+            parse_query("find ?p where (?p country country:US)").unwrap(),
+            q
+        );
     }
 }

@@ -43,7 +43,8 @@ impl Deref for StringRef {
 }
 
 impl<'a, T> From<T> for StringRef
-    where T: Into<Cow<'a, str>>
+where
+    T: Into<Cow<'a, str>>,
 {
     fn from(other: T) -> Self {
         lazy_static! {
@@ -83,11 +84,11 @@ mod tests {
         let mut data = [b'0'; 8];
 
         b.iter(|| {
-                   for (i, byte) in data.iter_mut().enumerate() {
-                       *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
-                   }
-                   StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
-                   n += 1;
-               });
+            for (i, byte) in data.iter_mut().enumerate() {
+                *byte = (*byte - b'0').wrapping_add((n & i) as u8) % 32 + b'0';
+            }
+            StringRef::from(black_box(unsafe { str::from_utf8_unchecked(&data) }));
+            n += 1;
+        });
     }
 }

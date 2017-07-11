@@ -8,13 +8,15 @@ use std::error::Error;
 use std::env::args;
 
 fn run(uri: &str) {
-    println!("
+    println!(
+        "
 logos
 Commands:
   quit - exit the progam;
   test - load sample data (overwrites your current DB!)
   dump - display the contents of the DB as a table.
-");
+"
+    );
     let store = store_from_uri(uri).expect("Couldn't create store");
     let conn = Conn::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
@@ -57,11 +59,16 @@ Commands:
                         }
                     }
                     Ok(Input::Dump) => {
-                        println!("{}",
-                                 conn.db().unwrap().query(&parse_query("find ?ent ?attname ?val where (?ent ?att \
-                                                       ?val) (?att db:ident ?attname)")
-                                                   .unwrap())
-                                     .unwrap())
+                        println!(
+                            "{}",
+                            conn.db()
+                                .unwrap()
+                                .query(&parse_query(
+                                    "find ?ent ?attname ?val where (?ent ?att \
+                                                       ?val) (?att db:ident ?attname)",
+                                ).unwrap())
+                                .unwrap()
+                        )
                     }
                     Err(e) => println!("Oh no! {}", e),
                 };

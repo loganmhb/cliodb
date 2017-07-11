@@ -42,7 +42,7 @@ pub trait KVStore {
         let transactor: TxClient = Deserialize::deserialize(&mut de)?;
 
         Ok(transactor.clone())
-     }
+    }
 
     fn set_transactor(&self, transactor: &TxClient) -> Result<()> {
         let mut buf = Vec::new();

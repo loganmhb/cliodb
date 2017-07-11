@@ -140,10 +140,12 @@ impl Db {
                 match self.idents.get_entity(&a) {
                     Some(attr) => {
                         let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
-                        Ok(self.ave
-                               .range_from(range_start)
-                               .take_while(|rec| rec.attribute == attr && rec.value == v)
-                               .collect())
+                        Ok(
+                            self.ave
+                                .range_from(range_start)
+                                .take_while(|rec| rec.attribute == attr && rec.value == v)
+                                .collect(),
+                        )
                     }
                     _ => return Err("invalid attribute".into()),
                 }
@@ -159,10 +161,12 @@ impl Db {
                         // Value::String("") is the lowest-sorted value
                         let range_start =
                             Record::addition(e, attr, Value::String("".into()), Entity(0));
-                        Ok(self.eav
-                               .range_from(range_start)
-                               .take_while(|rec| rec.entity == e && rec.attribute == attr)
-                               .collect())
+                        Ok(
+                            self.eav
+                                .range_from(range_start)
+                                .take_while(|rec| rec.entity == e && rec.attribute == attr)
+                                .collect(),
+                        )
                     }
                     _ => return Err("invalid attribute".into()),
                 }
@@ -170,10 +174,12 @@ impl Db {
             // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
-                Ok(self.eav
-                       .iter()
-                       .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
-                       .collect())
+                Ok(
+                    self.eav
+                        .iter()
+                        .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
+                        .collect(),
+                )
             }
         }
     }
@@ -358,29 +364,27 @@ mod tests {
             Fact::new(Entity(11), "parent", Entity(10)),
         ];
 
-        parse_tx("{db:ident name db:valueType db:type:string}
+        parse_tx(
+            "{db:ident name db:valueType db:type:string}
                   {db:ident parent db:valueType db:type:entity}
-                  {db:ident Hello db:valueType db:type:string}")
-                .map_err(|e| e.into())
-                .and_then(|tx| conn.transact(tx))
-                .map(|tx_result| {
-                    use TxReport;
-                    match tx_result {
-                        TxReport::Success { .. } => (),
-                        TxReport::Failure(msg) => {
-                            panic!(format!("failed in schema with '{}'", msg))
-                        }
-                    };
-                })
-                .unwrap();
+                  {db:ident Hello db:valueType db:type:string}",
+        ).map_err(|e| e.into())
+            .and_then(|tx| conn.transact(tx))
+            .map(|tx_result| {
+                use TxReport;
+                match tx_result {
+                    TxReport::Success { .. } => (),
+                    TxReport::Failure(msg) => panic!(format!("failed in schema with '{}'", msg)),
+                };
+            })
+            .unwrap();
 
         conn.transact(Tx {
-                          items: records
-                              .iter()
-                              .map(|x| TxItem::Addition(x.clone()))
-                              .collect(),
-                      })
-            .map(|tx_result| {
+            items: records
+                .iter()
+                .map(|x| TxItem::Addition(x.clone()))
+                .collect(),
+        }).map(|tx_result| {
                 use TxReport;
                 match tx_result {
                     TxReport::Success { .. } => (),
@@ -399,25 +403,29 @@ mod tests {
     #[test]
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
-        expect_query_result(&parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-                            QueryResult(vec![Var::new("a")],
-                                        vec![
-            iter::once((Var::new("a"),
-                        Value::Entity(Entity(10))))
-                    .collect(),
-        ]));
+        expect_query_result(
+            &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+            QueryResult(
+                vec![Var::new("a")],
+                vec![
+                    iter::once((Var::new("a"), Value::Entity(Entity(10)))).collect(),
+                ],
+            ),
+        );
     }
 
     #[test]
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
-        expect_query_result(&parse_query("find ?a where (10 name ?a)").unwrap(),
-                            QueryResult(vec![Var::new("a")],
-                                        vec![
-            iter::once((Var::new("a"),
-                        Value::String("Bob".into())))
-                    .collect(),
-        ]));
+        expect_query_result(
+            &parse_query("find ?a where (10 name ?a)").unwrap(),
+            QueryResult(
+                vec![Var::new("a")],
+                vec![
+                    iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
+                ],
+            ),
+        );
 
     }
 
@@ -438,45 +446,52 @@ mod tests {
     #[test]
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
-        expect_query_result(&parse_query("find ?a ?b where (?a name ?b)").unwrap(),
-                            QueryResult(vec![Var::new("a"), Var::new("b")],
-                                        vec![
-            vec![
-                (Var::new("a"), Value::Entity(Entity(10))),
-                (Var::new("b"), Value::String("Bob".into())),
-            ]
-                    .into_iter()
-                    .collect(),
-            vec![
-                (Var::new("a"), Value::Entity(Entity(11))),
-                (Var::new("b"), Value::String("John".into())),
-            ]
-                    .into_iter()
-                    .collect(),
-        ]));
+        expect_query_result(
+            &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+            QueryResult(
+                vec![Var::new("a"), Var::new("b")],
+                vec![
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(10))),
+                        (Var::new("b"), Value::String("Bob".into())),
+                    ].into_iter()
+                        .collect(),
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(11))),
+                        (Var::new("b"), Value::String("John".into())),
+                    ].into_iter()
+                        .collect(),
+                ],
+            ),
+        );
     }
 
     #[test]
     fn test_query_explicit_join() {
-        expect_query_result(&parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)")
-                                 .unwrap(),
-                            QueryResult(vec![Var::new("b")],
-                                        vec![
-            iter::once((Var::new("b"),
-                        Value::Entity(Entity(11))))
-                    .collect(),
-        ]));
+        expect_query_result(
+            &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+            QueryResult(
+                vec![Var::new("b")],
+                vec![
+                    iter::once((Var::new("b"), Value::Entity(Entity(11)))).collect(),
+                ],
+            ),
+        );
     }
 
     #[test]
     fn test_query_implicit_join() {
-        expect_query_result(&parse_query("find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)")
-                    .unwrap(),
-               QueryResult(vec![Var::new("c")],
-                           vec![
-            iter::once((Var::new("c"), Value::String("John".into())))
-                .collect(),
-        ]));
+        expect_query_result(
+            &parse_query(
+                "find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)",
+            ).unwrap(),
+            QueryResult(
+                vec![Var::new("c")],
+                vec![
+                    iter::once((Var::new("c"), Value::String("John".into()))).collect(),
+                ],
+            ),
+        );
     }
 
     #[test]
@@ -496,14 +511,18 @@ mod tests {
             .query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap())
             .unwrap();
 
-        assert_eq!(result,
-                   QueryResult(vec![Var::new("a"), Var::new("b")], vec![]));
+        assert_eq!(
+            result,
+            QueryResult(vec![Var::new("a"), Var::new("b")], vec![])
+        );
     }
     #[bench]
     // Parse + run a query on a small db
     fn parse_bench(b: &mut Bencher) {
         // the implicit join query
-        let input = black_box(r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#);
+        let input = black_box(
+            r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
+        );
 
         b.iter(|| parse_query(input).unwrap());
     }
@@ -512,7 +531,9 @@ mod tests {
     // Parse + run a query on a small db
     fn run_bench(b: &mut Bencher) {
         // the implicit join query
-        let input = black_box(r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#);
+        let input = black_box(
+            r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
+        );
         let query = parse_query(input).unwrap();
         let db = test_db();
 
@@ -535,13 +556,10 @@ mod tests {
             e += 1;
 
             conn.transact(Tx {
-                              items: vec![
-                    TxItem::Addition(Fact::new(entity,
-                                               "blah",
-                                               Value::Entity(entity))),
+                items: vec![
+                    TxItem::Addition(Fact::new(entity, "blah", Value::Entity(entity))),
                 ],
-                          })
-                .unwrap();
+            }).unwrap();
         });
     }
 
@@ -564,8 +582,9 @@ mod tests {
 
             let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
 
-            conn.transact(Tx { items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))] })
-                .unwrap();
+            conn.transact(Tx {
+                items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))],
+            }).unwrap();
         }
 
         conn.db().unwrap()
@@ -575,10 +594,14 @@ mod tests {
     #[test]
     fn test_records_matching() {
         let matching = test_db()
-            .records_matching(&Clause::new(Term::Unbound("e".into()),
-                                           Term::Bound("name".into()),
-                                           Term::Bound(Value::String("Bob".into()))),
-                              &Binding::default())
+            .records_matching(
+                &Clause::new(
+                    Term::Unbound("e".into()),
+                    Term::Bound("name".into()),
+                    Term::Bound(Value::String("Bob".into())),
+                ),
+                &Binding::default(),
+            )
             .unwrap();
         assert_eq!(matching.len(), 1);
         let rec = &matching[0];

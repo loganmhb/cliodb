@@ -10,7 +10,7 @@ use std::str::FromStr;
 
 use logos::db::{store_from_uri, TxClient};
 use logos::Tx;
-use logos::tx::{Transactor};
+use logos::tx::Transactor;
 
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
@@ -19,18 +19,22 @@ use clap::{Arg, App};
 fn main() {
     let matches = App::new("Logos transactor")
         .version("0.1.0")
-        .arg(Arg::with_name("uri")
-                 .short("u")
-                 .long("uri")
-                 .value_name("URI")
-                 .help("Sets the location of the database")
-                 .required(true)
-                 .takes_value(true))
-        .arg(Arg::with_name("create")
-                 .short("c")
-                 .long("create")
-                 .help("Indicates to create the database if it does not exist")
-                 .required(false))
+        .arg(
+            Arg::with_name("uri")
+                .short("u")
+                .long("uri")
+                .value_name("URI")
+                .help("Sets the location of the database")
+                .required(true)
+                .takes_value(true),
+        )
+        .arg(
+            Arg::with_name("create")
+                .short("c")
+                .long("create")
+                .help("Indicates to create the database if it does not exist")
+                .required(false),
+        )
         .get_matches();
 
     let uri = matches.value_of("uri").unwrap();
@@ -52,9 +56,13 @@ fn main() {
         let report = transactor.process_tx(tx).unwrap();
 
         let mut msg_buf = Vec::new();
-        report.serialize(&mut Serializer::new(&mut msg_buf)).unwrap();
-        socket.send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0).unwrap();
+        report
+            .serialize(&mut Serializer::new(&mut msg_buf))
+            .unwrap();
+        socket
+            .send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0)
+            .unwrap();
 
-//        transactor.rebuild_indices().unwrap();
+        //        transactor.rebuild_indices().unwrap();
     }
 }

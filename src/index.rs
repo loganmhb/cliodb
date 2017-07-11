@@ -16,8 +16,9 @@ pub trait Comparator: Clone {
 
 #[derive(Clone)]
 pub struct Index<T, C>
-    where T: Debug + Ord + Clone,
-          C: Comparator<Item = T>
+where
+    T: Debug + Ord + Clone,
+    C: Comparator<Item = T>,
 {
     mem_index: RBTree<T, C>,
     _comparator: C,
@@ -26,8 +27,9 @@ pub struct Index<T, C>
 }
 
 impl<'de, T, C> Index<T, C>
-    where T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
-          C: Comparator<Item = T> + Copy
+where
+    T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
+    C: Comparator<Item = T> + Copy,
 {
     pub fn new(root_ref: String, store: Arc<KVStore>, comparator: C) -> Index<T, C> {
         let node_store = NodeStore::new(store);
@@ -44,20 +46,24 @@ impl<'de, T, C> Index<T, C>
     }
 
     pub fn range_from(&self, range_start: T) -> impl Iterator<Item = T> {
-        self.mem_index
-            .range_from(range_start.clone())
-            .merge_by(self.durable_index
-                       .range_from(range_start)
-                       .unwrap()
-                      .map(|r| r.unwrap()),
-                      |a, b| C::compare(a, b) == Ordering::Less)
+        self.mem_index.range_from(range_start.clone()).merge_by(
+            self.durable_index
+                .range_from(range_start)
+                .unwrap()
+                .map(|r| r.unwrap()),
+            |a, b| C::compare(a, b) == Ordering::Less,
+        )
     }
 
     pub fn iter(&self) -> impl Iterator<Item = T> {
-        self.mem_index
-            .iter()
-            .merge_by(self.durable_index.iter().map(|r| r.unwrap()),
-                      |a, b| C::compare(a, b) == Ordering::Less)
+        self.mem_index.iter().merge_by(
+            self.durable_index.iter().map(
+                |r| r.unwrap(),
+            ),
+            |a, b| {
+                C::compare(a, b) == Ordering::Less
+            },
+        )
     }
 
     pub fn durable_root(&self) -> String {
@@ -78,9 +84,11 @@ impl<'de, T, C> Index<T, C>
 
     pub fn rebuild(&self) -> Index<T, C> {
         Index {
-            durable_index: DurableTree::build_from_iter(self.store.clone(),
-                                                        self.iter(),
-                                                        self._comparator),
+            durable_index: DurableTree::build_from_iter(
+                self.store.clone(),
+                self.iter(),
+                self._comparator,
+            ),
             mem_index: RBTree::new(self._comparator),
             ..self.clone()
         }

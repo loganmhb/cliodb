@@ -71,7 +71,7 @@ pub struct Record {
     /// Marks whether the fact is an addition or a retraction.
     /// (It's "retracted" and not "added" to ensure that retractions are sorted
     /// as greater than additions.)
-    pub retracted: bool
+    pub retracted: bool,
 }
 
 // We need a struct to represent facts that may not be in the database
@@ -101,7 +101,7 @@ impl Record {
             attribute: a,
             value: v.into(),
             tx: tx,
-            retracted: false
+            retracted: false,
         }
     }
 
@@ -111,7 +111,7 @@ impl Record {
             attribute: a,
             value: v.into(),
             tx: tx,
-            retracted: true
+            retracted: true,
         }
     }
 }
@@ -132,22 +132,27 @@ pub enum Value {
     Ident(String),
     Entity(Entity),
     // FIXME: clock drift is an issue here
-    Timestamp(DateTime<UTC>)
+    Timestamp(DateTime<UTC>),
 }
 
 impl Display for Value {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
-        write!(f, "{}", match *self {
-            Value::Entity(e) => format!("{}", e.0),
-            Value::String(ref s) => format!("\"{}\"", s),
-            Value::Ident(ref s) => format!("{}", s),
-            Value::Timestamp(t) => format!("{}", t)
-        })
+        write!(
+            f,
+            "{}",
+            match *self {
+                Value::Entity(e) => format!("{}", e.0),
+                Value::String(ref s) => format!("\"{}\"", s),
+                Value::Ident(ref s) => format!("{}", s),
+                Value::Timestamp(t) => format!("{}", t),
+            }
+        )
     }
 }
 
 impl<T> From<T> for Value
-    where T: Into<String>
+where
+    T: Into<String>,
 {
     fn from(x: T) -> Self {
         Value::String(x.into())
@@ -187,7 +192,9 @@ impl Display for QueryResult {
 
         let rows = self.1
             .iter()
-            .map(|row_ht| self.0.iter().map(|var| format!("{}", row_ht[var])).into())
+            .map(|row_ht| {
+                self.0.iter().map(|var| format!("{}", row_ht[var])).into()
+            })
             .collect_vec();
 
         let mut table = pt::Table::new();
@@ -227,10 +234,8 @@ pub enum TxItem {
 
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub enum TxReport {
-    Success {
-        new_entities: Vec<Entity>
-    },
-    Failure(String)
+    Success { new_entities: Vec<Entity> },
+    Failure(String),
 }
 
 type Binding = HashMap<Var, Value>;

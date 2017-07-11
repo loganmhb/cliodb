@@ -24,28 +24,31 @@ struct RBTreeNode<T> {
 /// in the recursive cases), and it does not color the root of the
 /// tree black.
 fn ins<T: ::std::fmt::Debug, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTreeNode<T>>
-    where T: Ord + Clone,
-          C: Comparator<Item = T> + Copy
+where
+    T: Ord + Clone,
+    C: Comparator<Item = T> + Copy,
 {
     match tree {
         Some(ref t) => {
             match C::compare(&x, &t.item) {
                 Ordering::Less => {
-                    balance(Arc::new(RBTreeNode::new(t.color,
-                                                     Some(ins(t.left.clone(), x, comparator)),
-                                                     t.item.clone(),
-                                                     t.right.clone())))
+                    balance(Arc::new(RBTreeNode::new(
+                        t.color,
+                        Some(ins(t.left.clone(), x, comparator)),
+                        t.item.clone(),
+                        t.right.clone(),
+                    )))
                 }
                 Ordering::Equal => {
                     t.clone() // duplicate
                 }
                 Ordering::Greater => {
-                    balance(Arc::new(RBTreeNode::new(t.color,
-                                                     t.left.clone(),
-                                                     t.item.clone(),
-                                                     Some(ins(t.right.clone(),
-                                                              x,
-                                                              comparator)))))
+                    balance(Arc::new(RBTreeNode::new(
+                        t.color,
+                        t.left.clone(),
+                        t.item.clone(),
+                        Some(ins(t.right.clone(), x, comparator)),
+                    )))
                 }
             }
         }
@@ -55,15 +58,15 @@ fn ins<T: ::std::fmt::Debug, C>(tree: Child<T>, x: T, comparator: C) -> Arc<RBTr
 
 fn has_red_child<T>(tree: &RBTreeNode<T>) -> bool {
     tree.left.as_ref().map_or(false, |c| c.color == Color::Red) ||
-    tree.right.as_ref().map_or(false, |c| c.color == Color::Red)
+        tree.right.as_ref().map_or(false, |c| c.color == Color::Red)
 }
 
 /// A tree needs balancing if it is a black node which has a red child
 /// which itself has a red child.
 fn needs_balancing<T: ::std::fmt::Debug>(tree: &RBTreeNode<T>) -> bool {
     tree.color == Color::Black && has_red_child(tree) &&
-    (tree.left.as_ref().map_or(false, |t| has_red_child(&*t)) ||
-     tree.right.as_ref().map_or(false, |t| has_red_child(&*t)))
+        (tree.left.as_ref().map_or(false, |t| has_red_child(&*t)) ||
+             tree.right.as_ref().map_or(false, |t| has_red_child(&*t)))
 }
 
 /// Takes a potentially-unbalanced red-black tree and returns a
@@ -73,7 +76,8 @@ fn needs_balancing<T: ::std::fmt::Debug>(tree: &RBTreeNode<T>) -> bool {
 fn balance<T: ::std::fmt::Debug + Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<RBTreeNode<T>> {
     if needs_balancing(&tree) {
         if tree.left.clone().map(|ref c| c.color) == Some(Color::Red) &&
-           has_red_child(&*tree.left.clone().unwrap()) {
+            has_red_child(&*tree.left.clone().unwrap())
+        {
             // unwrap() is safe because of above pattern match on Some(Color::Red),
             // but we can't match through the Arc to actually eliminate it
             // within the type system (ノ°Д°）ノ︵ ┻━┻
@@ -81,16 +85,22 @@ fn balance<T: ::std::fmt::Debug + Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<
             if left_child.left.clone().map(|gc| gc.color) == Some(Color::Red) {
                 // Pattern one: left red child, left red grandchild.
                 let left_gc = left_child.left.clone().unwrap();
-                let new_left_child = RBTreeNode::new_black(left_gc.left.clone(),
-                                                           left_gc.item.clone(),
-                                                           left_gc.right.clone());
-                let new_right_child = RBTreeNode::new_black(left_child.right.clone(),
-                                                            tree.item.clone(),
-                                                            tree.right.clone());
+                let new_left_child = RBTreeNode::new_black(
+                    left_gc.left.clone(),
+                    left_gc.item.clone(),
+                    left_gc.right.clone(),
+                );
+                let new_right_child = RBTreeNode::new_black(
+                    left_child.right.clone(),
+                    tree.item.clone(),
+                    tree.right.clone(),
+                );
 
-                Arc::new(RBTreeNode::new_red(Some(Arc::new(new_left_child)),
-                                             left_child.item.clone(),
-                                             Some(Arc::new(new_right_child))))
+                Arc::new(RBTreeNode::new_red(
+                    Some(Arc::new(new_left_child)),
+                    left_child.item.clone(),
+                    Some(Arc::new(new_right_child)),
+                ))
             } else {
                 // Because of the has_red_child clause in the if, we
                 // know that in this else branch the left child's
@@ -98,16 +108,22 @@ fn balance<T: ::std::fmt::Debug + Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<
                 //
                 // Pattern two: left red child, right red grandchild.
                 let right_gc = left_child.right.clone().unwrap();
-                let new_left_child = RBTreeNode::new_black(left_child.left.clone(),
-                                                           left_child.item.clone(),
-                                                           right_gc.left.clone());
-                let new_right_child = RBTreeNode::new_black(right_gc.right.clone(),
-                                                            tree.item.clone(),
-                                                            tree.right.clone());
+                let new_left_child = RBTreeNode::new_black(
+                    left_child.left.clone(),
+                    left_child.item.clone(),
+                    right_gc.left.clone(),
+                );
+                let new_right_child = RBTreeNode::new_black(
+                    right_gc.right.clone(),
+                    tree.item.clone(),
+                    tree.right.clone(),
+                );
 
-                Arc::new(RBTreeNode::new_red(Some(Arc::new(new_left_child)),
-                                             right_gc.item.clone(),
-                                             Some(Arc::new(new_right_child))))
+                Arc::new(RBTreeNode::new_red(
+                    Some(Arc::new(new_left_child)),
+                    right_gc.item.clone(),
+                    Some(Arc::new(new_right_child)),
+                ))
             }
         } else {
             // Because of the needs_balancing guard, if the left child
@@ -116,29 +132,41 @@ fn balance<T: ::std::fmt::Debug + Ord + Clone>(tree: Arc<RBTreeNode<T>>) -> Arc<
             if right_child.left.clone().map(|gc| gc.color) == Some(Color::Red) {
                 // Pattern three: right red child, left red grandchild.
                 let left_gc = right_child.left.clone().unwrap();
-                let new_left_child = RBTreeNode::new_black(tree.left.clone(),
-                                                           tree.item.clone(),
-                                                           left_gc.left.clone());
-                let new_right_child = RBTreeNode::new_black(left_gc.right.clone(),
-                                                            right_child.item.clone(),
-                                                            right_child.right.clone());
+                let new_left_child = RBTreeNode::new_black(
+                    tree.left.clone(),
+                    tree.item.clone(),
+                    left_gc.left.clone(),
+                );
+                let new_right_child = RBTreeNode::new_black(
+                    left_gc.right.clone(),
+                    right_child.item.clone(),
+                    right_child.right.clone(),
+                );
 
-                Arc::new(RBTreeNode::new_red(Some(Arc::new(new_left_child)),
-                                             left_gc.item.clone(),
-                                             Some(Arc::new(new_right_child))))
+                Arc::new(RBTreeNode::new_red(
+                    Some(Arc::new(new_left_child)),
+                    left_gc.item.clone(),
+                    Some(Arc::new(new_right_child)),
+                ))
             } else {
                 // Pattern four: right red child, right red grandchild.
                 let right_gc = right_child.right.clone().unwrap();
-                let new_left_child = RBTreeNode::new_black(tree.left.clone(),
-                                                           tree.item.clone(),
-                                                           right_child.left.clone());
-                let new_right_child = RBTreeNode::new_black(right_gc.left.clone(),
-                                                            right_gc.item.clone(),
-                                                            right_gc.right.clone());
+                let new_left_child = RBTreeNode::new_black(
+                    tree.left.clone(),
+                    tree.item.clone(),
+                    right_child.left.clone(),
+                );
+                let new_right_child = RBTreeNode::new_black(
+                    right_gc.left.clone(),
+                    right_gc.item.clone(),
+                    right_gc.right.clone(),
+                );
 
-                Arc::new(RBTreeNode::new_red(Some(Arc::new(new_left_child)),
-                                             right_child.item.clone(),
-                                             Some(Arc::new(new_right_child))))
+                Arc::new(RBTreeNode::new_red(
+                    Some(Arc::new(new_left_child)),
+                    right_child.item.clone(),
+                    Some(Arc::new(new_right_child)),
+                ))
             }
         }
     } else {
@@ -173,11 +201,11 @@ impl<T: ::std::fmt::Debug + Ord + Clone> RBTreeNode<T> {
 
     fn make_black(&self) -> Arc<RBTreeNode<T>> {
         Arc::new(RBTreeNode {
-                     color: Color::Black,
-                     left: self.left.clone(),
-                     right: self.right.clone(),
-                     item: self.item.clone(),
-                 })
+            color: Color::Black,
+            left: self.left.clone(),
+            right: self.right.clone(),
+            item: self.item.clone(),
+        })
     }
 }
 
@@ -196,9 +224,7 @@ impl<T: ::std::fmt::Debug + Ord + Clone, C: Comparator<Item = T> + Copy> RBTree<
 
     pub fn insert(&self, x: T) -> RBTree<T, C> {
         let tree = RBTree {
-            root: Some(ins(self.root.clone(), x, self.comparator)
-                       .make_black()
-            ),
+            root: Some(ins(self.root.clone(), x, self.comparator).make_black()),
             size: self.size + 1,
             comparator: self.comparator,
         };
@@ -297,10 +323,11 @@ mod tests {
         let with_red_child = RBTreeNode::new_black(red_child.clone(), 0, red_child.clone());
         assert!(has_red_child(&with_red_child));
 
-        let with_red_grandchild =
-            RBTreeNode::new_black(Some(Arc::new(RBTreeNode::new_red(red_child.clone(), 0, None))),
-                                  0,
-                                  None);
+        let with_red_grandchild = RBTreeNode::new_black(
+            Some(Arc::new(RBTreeNode::new_red(red_child.clone(), 0, None))),
+            0,
+            None,
+        );
 
         assert!(needs_balancing(&with_red_grandchild));
         assert!(!needs_balancing(&with_red_child));
@@ -358,8 +385,10 @@ mod tests {
         let t = thousand_tree();
 
         assert_eq!((0..1000).collect::<Vec<_>>(), t.iter().collect::<Vec<_>>());
-        assert_eq!(t.range_from(500).collect::<Vec<_>>(),
-                   (500..1000).collect::<Vec<_>>());
+        assert_eq!(
+            t.range_from(500).collect::<Vec<_>>(),
+            (500..1000).collect::<Vec<_>>()
+        );
     }
 
     fn assert_invariants<T>(root: &RBTreeNode<T>) {
@@ -370,17 +399,17 @@ mod tests {
         fn assert_color_invariants<T>(node: &RBTreeNode<T>) {
             match node.left {
                 Some(ref left) => assert_color_invariants(&left),
-                None => ()
+                None => (),
             }
 
             match node.right {
                 Some(ref right) => assert_color_invariants(&right),
-                None => ()
+                None => (),
             }
 
             match node.color {
                 Color::Red => assert!(!has_red_child(&node)),
-                _ => ()
+                _ => (),
             }
         }
 
@@ -394,18 +423,19 @@ mod tests {
                     let child_depth = check_black_depth(&right);
                     assert_eq!(child_depth, check_black_depth(&left));
                     child_depth
-                },
-                (&None, &Some(ref child)) | (&Some(ref child), &None) => {
+                }
+                (&None, &Some(ref child)) |
+                (&Some(ref child), &None) => {
                     let child_depth = check_black_depth(&child);
                     assert_eq!(child_depth, 0);
                     child_depth
-                },
-                _ => 0
+                }
+                _ => 0,
             };
 
             match node.color {
                 Color::Black => 1 + child_depth,
-                Color::Red => child_depth
+                Color::Red => child_depth,
             }
         }
 

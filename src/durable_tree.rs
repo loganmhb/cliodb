@@ -55,7 +55,8 @@ pub enum Node<T> {
 }
 
 impl<'de, T> Node<T>
-    where T: Serialize + Deserialize<'de> + Clone
+where
+    T: Serialize + Deserialize<'de> + Clone,
 {
     // FIXME: when the directory node reaches a certain size, split
     // and make a new parent
@@ -105,9 +106,9 @@ impl<'de, T> Node<T>
                 }
 
                 store.add_node(&Node::Interior {
-                                   links: new_links,
-                                   keys,
-                               })
+                    links: new_links,
+                    keys,
+                })
             }
         }
     }
@@ -117,19 +118,20 @@ impl<'de, T> Node<T>
 pub struct DurableTree<T, C> {
     pub root: Link<T>,
     store: NodeStore<T>,
-    _comparator: C
+    _comparator: C,
 }
 
 impl<'de, T, C> DurableTree<T, C>
-    where T: Serialize + Deserialize<'de> + Clone + Debug,
-          C: Comparator<Item = T>
+where
+    T: Serialize + Deserialize<'de> + Clone + Debug,
+    C: Comparator<Item = T>,
 {
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    pub fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C)
-                          -> DurableTree<T, C>
-        where I: Iterator<Item = T>
+    pub fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C) -> DurableTree<T, C>
+    where
+        I: Iterator<Item = T>,
     {
         let mut root: Node<T> = Node::Interior {
             keys: vec![],
@@ -148,12 +150,16 @@ impl<'de, T, C> DurableTree<T, C>
         DurableTree {
             store: store,
             root: Link::DbKey(root_ref),
-            _comparator
+            _comparator,
         }
     }
 
     pub fn from_ref(db_ref: String, node_store: NodeStore<T>, _comparator: C) -> DurableTree<T, C> {
-        DurableTree { root: Link::DbKey(db_ref), store: node_store, _comparator }
+        DurableTree {
+            root: Link::DbKey(db_ref),
+            store: node_store,
+            _comparator,
+        }
     }
 
     pub fn iter(&self) -> Iter<T> {
@@ -193,29 +199,29 @@ impl<'de, T, C> DurableTree<T, C>
                     match items.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) => {
                             stack.push(IterState {
-                                           item_idx: idx,
-                                           link_idx: idx + 1,
-                                           ..state
-                                       });
+                                item_idx: idx,
+                                link_idx: idx + 1,
+                                ..state
+                            });
 
                             return Ok(Iter {
-                                          stack,
-                                          store: self.store.clone(),
-                                      });
+                                stack,
+                                store: self.store.clone(),
+                            });
                         }
                         Err(idx) => {
                             stack.push(IterState {
-                                           item_idx: idx,
-                                           ..state
-                                       });
+                                item_idx: idx,
+                                ..state
+                            });
 
                             return Ok(Iter {
-                                          stack,
-                                          store: self.store.clone(),
-                                      });
+                                stack,
+                                store: self.store.clone(),
+                            });
                         }
                     }
-                },
+                }
                 Node::Interior { keys, links } => {
                     match keys.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) | Err(idx) => {
@@ -232,7 +238,7 @@ impl<'de, T, C> DurableTree<T, C>
                             stack.push(IterState {
                                 node_ref: links[idx].clone(),
                                 item_idx: 0,
-                                link_idx: 0
+                                link_idx: 0,
                             });
                         }
                     }
@@ -255,7 +261,8 @@ struct IterState<T> {
 }
 
 impl<'de, T> Iterator for Iter<T>
-    where T: Clone + Deserialize<'de> + Serialize + Debug
+where
+    T: Clone + Deserialize<'de> + Serialize + Debug,
 {
     type Item = Result<T>;
 
@@ -287,12 +294,11 @@ impl<'de, T> Iterator for Iter<T>
                     if item_idx < items.len() {
                         let item: &T = items.get(item_idx).unwrap();
                         let res: Self::Item = Ok(item.clone());
-                        self.stack
-                            .push(IterState {
-                                      node_ref: node_ref,
-                                      link_idx,
-                                      item_idx: item_idx + 1,
-                                  });
+                        self.stack.push(IterState {
+                            node_ref: node_ref,
+                            link_idx,
+                            item_idx: item_idx + 1,
+                        });
                         return Some(res);
 
                     }
@@ -300,19 +306,17 @@ impl<'de, T> Iterator for Iter<T>
                 Node::Interior { links, .. } => {
                     if link_idx < links.len() {
                         // Re-push own dir for later.
-                        self.stack
-                            .push(IterState {
-                                      node_ref,
-                                      link_idx: link_idx + 1,
-                                      item_idx,
-                                  });
+                        self.stack.push(IterState {
+                            node_ref,
+                            link_idx: link_idx + 1,
+                            item_idx,
+                        });
                         // Push next child dir.
-                        self.stack
-                            .push(IterState {
-                                      node_ref: links[link_idx].clone(),
-                                      link_idx: 0,
-                                      item_idx: 0,
-                                  });
+                        self.stack.push(IterState {
+                            node_ref: links[link_idx].clone(),
+                            link_idx: 0,
+                            item_idx: 0,
+                        });
                         continue;
                     }
                 }
@@ -330,7 +334,8 @@ pub struct NodeStore<T> {
 }
 
 impl<'de, T> NodeStore<T>
-    where T: Serialize + Deserialize<'de> + Clone
+where
+    T: Serialize + Deserialize<'de> + Clone,
 {
     pub fn new(store: Arc<KVStore>) -> NodeStore<T> {
         NodeStore {
@@ -393,10 +398,16 @@ mod tests {
 
         let tree = test_tree(0..10_000);
         let first_range: Range<i64> = 500..10_000;
-        assert_equal(tree.range_from(500).unwrap().map(|r| r.unwrap()), first_range);
+        assert_equal(
+            tree.range_from(500).unwrap().map(|r| r.unwrap()),
+            first_range,
+        );
         let second_range: Range<i64> = 8459..10_000;
-        assert_equal(tree.range_from(8459).unwrap().map(|r| r.unwrap()), second_range);
-     }
+        assert_equal(
+            tree.range_from(8459).unwrap().map(|r| r.unwrap()),
+            second_range,
+        );
+    }
 
     // When new parents are implemented (comes into play circa 10e5-10e6 datoms) this should pass:
     // #[test]

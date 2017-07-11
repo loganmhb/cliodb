@@ -55,10 +55,12 @@ impl KVStore for HeapStore {
     }
 
     fn get_txs(&self, after: i64) -> Result<Vec<tx::TxRaw>> {
-        Ok((*self.log.lock().unwrap())
-               .iter()
-               .filter(|tx| tx.id >= after)
-               .cloned()
-               .collect::<Vec<_>>())
+        Ok(
+            (*self.log.lock().unwrap())
+                .iter()
+                .filter(|tx| tx.id >= after)
+                .cloned()
+                .collect::<Vec<_>>(),
+        )
     }
 }

@@ -5,7 +5,7 @@ use Entity;
 // in which case a hashmap is fine.
 #[derive(Default, Clone, Serialize, Deserialize, Debug)]
 pub struct IdentMap {
-    mappings: Vec<(String, Entity)>
+    mappings: Vec<(String, Entity)>,
 }
 
 impl IdentMap {
@@ -17,25 +17,28 @@ impl IdentMap {
 
     pub fn retract(&self, ident: &str, entity: Entity) -> IdentMap {
         IdentMap {
-            mappings: self.mappings.iter()
-                .filter({|&&(ref i, e)| (i.as_str(), e) == (ident, entity)})
+            mappings: self.mappings
+                .iter()
+                .filter({
+                    |&&(ref i, e)| (i.as_str(), e) == (ident, entity)
+                })
                 .cloned()
-                .collect::<Vec<_>> ()
+                .collect::<Vec<_>>(),
         }
     }
 
     pub fn get_entity(&self, ident: &str) -> Option<Entity> {
-        self.mappings.iter().find(|&&(ref i, _)| i == ident)
-            .map(|&(_, e)| e.clone())
+        self.mappings.iter().find(|&&(ref i, _)| i == ident).map(
+            |&(_, e)| e.clone(),
+        )
     }
 
     pub fn get_ident(&self, entity: Entity) -> Option<String> {
-        self.mappings.iter().find(|&&(_, e)| e == entity)
-            .map(|&(ref i, _)| i.clone())
+        self.mappings.iter().find(|&&(_, e)| e == entity).map(
+            |&(ref i, _)| i.clone(),
+        )
     }
 }
 
 
-mod tests {
-
-}
+mod tests {}
