@@ -1,12 +1,11 @@
 use super::*;
 
-use std::io;
-use std::io::Write;
+use std::io::{self, Cursor, Write};
 use std::sync::{Arc, Mutex};
 
 use super::tx::Transactor;
 
-use bytes::{BufMut, BytesMut};
+use bytes::{Buf, BufMut, BytesMut, BigEndian};
 
 use futures::{future, Future, BoxFuture};
 
@@ -22,32 +21,64 @@ use serde::{Serialize, Deserialize};
 ///! the clients and the transactor. For now, we use json-encoding
 ///! of our transactions and reports and line based frames.
 
+fn serialize<S: Serialize>(msg: S, buf: &mut BytesMut) -> io::Result<()> {
+    let mut debug_buf = Vec::new();
+    msg.serialize(&mut Serializer::new(&mut debug_buf)).unwrap();
+    println!("Serialized:\n{:?}", debug_buf);
+
+    // TODO: we're doing serialization twice. we can just serialize onto
+    // the buffer directly (offset by 4 bytes) and then prefix it by its
+    // length
+    let serialized_len = debug_buf.len() as u32;
+    buf.put_u32::<BigEndian>(serialized_len);
+
+    let mut writer = BufMut::writer(buf);
+    Ok(msg.serialize(&mut Serializer::new(&mut writer)).map_err(
+        |_| {
+            io::Error::new(io::ErrorKind::Other, "encode of tx failed")
+        },
+    )?)
+}
+
+fn deserialize<D: Deserialize<'static>>(buf: &mut BytesMut) -> io::Result<Option<D>> {
+    let (msg_len, result) = {
+        let view = buf.as_ref();
+        if view.len() < 4 {
+            return Ok(None);
+        }
+        let msg_len = Cursor::new(view).get_u32::<BigEndian>();
+        if (view.len() as u32) < 4 + msg_len {
+            return Ok(None);
+        }
+
+        let mut de = Deserializer::new(&view[4..(4 + msg_len as usize)]);
+
+        (
+            msg_len,
+            match Deserialize::deserialize(&mut de) {
+                Err(..) => Err(io::Error::new(
+                    io::ErrorKind::Other,
+                    "failed decoding tx-report",
+                )),
+                Ok(tx) => Ok(Some(tx)),
+            },
+        )
+    };
+
+    buf.split_to(4 + msg_len as usize);
+
+    result
+}
+
+
 pub struct ClientCodec;
 
 impl Decoder for ClientCodec {
-    type Item = TxReport;
+    type Item = Result<TxReport>;
     type Error = io::Error;
 
-    // FIXME: we're using newlines to split messages, but the soundness of this
-    // depends completely on the encoding used!
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Item>> {
-        if let Some(i) = buf.iter().position(|&b| b == b'\n') {
-            // remove the serialized frame from the buffer.
-            let line = buf.split_to(i);
-
-            // Also remove the '\n'
-            buf.split_to(1);
-
-            let mut de = Deserializer::new(&line[..]);
-
-            match Deserialize::deserialize(&mut de) {
-                Err(..) => Err(io::Error::new(io::ErrorKind::Other,
-                                             "failed decoding tx-report")),
-                Ok(tx) => Ok(Some(tx)),
-            }
-        } else {
-            Ok(None)
-        }
+        deserialize(buf)
     }
 }
 
@@ -56,10 +87,7 @@ impl Encoder for ClientCodec {
     type Error = io::Error;
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        let mut writer = BufMut::writer(buf);
-        msg.serialize(&mut Serializer::new(&mut writer)).map_err(|_| io::Error::new(io::ErrorKind::Other,
-                                             "encode of tx failed"))?;
-        writer.write_all(b"\n")
+        serialize(msg, buf)
     }
 }
 
@@ -71,32 +99,16 @@ impl Decoder for ServerCodec {
     type Error = io::Error;
 
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Item>> {
-        if let Some(i) = buf.iter().position(|&b| b == b'\n') {
-            let line = buf.split_to(i);
-            buf.split_to(1);
-
-            let mut de = Deserializer::new(&line[..]);
-
-            match Deserialize::deserialize(&mut de) {
-                Err(..) => Err(io::Error::new(io::ErrorKind::Other,
-                                             "failed decoding tx")),
-                Ok(tx) => Ok(Some(tx)),
-            }
-        } else {
-            Ok(None)
-        }
+        deserialize(buf)
     }
 }
 
 impl Encoder for ServerCodec {
-    type Item = TxReport;
+    type Item = Result<TxReport>;
     type Error = io::Error;
 
     fn encode(&mut self, msg: Self::Item, buf: &mut BytesMut) -> io::Result<()> {
-        let mut writer = BufMut::writer(buf);
-        msg.serialize(&mut Serializer::new(&mut writer)).map_err(|_| io::Error::new(io::ErrorKind::Other,
-                                             "encode of tx-report failed"))?;
-        writer.write_all(b"\n")
+        serialize(msg, buf)
     }
 }
 
@@ -108,7 +120,7 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for LineProto {
     type Request = Tx;
 
     /// For this protocol style, `Response` matches the `Item` type of the codec's `Decoder`
-    type Response = TxReport;
+    type Response = Result<TxReport>;
 
     /// A bit of boilerplate to hook in the codec:
     type Transport = Framed<T, ServerCodec>;
@@ -121,7 +133,7 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for LineProto {
 impl<T: AsyncRead + AsyncWrite + 'static> ClientProto<T> for LineProto {
     type Request = Tx;
 
-    type Response = TxReport;
+    type Response = Result<TxReport>;
 
     /// A bit of boilerplate to hook in the codec:
     type Transport = Framed<T, ClientCodec>;
@@ -139,7 +151,7 @@ pub struct TransactorService {
 impl Service for TransactorService {
     // These types must match the corresponding protocol types:
     type Request = Tx;
-    type Response = TxReport;
+    type Response = Result<TxReport>;
 
     // For non-streaming protocols, service errors are always io::Error
     type Error = io::Error;
@@ -150,11 +162,10 @@ impl Service for TransactorService {
     // Produce a future for computing a response from a request.
     fn call(&self, req: Self::Request) -> Self::Future {
         let mut transactor = self.mutex.lock().unwrap();
-        let report = transactor.process_tx(req).map_err(|_| io::Error::new(io::ErrorKind::Other,
-                                             "transactor failed"));
+        let report = transactor.process_tx(req);
 
-        println!("Received tx! Report: {:?}", &report);
+        println!("Transacted tx! Report: {:?}", &report);
 
-        future::done(report).boxed()
+        future::ok(report).boxed()
     }
 }

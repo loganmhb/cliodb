@@ -10,7 +10,7 @@ use std::net::SocketAddr;
 use std::str::FromStr;
 
 use logos::db::{store_from_uri, TxClient};
-use logos::tx::{Transactor};
+use logos::tx::Transactor;
 use logos::network::{LineProto, TransactorService};
 
 use clap::{Arg, App};
@@ -40,7 +40,9 @@ fn main() {
     let uri = matches.value_of("uri").unwrap();
     let store = store_from_uri(uri).expect("could not use backing store");
     let addr = SocketAddr::from_str("127.0.0.1:10405").unwrap();
-    store.set_transactor(&TxClient::Network(addr.clone())).unwrap();
+    store
+        .set_transactor(&TxClient::Network(addr.clone()))
+        .unwrap();
 
     let transactor = Transactor::new(store).expect("could not create transactor");
     let server = TcpServer::new(LineProto, addr);

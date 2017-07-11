@@ -176,7 +176,7 @@ impl From<Entity> for Value {
 pub struct Entity(pub i64);
 
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Error(String);
 
 impl<S: ToString> From<S> for Error {
