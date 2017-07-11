@@ -12,7 +12,7 @@ pub struct SqliteStore {
     conn: sql::Connection,
 }
 
-// FIXME: this is irresponsible!!
+// FIXME: this is irresponsible!
 unsafe impl ::std::marker::Sync for SqliteStore {}
 
 impl SqliteStore {

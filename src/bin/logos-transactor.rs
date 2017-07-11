@@ -1,5 +1,4 @@
 extern crate logos;
-extern crate zmq;
 extern crate clap;
 extern crate serde;
 extern crate rmp_serde;

@@ -22,11 +22,11 @@ extern crate r2d2;
 
 extern crate lru_cache;
 extern crate uuid;
-extern crate zmq;
 
 extern crate bytes;
 extern crate futures;
 extern crate tokio_io;
+extern crate tokio_core;
 extern crate tokio_proto;
 extern crate tokio_service;
 

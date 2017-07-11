@@ -2,9 +2,13 @@ use super::*;
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
-use rmp_serde::{Serializer, Deserializer};
-use serde::{Serialize, Deserialize};
+use futures::future::Future;
+use tokio_proto::TcpClient;
+use tokio_core::reactor::Core;
+use tokio_service::Service;
 
+use network::LineProto;
+use durable_tree::NodeStore;
 use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -63,19 +67,17 @@ impl Conn {
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
         match self.transactor {
-            // TODO: Don't ignore the addr here.
-            TxClient::Network(_) => {
-                let mut msg_buf: Vec<u8> = Vec::new();
-                tx.serialize(&mut Serializer::new(&mut msg_buf))?;
-                let ctx = zmq::Context::new();
-                let socket = ctx.socket(zmq::REQ)?;
-                socket.connect("tcp://localhost:10405")?;
-                socket.send_msg(zmq::Message::from_slice(&msg_buf)?, 0)?;
+            TxClient::Network(addr) => {
+                let mut core = Core::new().unwrap();
+                let handle = core.handle();
+                let client = TcpClient::new(LineProto).connect(&addr, &handle);
 
-                let result = socket.recv_msg(0)?;
-                let mut de = Deserializer::new(&result[..]);
-                let report: TxReport = Deserialize::deserialize(&mut de)?;
-                Ok(report)
+                Ok(core.run(
+                    client
+                        .and_then(|client| {
+                            client.call(tx)
+                        })
+                )?)
             }
             TxClient::Local => {
                 let store = self.store.clone();

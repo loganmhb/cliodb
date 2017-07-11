@@ -18,6 +18,10 @@ use tokio_service::Service;
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
+///! This module abstracts away the network encoding between
+///! the clients and the transactor. For now, we use json-encoding
+///! of our transactions and reports and line based frames.
+
 pub struct ClientCodec;
 
 impl Decoder for ClientCodec {
@@ -68,10 +72,7 @@ impl Decoder for ServerCodec {
 
     fn decode(&mut self, buf: &mut BytesMut) -> io::Result<Option<Self::Item>> {
         if let Some(i) = buf.iter().position(|&b| b == b'\n') {
-            // remove the serialized frame from the buffer.
             let line = buf.split_to(i);
-
-            // Also remove the '\n'
             buf.split_to(1);
 
             let mut de = Deserializer::new(&line[..]);
@@ -118,10 +119,8 @@ impl<T: AsyncRead + AsyncWrite + 'static> ServerProto<T> for LineProto {
 }
 
 impl<T: AsyncRead + AsyncWrite + 'static> ClientProto<T> for LineProto {
-    /// For this protocol style, `Request` matches the `Item` type of the codec's `Encoder`
     type Request = Tx;
 
-    /// For this protocol style, `Response` matches the `Item` type of the codec's `Decoder`
     type Response = TxReport;
 
     /// A bit of boilerplate to hook in the codec:
@@ -153,6 +152,8 @@ impl Service for TransactorService {
         let mut transactor = self.mutex.lock().unwrap();
         let report = transactor.process_tx(req).map_err(|_| io::Error::new(io::ErrorKind::Other,
                                              "transactor failed"));
+
+        println!("Received tx! Report: {:?}", &report);
 
         future::done(report).boxed()
     }
