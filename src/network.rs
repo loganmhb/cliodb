@@ -1,6 +1,6 @@
 use super::*;
 
-use std::io::{self, Cursor, Write};
+use std::io::{self, Cursor};
 use std::sync::{Arc, Mutex};
 
 use super::tx::Transactor;
@@ -17,27 +17,25 @@ use tokio_service::Service;
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-///! This module abstracts away the network encoding between
-///! the clients and the transactor. For now, we use json-encoding
-///! of our transactions and reports and line based frames.
+///! This module takes care of the network implementation details for
+///! communication between the clients and the transactor.
 
 fn serialize<S: Serialize>(msg: S, buf: &mut BytesMut) -> io::Result<()> {
     let mut debug_buf = Vec::new();
-    msg.serialize(&mut Serializer::new(&mut debug_buf)).unwrap();
-    println!("Serialized:\n{:?}", debug_buf);
+    msg.serialize(&mut Serializer::new(&mut debug_buf))
+        .map_err(|_| io::Error::new(io::ErrorKind::Other, "encode failed"))?;
 
-    // TODO: we're doing serialization twice. we can just serialize onto
-    // the buffer directly (offset by 4 bytes) and then prefix it by its
-    // length
     let serialized_len = debug_buf.len() as u32;
     buf.put_u32::<BigEndian>(serialized_len);
 
-    let mut writer = BufMut::writer(buf);
-    Ok(msg.serialize(&mut Serializer::new(&mut writer)).map_err(
-        |_| {
-            io::Error::new(io::ErrorKind::Other, "encode of tx failed")
-        },
-    )?)
+    // We have to copy the serialized bytes into the buffer instead of
+    // writing to the buffer immediately because the serialized stream
+    // is prefixed by its length, and we don't know that until after
+    // serialization. BytesMut is append only, so we cannot change the
+    // prefix after we've written the serialized object.
+    buf.put_slice(&debug_buf[..]);
+
+    Ok(())
 }
 
 fn deserialize<D: Deserialize<'static>>(buf: &mut BytesMut) -> io::Result<Option<D>> {
@@ -52,17 +50,12 @@ fn deserialize<D: Deserialize<'static>>(buf: &mut BytesMut) -> io::Result<Option
         }
 
         let mut de = Deserializer::new(&view[4..(4 + msg_len as usize)]);
+        let serialization_result = match Deserialize::deserialize(&mut de) {
+            Err(..) => Err(io::Error::new(io::ErrorKind::Other, "decode failed")),
+            Ok(tx) => Ok(Some(tx)),
+        };
 
-        (
-            msg_len,
-            match Deserialize::deserialize(&mut de) {
-                Err(..) => Err(io::Error::new(
-                    io::ErrorKind::Other,
-                    "failed decoding tx-report",
-                )),
-                Ok(tx) => Ok(Some(tx)),
-            },
-        )
+        (msg_len, serialization_result)
     };
 
     buf.split_to(4 + msg_len as usize);

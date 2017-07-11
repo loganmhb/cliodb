@@ -2,7 +2,7 @@ use super::*;
 use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 
-use futures::future::{self, Future};
+use futures::future::Future;
 use tokio_proto::TcpClient;
 use tokio_core::reactor::Core;
 use tokio_service::Service;
@@ -72,20 +72,8 @@ impl Conn {
                 let handle = core.handle();
                 let client = TcpClient::new(LineProto).connect(&addr, &handle);
 
-                println!("Sending transact!");
-
-                core.run(
-                    client
-                        .and_then(|client| client.call(tx))
-                        .and_then(|resp| {
-                            println!("success!");
-                            future::ok(resp)
-                        })
-                        .map_err(|x| {
-                            println!("omg error: {:?}", x);
-                            x
-                        }),
-                ).unwrap_or_else(|e| Err(Error(e.to_string()))) // unwrap 1 layer of result - the transport layer
+                core.run(client.and_then(|client| client.call(tx)))
+                    .unwrap_or_else(|e| Err(Error(e.to_string())))
             }
             TxClient::Local => {
                 let store = self.store.clone();
