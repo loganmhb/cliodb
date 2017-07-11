@@ -85,15 +85,17 @@ the `:db/ident` attribute for an entity, you can use that value as a
 shorthand to refer to the entity. This allows you to define enumerated
 types, among other things; for example (shown without any schema):
 
-    # Define attributes
-    {db:ident color:red}
-    {db:ident color:blue}
-    {db:ident person:favcolor}
-    {db:ident person:name}
+```
+# Define attributes
+{db:ident color:red}
+{db:ident color:blue}
+{db:ident person:favcolor}
+{db:ident person:name}
 
-    # Add some facts
-    {person:name "Logan" person:favcolor color:red}
-    {person:name "John" person:favcolor color:blue}
+# Add some facts
+{person:name "Logan" person:favcolor color:red}
+{person:name "John" person:favcolor color:blue}
+```
 
 Something similar is possible now by relying on identifiers rather
 than entities as the enumerated types, but without interning the
