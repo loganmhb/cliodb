@@ -112,6 +112,25 @@ Clojure in your queries)
 3. Ability to query the database as of a particular transaction or
 point in time
 
+4. More efficient reindexing: currently, when enough new data
+accumulates in-memory in the transactor, it stops everything and
+builds a totally new index. Both of these are unnecessary; it should
+instead construct an index in the background (might require throttling
+transactions if background indexing can't keep up with new
+transactions) and the index should re-use any segments that don't need
+to change. (If you're importing sorted data, the whole index could get
+reused for at least the EAVT index.)
+
+5. Data partitions: Datomic assigns entities to partitions, which are
+encoded in the upper bits of the entity id. This causes entities in
+the same partition to get sorted together, which improves cache
+availablitity and also has some nice benefits for the amount of
+copying needed during reindexing, I think.
+
+6. Cardinality/uniqueness options: it should be possible to specify
+whether an attribute can have one or many values for a particular
+entity, and whether an attribute must be unique.
+
 # Known issues
 
 There are many problems, and FIXMEs littered throughout the code
