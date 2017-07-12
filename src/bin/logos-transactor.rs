@@ -50,5 +50,6 @@ fn main() {
 
     // We provide a way to *instantiate* the service for each new
     // connection; here, we just immediately return a new instance.
+    println!("Serving on {}", addr);
     server.serve(move || Ok(TransactorService { mutex: mutex.clone() }));
 }

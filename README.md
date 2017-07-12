@@ -8,9 +8,8 @@ concurrent reads while writes are serialized through a transactor.
 # Running
 
 You will need a recent nightly version of Rust to compile the project,
-as well as ZeroMQ 3.2 or newer. (On recent Debian or Ubuntu releases,
-you should be able to install `libzmq3-dev`.) In order to use the
-SQLite backend you also need sqlite-devel. Then:
+In order to use the SQLite backend you also need SQLite
+(`sqlite-devel`, often). Then:
 
     cargo build
 
@@ -39,8 +38,8 @@ no longer be true, you can issue a retraction:
 In the future, this will enable querying the database *as of* some
 earlier point in time, leaving an auditable trail of changes to the DB.
 
-You can add a number of attributes about the same entity
-more concisely using this dictionary-style syntax:
+You can simultaneously create a new entity and add a number of
+attributes about it using this dictionary-style syntax:
 
     {name "Logan" github:username "loganmhb" project "Logos"}
 
