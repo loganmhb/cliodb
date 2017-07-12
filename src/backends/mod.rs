@@ -2,6 +2,8 @@ pub mod sqlite;
 pub mod mem;
 pub mod cassandra;
 
+use std::marker::{Send, Sync};
+
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
@@ -12,7 +14,7 @@ use super::Result;
 /// Abstracts over various backends; all that's required for a Logos
 /// backend is the ability to add a key, retrieve a key, and
 /// atomically set/get the DbContents.
-pub trait KVStore {
+pub trait KVStore: Send + Sync {
     /// Set a value in the store. This method implies only eventual consistency;
     /// use `compare_and_set` when consistency is required.
     fn set(&self, key: &str, value: &[u8]) -> Result<()>;

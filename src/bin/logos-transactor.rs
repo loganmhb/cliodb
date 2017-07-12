@@ -1,20 +1,20 @@
 extern crate logos;
-extern crate zmq;
 extern crate clap;
 extern crate serde;
 extern crate rmp_serde;
 extern crate chrono;
+extern crate tokio_proto;
 
+use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
 use logos::db::{store_from_uri, TxClient};
-use logos::Tx;
 use logos::tx::Transactor;
+use logos::network::{LineProto, TransactorService};
 
-use rmp_serde::{Serializer, Deserializer};
-use serde::{Serialize, Deserialize};
 use clap::{Arg, App};
+use tokio_proto::TcpServer;
 
 fn main() {
     let matches = App::new("Logos transactor")
@@ -40,29 +40,15 @@ fn main() {
     let uri = matches.value_of("uri").unwrap();
     let store = store_from_uri(uri).expect("could not use backing store");
     let addr = SocketAddr::from_str("127.0.0.1:10405").unwrap();
-    store.set_transactor(&TxClient::Network(addr)).unwrap();
+    store
+        .set_transactor(&TxClient::Network(addr.clone()))
+        .unwrap();
 
-    let mut transactor = Transactor::new(store).expect("could not create transactor");
+    let transactor = Transactor::new(store).expect("could not create transactor");
+    let server = TcpServer::new(LineProto, addr);
+    let mutex = Arc::new(Mutex::new(transactor));
 
-    let ctx = zmq::Context::new();
-    let socket = ctx.socket(zmq::REP).unwrap();
-    socket.bind("tcp://127.0.0.1:10405").unwrap();
-    println!("Listening on port 10405...");
-    loop {
-        let msg = socket.recv_msg(0).unwrap();
-        let mut de = Deserializer::new(&msg[..]);
-        let tx: Tx = Deserialize::deserialize(&mut de).unwrap();
-        println!("Message: {:?}", tx);
-        let report = transactor.process_tx(tx).unwrap();
-
-        let mut msg_buf = Vec::new();
-        report
-            .serialize(&mut Serializer::new(&mut msg_buf))
-            .unwrap();
-        socket
-            .send_msg(zmq::Message::from_slice(&msg_buf[..]).unwrap(), 0)
-            .unwrap();
-
-        //        transactor.rebuild_indices().unwrap();
-    }
+    // We provide a way to *instantiate* the service for each new
+    // connection; here, we just immediately return a new instance.
+    server.serve(move || Ok(TransactorService { mutex: mutex.clone() }));
 }

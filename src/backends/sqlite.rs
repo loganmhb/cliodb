@@ -1,5 +1,5 @@
 use std::path::Path;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 
 use rusqlite as sql;
 
@@ -9,9 +9,8 @@ use rmp_serde::{Serializer, Deserializer};
 use {Result, KVStore, Record};
 use tx::TxRaw;
 
-#[derive(Clone)]
 pub struct SqliteStore {
-    conn: Arc<sql::Connection>,
+    conn: Arc<Mutex<sql::Connection>>,
 }
 
 impl SqliteStore {
@@ -29,7 +28,7 @@ impl SqliteStore {
         )?;
 
 
-        let store = SqliteStore { conn: Arc::new(conn) };
+        let store = SqliteStore { conn: Arc::new(Mutex::new(conn)) };
 
         Ok(store)
     }
@@ -37,8 +36,8 @@ impl SqliteStore {
 
 impl KVStore for SqliteStore {
     fn get(&self, key: &str) -> Result<Vec<u8>> {
-        let mut stmt = self.conn
-            .prepare("SELECT val FROM logos_kvs WHERE key = ?1")
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
         stmt.query_row(&[&key], |row| {
             let s: Vec<u8> = row.get(0);
@@ -47,17 +46,18 @@ impl KVStore for SqliteStore {
     }
 
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
-        let mut stmt = self.conn
-            // We can't assume the key isn't already set, so need INSERT OR REPLACE.
-            .prepare("INSERT OR REPLACE INTO logos_kvs (key, val) VALUES (?1, ?2)")
-            .unwrap();
+        let conn = self.conn.lock().unwrap();
+        // We can't assume the key isn't already set, so need INSERT OR REPLACE.
+        let mut stmt = conn.prepare(
+            "INSERT OR REPLACE INTO logos_kvs (key, val) VALUES (?1, ?2)",
+        ).unwrap();
         stmt.execute(&[&key, &value])?;
         Ok(())
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
-        let mut stmt = self.conn
-            .prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
             .unwrap();
         let results: Vec<Result<TxRaw>> = stmt.query_map(&[&from], |ref row| {
             let bytes: Vec<u8> = row.get(1);
@@ -84,8 +84,8 @@ impl KVStore for SqliteStore {
         let mut serialized: Vec<u8> = vec![];
         tx.records.serialize(&mut Serializer::new(&mut serialized))?;
 
-        let mut stmt = self.conn
-            .prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
             .unwrap();
 
         stmt.execute(&[&tx.id, &serialized])?;

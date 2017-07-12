@@ -22,7 +22,13 @@ extern crate r2d2;
 
 extern crate lru_cache;
 extern crate uuid;
-extern crate zmq;
+
+extern crate bytes;
+extern crate futures;
+extern crate tokio_io;
+extern crate tokio_core;
+extern crate tokio_proto;
+extern crate tokio_service;
 
 #[macro_use]
 extern crate lazy_static;
@@ -40,6 +46,7 @@ pub mod string_ref;
 pub mod index;
 pub mod backends;
 pub mod tx;
+pub mod network;
 mod query;
 mod rbtree;
 mod durable_tree;
@@ -169,7 +176,7 @@ impl From<Entity> for Value {
 pub struct Entity(pub i64);
 
 
-#[derive(Debug)]
+#[derive(Debug, Serialize, Deserialize)]
 pub struct Error(String);
 
 impl<S: ToString> From<S> for Error {
