@@ -5,13 +5,15 @@ use {Entity, Value};
 pub struct Query {
     pub find: Vec<Var>,
     pub clauses: Vec<Clause>,
+    pub constraints: Vec<Constraint>,
 }
 
 impl Query {
-    pub fn new(find: Vec<Var>, clauses: Vec<Clause>) -> Query {
+    pub fn new(find: Vec<Var>, clauses: Vec<Clause>, constraints: Vec<Constraint>) -> Query {
         Query {
             find: find,
             clauses: clauses,
+            constraints: constraints,
         }
     }
 }
@@ -55,4 +57,18 @@ impl<T: Into<String>> From<T> for Var {
     fn from(x: T) -> Self {
         Var { name: x.into() }
     }
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub enum Comperator {
+    GreaterThan,
+    LesserThan,
+    NotEqualTo,
+}
+
+#[derive(Debug, PartialEq, Eq)]
+pub struct Constraint {
+    pub comperator: Comperator,
+    pub first_value: Term<Value>,
+    pub second_value: Term<Value>,
 }
