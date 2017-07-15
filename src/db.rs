@@ -188,14 +188,17 @@ impl Db {
         for clause in &query.clauses {
             let mut new_bindings = vec![];
 
-            for binding in bindings.into_iter().filter(|binding| {
-                query.constraints.iter().all(|constraint| {
-                    constraint.check(binding)
-                })
-            })
-            {
+            for binding in bindings {
                 for record in self.records_matching(clause, &binding)? {
-                    if let Some(new_info) = unify(&binding, &self.idents, clause, &record) {
+                    if let Some(new_info) = unify(&binding, &self.idents, clause, &record)
+                        .into_iter()
+                        .filter(|potential_binding| {
+                            query.constraints.iter().all(|constraint| {
+                                constraint.check(potential_binding)
+                            })
+                        })
+                        .next()
+                    {
                         if record.retracted {
                             // The binding matches the retraction
                             // so we discard any existing bindings
@@ -458,6 +461,24 @@ mod tests {
                     vec![
                         (Var::new("a"), Value::Entity(Entity(11))),
                         (Var::new("b"), Value::String("John".into())),
+                    ].into_iter()
+                        .collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_constraint() {
+        // find ?a ?b where (?a name ?b) (< ?b "Charlie")
+        expect_query_result(
+            &parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
+            QueryResult(
+                vec![Var::new("a"), Var::new("b")],
+                vec![
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(10))),
+                        (Var::new("b"), Value::String("Bob".into())),
                     ].into_iter()
                         .collect(),
                 ],
