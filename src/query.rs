@@ -1,4 +1,4 @@
-use {Entity, Value};
+use {Entity, Value, Binding};
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
 #[derive(Debug, PartialEq)]
@@ -59,7 +59,7 @@ impl<T: Into<String>> From<T> for Var {
     }
 }
 
-#[derive(Debug, PartialEq, Eq)]
+#[derive(Debug, PartialEq, Eq, Clone, Copy)]
 pub enum Comperator {
     GreaterThan,
     LesserThan,
@@ -71,4 +71,27 @@ pub struct Constraint {
     pub comperator: Comperator,
     pub first_value: Term<Value>,
     pub second_value: Term<Value>,
+}
+
+fn bound_val<'v: 'b, 'b>(val: &'v Term<Value>, binding: &'b Binding) -> Option<&'b Value> {
+    match val {
+        &Term::Bound(ref x) => Some(x),
+        &Term::Unbound(ref var) => binding.get(var),
+    }
+}
+
+impl Constraint {
+    pub fn check(&self, binding: &Binding) -> bool {
+        match (
+            self.comperator,
+            bound_val(&self.first_value, binding),
+            bound_val(&self.second_value, binding),
+        ) {
+            (_, _, None) => true,
+            (_, None, _) => true,
+            (Comperator::GreaterThan, Some(fst_val), Some(snd_val)) => fst_val > snd_val,
+            (Comperator::LesserThan, Some(fst_val), Some(snd_val)) => fst_val < snd_val,
+            (Comperator::NotEqualTo, Some(fst_val), Some(snd_val)) => fst_val != snd_val,
+        }
+    }
 }

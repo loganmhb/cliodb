@@ -147,7 +147,7 @@ impl Db {
                     _ => return Err("invalid attribute".into()),
                 }
             }
-            // // e a ?v => use the eav index
+            // e a ?v => use the eav index
             Clause {
                 entity: Term::Bound(e),
                 attribute: Term::Bound(a),
@@ -188,25 +188,27 @@ impl Db {
         for clause in &query.clauses {
             let mut new_bindings = vec![];
 
-            for binding in bindings {
+            for binding in bindings.into_iter().filter(|binding| {
+                query.constraints.iter().all(|constraint| {
+                    constraint.check(binding)
+                })
+            })
+            {
                 for record in self.records_matching(clause, &binding)? {
-                    match unify(&binding, &self.idents, clause, &record) {
-                        Some(new_info) => {
-                            if record.retracted {
-                                // The binding matches the retraction
-                                // so we discard any existing bindings
-                                // that are the same.  Note that this
-                                // relies on the fact that additions
-                                // and retractions are sorted by
-                                // transaction, so an older retraction
-                                // won't delete the binding for a
-                                // newer addition.
-                                new_bindings.retain(|b| *b != new_info);
-                            } else {
-                                new_bindings.push(new_info)
-                            }
+                    if let Some(new_info) = unify(&binding, &self.idents, clause, &record) {
+                        if record.retracted {
+                            // The binding matches the retraction
+                            // so we discard any existing bindings
+                            // that are the same.  Note that this
+                            // relies on the fact that additions
+                            // and retractions are sorted by
+                            // transaction, so an older retraction
+                            // won't delete the binding for a
+                            // newer addition.
+                            new_bindings.retain(|b| *b != new_info);
+                        } else {
+                            new_bindings.push(new_info)
                         }
-                        _ => continue,
                     }
                 }
             }
