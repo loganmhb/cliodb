@@ -1,4 +1,5 @@
 use super::*;
+use super::query::{Comperator, Constraint};
 
 //// Parser
 use combine::char::{spaces, string, char, letter, digit};
@@ -10,6 +11,11 @@ pub enum Input {
     Tx(Tx),
     SampleDb,
     Dump,
+}
+
+enum ClauseConstraint {
+    Constraint(Constraint),
+    Clause(Clause),
 }
 
 pub fn parse_input<I>(input: I) -> result::Result<Input, ParseError<I>>
@@ -61,6 +67,18 @@ fn free_var<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output 
         .map(|name: String| Var::new(name))
 }
 
+fn comperator<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = Comperator> {
+    string(">")
+        .or(string("<"))
+        .or(string("not"))
+        .skip(spaces())
+        .map(|s| match s {
+            ">" => Comperator::GreaterThan,
+            "<" => Comperator::LesserThan,
+            _ => Comperator::NotEqualTo,
+        })
+}
+
 fn number_lit<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = Entity> {
     many1(digit()).map(|n: String| Entity(n.parse().unwrap()))
 }
@@ -84,11 +102,14 @@ where
     // for entity ids that allows the parser to distinguish them.
 
     let entity = number_lit;
-    let value = string_lit().or(number_lit().map(|e| Value::Entity(e))).or(
-        ident().map(|i| Value::Ident(i)),
-    );
+    let value = || {
+        string_lit().or(number_lit().map(|e| Value::Entity(e))).or(
+            ident().map(|i| Value::Ident(i)),
+        )
+    };
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
+    let comperator_term = comperator().skip(spaces());
     let entity_term = free_var()
         .map(|x| Term::Unbound(x))
         .or(entity().map(|x| Term::Bound(x)))
@@ -97,22 +118,50 @@ where
         .map(|x| Term::Unbound(x))
         .or(ident().map(|x| Term::Bound(x)))
         .skip(spaces());
-    let value_term = free_var()
-        .map(|x| Term::Unbound(x))
-        .or(value.map(|x| Term::Bound(x)))
-        .skip(spaces());
+    let value_term = || {
+        free_var()
+            .map(|x| Term::Unbound(x))
+            .or(value().map(|x| Term::Bound(x)))
+            .skip(spaces())
+    };
 
     // Clause structure
-    let clause_contents = (entity_term, ident_term, value_term);
-    let clause = between(lex_char('('), lex_char(')'), clause_contents).map(
-        |(e, a, v)| Clause::new(e, a, v),
+    let constraint_contents = (comperator_term, value_term(), value_term()).map(|(c, fst, snd)| {
+        ClauseConstraint::Constraint(Constraint {
+            comperator: c,
+            first_value: fst,
+            second_value: snd,
+        })
+    });
+    let clause_contents = (entity_term, ident_term, value_term()).map(|(e, a, v)| {
+        ClauseConstraint::Clause(Clause::new(e, a, v))
+    });
+    let constraint_clause = between(
+        lex_char('('),
+        lex_char(')'),
+        constraint_contents.or(clause_contents),
     );
+
     let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);
-    let where_spec = lex_string("where").and(many1(clause)).map(|x| x.1);
+    let where_spec = lex_string("where").and(many1(constraint_clause)).map(
+        |(_, clause_constraint_vec): (_, Vec<ClauseConstraint>)| {
+            let mut constraints = Vec::new();
+            let mut clauses = Vec::new();
+
+            for cc in clause_constraint_vec {
+                match cc {
+                    ClauseConstraint::Clause(c) => clauses.push(c),
+                    ClauseConstraint::Constraint(x) => constraints.push(x),
+                }
+            }
+
+            (clauses, constraints)
+        },
+    );
 
     find_spec.and(where_spec)
         // FIXME: add find vars
-        .map(|x| Query::new(x.0, x.1))
+        .map(|(find, (clauses, constraints))| Query::new(find, clauses, constraints))
         .and(eof())
         .map(|x| x.0)
 }
@@ -183,7 +232,7 @@ mod tests {
     #[test]
     fn test_parse_query() {
         assert_eq!(
-            parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+            parse_query("find ?a where (?a name \"Bob\") (> ?age 50) (?a age ?age)").unwrap(),
             Query {
                 find: vec![Var::new("a")],
                 clauses: vec![
@@ -192,6 +241,18 @@ mod tests {
                         Term::Bound("name".into()),
                         Term::Bound(Value::String("Bob".into()))
                     ),
+                    Clause::new(
+                        Term::Unbound("a".into()),
+                        Term::Bound("age".into()),
+                        Term::Unbound("age".into())
+                    ),
+                ],
+                constraints: vec![
+                    Constraint {
+                        comperator: Comperator::GreaterThan,
+                        first_value: Term::Unbound("age".into()),
+                        second_value: Term::Bound(Value::Entity(Entity(50))),
+                    },
                 ],
             }
         )
@@ -223,6 +284,7 @@ mod tests {
                     Term::Bound(Value::Ident("country:US".into()))
                 ),
             ],
+            constraints: vec![],
         };
 
         assert_eq!(

@@ -147,7 +147,7 @@ impl Db {
                     _ => return Err("invalid attribute".into()),
                 }
             }
-            // // e a ?v => use the eav index
+            // e a ?v => use the eav index
             Clause {
                 entity: Term::Bound(e),
                 attribute: Term::Bound(a),
@@ -190,23 +190,28 @@ impl Db {
 
             for binding in bindings {
                 for record in self.records_matching(clause, &binding)? {
-                    match unify(&binding, &self.idents, clause, &record) {
-                        Some(new_info) => {
-                            if record.retracted {
-                                // The binding matches the retraction
-                                // so we discard any existing bindings
-                                // that are the same.  Note that this
-                                // relies on the fact that additions
-                                // and retractions are sorted by
-                                // transaction, so an older retraction
-                                // won't delete the binding for a
-                                // newer addition.
-                                new_bindings.retain(|b| *b != new_info);
-                            } else {
-                                new_bindings.push(new_info)
-                            }
+                    if let Some(new_info) = unify(&binding, &self.idents, clause, &record)
+                        .into_iter()
+                        .filter(|potential_binding| {
+                            query.constraints.iter().all(|constraint| {
+                                constraint.check(potential_binding)
+                            })
+                        })
+                        .next()
+                    {
+                        if record.retracted {
+                            // The binding matches the retraction
+                            // so we discard any existing bindings
+                            // that are the same.  Note that this
+                            // relies on the fact that additions
+                            // and retractions are sorted by
+                            // transaction, so an older retraction
+                            // won't delete the binding for a
+                            // newer addition.
+                            new_bindings.retain(|b| *b != new_info);
+                        } else {
+                            new_bindings.push(new_info)
                         }
-                        _ => continue,
                     }
                 }
             }
@@ -456,6 +461,24 @@ mod tests {
                     vec![
                         (Var::new("a"), Value::Entity(Entity(11))),
                         (Var::new("b"), Value::String("John".into())),
+                    ].into_iter()
+                        .collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_constraint() {
+        // find ?a ?b where (?a name ?b) (< ?b "Charlie")
+        expect_query_result(
+            &parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
+            QueryResult(
+                vec![Var::new("a"), Var::new("b")],
+                vec![
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(10))),
+                        (Var::new("b"), Value::String("Bob".into())),
                     ].into_iter()
                         .collect(),
                 ],
