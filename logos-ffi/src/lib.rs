@@ -4,8 +4,8 @@ use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::{c_char, c_int, c_long};
 
-use logos::{Result, Value, QueryResult};
-use logos::parse_query;
+use logos::{Result, Value, QueryResult, TxReport};
+use logos::{parse_query, parse_tx};
 use logos::db::{Conn, store_from_uri};
 
 fn conn_from_c_string(uri: &CStr) -> Result<Conn> {
@@ -66,11 +66,14 @@ pub struct CValue {
     int_val: c_long,
 }
 
+// These functions are leaky to facilitate passing the resulting
+// structs over the FFI.  You MUST reclaim the string_val field with
+// `CString::from_raw` in order to avoid a memory leak.
 impl CValue {
     fn string(val: &str) -> CValue {
         CValue {
             tag: ValueTag::String,
-            string_val: CString::new(val).unwrap().into_raw(), // FIXME: leaky!
+            string_val: CString::new(val).unwrap().into_raw(),
             int_val: 0,
         }
     }
@@ -78,7 +81,7 @@ impl CValue {
     fn entity(val: i64) -> CValue {
         CValue {
             tag: ValueTag::Entity,
-            string_val: CString::default().into_raw(), // leak
+            string_val: CString::default().into_raw(),
             int_val: val as c_long,
         }
     }
@@ -103,12 +106,37 @@ pub extern "C" fn query(
             for row in rows {
                 let row_vec: Vec<CValue> =
                     vars.iter().map(|k| row.get(k).unwrap().into()).collect();
-                cb(vars.len() as i32, row_vec.as_ptr())
+                cb(vars.len() as i32, row_vec.as_ptr());
+                // Free the CString's value.
+                for val in row_vec {
+                    unsafe {
+                        CString::from_raw(val.string_val as *mut i8);
+                    }
+                }
             }
             return 0;
         }
         Err(_) => {
             return -1;
         }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn transact(conn_ptr: *mut Conn, tx_ptr: *const c_char) -> c_int {
+    let conn: &Conn = unsafe { &*conn_ptr };
+    let tx_str = unsafe { CStr::from_ptr(tx_ptr) };
+    let tx = match parse_tx(tx_str.to_str().unwrap()) {
+        Ok(tx) => tx,
+        // FIXME: signal error
+        Err(_) => return -1,
+    };
+
+    match conn.transact(tx) {
+        // FIXME: Return list of new entities
+        Ok(TxReport::Success { .. }) => return 0,
+        // FIXME: Signal error
+        Ok(TxReport::Failure(_)) => return -1,
+        Err(_) => return -1,
     }
 }

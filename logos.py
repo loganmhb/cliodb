@@ -5,6 +5,9 @@ logos = cdll.LoadLibrary("logos-ffi/target/debug/liblogosffi.so")
 logos.connect.argtypes = [c_char_p, c_void_p]
 logos.connect.restype = c_int
 
+logos.transact.argtypes = [c_void_p, c_char_p]
+logos.transact.restype = c_int 
+
 # ValueTag enum
 (VAL_ENTITY, VAL_IDENT, VAL_STRING, VAL_TIMESTAMP) = (0, 1, 2, 3)
 
