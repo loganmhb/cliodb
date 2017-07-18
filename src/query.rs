@@ -60,7 +60,7 @@ impl<T: Into<String>> From<T> for Var {
 }
 
 #[derive(Debug, PartialEq, Eq, Clone, Copy)]
-pub enum Comperator {
+pub enum Comparator {
     GreaterThan,
     LesserThan,
     NotEqualTo,
@@ -68,7 +68,7 @@ pub enum Comperator {
 
 #[derive(Debug, PartialEq, Eq)]
 pub struct Constraint {
-    pub comperator: Comperator,
+    pub comparator: Comparator,
     pub first_value: Term<Value>,
     pub second_value: Term<Value>,
 }
@@ -86,20 +86,20 @@ impl Constraint {
         println!(
             "Check: {:?} {:?} {:?}",
             self.first_value,
-            self.comperator,
+            self.comparator,
             self.second_value
         );
 
         let res = match (
-            self.comperator,
+            self.comparator,
             bound_val(&self.first_value, binding),
             bound_val(&self.second_value, binding),
         ) {
             (_, _, None) => true,
             (_, None, _) => true,
-            (Comperator::GreaterThan, Some(fst_val), Some(snd_val)) => fst_val > snd_val,
-            (Comperator::LesserThan, Some(fst_val), Some(snd_val)) => fst_val < snd_val,
-            (Comperator::NotEqualTo, Some(fst_val), Some(snd_val)) => fst_val != snd_val,
+            (Comparator::GreaterThan, Some(fst_val), Some(snd_val)) => fst_val > snd_val,
+            (Comparator::LesserThan, Some(fst_val), Some(snd_val)) => fst_val < snd_val,
+            (Comparator::NotEqualTo, Some(fst_val), Some(snd_val)) => fst_val != snd_val,
         };
 
         println!("Res: {:?}", res);

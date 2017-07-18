@@ -1,5 +1,5 @@
 use super::*;
-use super::query::{Comperator, Constraint};
+use super::query::{Comparator, Constraint};
 
 //// Parser
 use combine::char::{spaces, string, char, letter, digit};
@@ -67,15 +67,15 @@ fn free_var<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output 
         .map(|name: String| Var::new(name))
 }
 
-fn comperator<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = Comperator> {
+fn comparator<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Output = Comparator> {
     string(">")
         .or(string("<"))
         .or(string("not"))
         .skip(spaces())
         .map(|s| match s {
-            ">" => Comperator::GreaterThan,
-            "<" => Comperator::LesserThan,
-            _ => Comperator::NotEqualTo,
+            ">" => Comparator::GreaterThan,
+            "<" => Comparator::LesserThan,
+            _ => Comparator::NotEqualTo,
         })
 }
 
@@ -109,7 +109,7 @@ where
     };
 
     // There is probably a way to DRY these out but I couldn't satisfy the type checker.
-    let comperator_term = comperator().skip(spaces());
+    let comparator_term = comparator().skip(spaces());
     let entity_term = free_var()
         .map(|x| Term::Unbound(x))
         .or(entity().map(|x| Term::Bound(x)))
@@ -126,9 +126,9 @@ where
     };
 
     // Clause structure
-    let constraint_contents = (comperator_term, value_term(), value_term()).map(|(c, fst, snd)| {
+    let constraint_contents = (comparator_term, value_term(), value_term()).map(|(c, fst, snd)| {
         ClauseConstraint::Constraint(Constraint {
-            comperator: c,
+            comparator: c,
             first_value: fst,
             second_value: snd,
         })
@@ -249,7 +249,7 @@ mod tests {
                 ],
                 constraints: vec![
                     Constraint {
-                        comperator: Comperator::GreaterThan,
+                        comparator: Comparator::GreaterThan,
                         first_value: Term::Unbound("age".into()),
                         second_value: Term::Bound(Value::Entity(Entity(50))),
                     },
