@@ -6,7 +6,7 @@ version = "0.1.0"
 [dependencies]
 bytes = "0.4"
 r2d2 = "0.7.2"
-clap = "2.24.2"
+clap = "2.25.0"
 serde = "1.0.8"
 futures = "0.1"
 tokio-io = "0.1"
@@ -26,7 +26,7 @@ prettytable-rs = "0.6.6"
 
 [dependencies.chrono]
 features = ["serde"]
-version = "0.3.1"
+version = "0.4.0"
 
 [dependencies.uuid]
 features = ["v4"]

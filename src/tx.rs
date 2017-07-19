@@ -1,7 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
 
-use chrono::prelude::UTC;
+use chrono::prelude::Utc;
 
 use backends::KVStore;
 use db::{Db, DbContents, ValueType};
@@ -129,7 +129,7 @@ impl Transactor {
         let mut db_after =
             add!(
                 &self.current_db,
-                Record::addition(tx_entity, attr, Value::Timestamp(UTC::now()), tx_entity)
+                Record::addition(tx_entity, attr, Value::Timestamp(Utc::now()), tx_entity)
             )?;
         for item in tx.items {
             match item {
@@ -356,7 +356,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
         Record::addition(
             Entity(0),
             Entity(2),
-            Value::Timestamp(UTC::now()),
+            Value::Timestamp(Utc::now()),
             Entity(0),
         ),
     )?;

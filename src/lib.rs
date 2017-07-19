@@ -63,7 +63,7 @@ use backends::mem::HeapStore;
 
 use std::collections::Bound;
 use std::collections::range::RangeArgument;
-use chrono::prelude::{DateTime, UTC};
+use chrono::prelude::{DateTime, Utc};
 
 // The Record struct represents a single (entity, attribute, value,
 // transaction) tuple in the database. Note that indices do NOT use
@@ -139,7 +139,7 @@ pub enum Value {
     Ident(String),
     Entity(Entity),
     // FIXME: clock drift is an issue here
-    Timestamp(DateTime<UTC>),
+    Timestamp(DateTime<Utc>),
 }
 
 impl Display for Value {
