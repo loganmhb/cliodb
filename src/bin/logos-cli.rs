@@ -2,7 +2,7 @@ extern crate logos;
 extern crate rustyline;
 
 use logos::*;
-use logos::db::{Conn, store_from_uri};
+use logos::conn::{Conn, store_from_uri};
 
 use std::error::Error;
 use std::env::args;

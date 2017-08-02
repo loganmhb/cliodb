@@ -47,6 +47,7 @@ pub mod index;
 pub mod backends;
 pub mod tx;
 pub mod network;
+pub mod conn;
 mod query;
 mod rbtree;
 mod durable_tree;
@@ -54,12 +55,9 @@ mod ident;
 
 pub use parser::*;
 use query::{Query, Clause, Term, Var};
-use index::{Index, Comparator};
+use index::Comparator;
 use backends::KVStore;
 pub use ident::IdentMap;
-use backends::cassandra::CassandraStore;
-use backends::sqlite::SqliteStore;
-use backends::mem::HeapStore;
 
 use std::collections::Bound;
 use std::collections::range::RangeArgument;
@@ -317,3 +315,291 @@ comparator!(EAVT, entity, attribute, value, tx);
 comparator!(AEVT, attribute, entity, value, tx);
 comparator!(AVET, attribute, value, entity, tx);
 comparator!(VAET, value, attribute, entity, tx);
+
+
+
+#[cfg(test)]
+pub mod tests {
+    use super::*;
+    extern crate test;
+    use self::test::{Bencher, black_box};
+
+    use std::iter;
+    use std::sync::Arc;
+
+    use backends::mem::HeapStore;
+    use conn::Conn;
+    use db::Db;
+
+    fn expect_query_result(query: &Query, expected: QueryResult) {
+        let db = test_db();
+        let result = db.query(query).unwrap();
+        assert_eq!(expected, result);
+    }
+
+    fn test_conn() -> Conn {
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
+        let records = vec![
+            Fact::new(Entity(10), "name", Value::String("Bob".into())),
+            Fact::new(Entity(11), "name", Value::String("John".into())),
+            Fact::new(Entity(12), "Hello", Value::String("World".into())),
+            Fact::new(Entity(11), "parent", Entity(10)),
+        ];
+
+        parse_tx(
+            "{db:ident name db:valueType db:type:string}
+                  {db:ident parent db:valueType db:type:entity}
+                  {db:ident Hello db:valueType db:type:string}",
+        ).map_err(|e| e.into())
+            .and_then(|tx| conn.transact(tx))
+            .map(|tx_result| {
+                use TxReport;
+                match tx_result {
+                    TxReport::Success { .. } => (),
+                    TxReport::Failure(msg) => panic!(format!("failed in schema with '{}'", msg)),
+                };
+            })
+            .unwrap();
+
+        conn.transact(Tx {
+            items: records
+                .iter()
+                .map(|x| TxItem::Addition(x.clone()))
+                .collect(),
+        }).map(|tx_result| {
+                use TxReport;
+                match tx_result {
+                    TxReport::Success { .. } => (),
+                    TxReport::Failure(msg) => panic!(format!("failed in insert with '{}'", msg)),
+                };
+            })
+            .unwrap();
+
+        conn
+    }
+
+    pub fn test_db() -> Db {
+        test_conn().db().unwrap()
+    }
+
+    #[test]
+    fn test_query_unknown_entity() {
+        // find ?a where (?a name "Bob")
+        expect_query_result(
+            &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+            QueryResult(
+                vec![Var::new("a")],
+                vec![
+                    iter::once((Var::new("a"), Value::Entity(Entity(10)))).collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_query_unknown_value() {
+        // find ?a where (0 name ?a)
+        expect_query_result(
+            &parse_query("find ?a where (10 name ?a)").unwrap(),
+            QueryResult(
+                vec![Var::new("a")],
+                vec![
+                    iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
+                ],
+            ),
+        );
+
+    }
+
+    // // It's inconvenient to test this because we don't have a ref to the db in
+    // // the current setup, and we don't know the entity id of `name` offhand.
+    // #[test]
+    // fn test_query_unknown_attribute() {
+    //     // find ?a where (1 ?a "John")
+    //     expect_query_result(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
+    //                         QueryResult(vec![Var::new("a")],
+    //                                     vec![
+    //         iter::once((Var::new("a"),
+    //                     Value::String("name".into())))
+    //                 .collect(),
+    //     ]));
+    // }
+
+    #[test]
+    fn test_query_multiple_results() {
+        // find ?a ?b where (?a name ?b)
+        expect_query_result(
+            &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+            QueryResult(
+                vec![Var::new("a"), Var::new("b")],
+                vec![
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(10))),
+                        (Var::new("b"), Value::String("Bob".into())),
+                    ].into_iter()
+                        .collect(),
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(11))),
+                        (Var::new("b"), Value::String("John".into())),
+                    ].into_iter()
+                        .collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_constraint() {
+        // find ?a ?b where (?a name ?b) (< ?b "Charlie")
+        expect_query_result(
+            &parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
+            QueryResult(
+                vec![Var::new("a"), Var::new("b")],
+                vec![
+                    vec![
+                        (Var::new("a"), Value::Entity(Entity(10))),
+                        (Var::new("b"), Value::String("Bob".into())),
+                    ].into_iter()
+                        .collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_query_explicit_join() {
+        expect_query_result(
+            &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+            QueryResult(
+                vec![Var::new("b")],
+                vec![
+                    iter::once((Var::new("b"), Value::Entity(Entity(11)))).collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_query_implicit_join() {
+        expect_query_result(
+            &parse_query(
+                "find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)",
+            ).unwrap(),
+            QueryResult(
+                vec![Var::new("c")],
+                vec![
+                    iter::once((Var::new("c"), Value::String("John".into()))).collect(),
+                ],
+            ),
+        );
+    }
+
+    #[test]
+    fn test_type_mismatch() {
+        let db = test_db();
+        let q = &parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
+        assert_equal(db.query(&q), Err("type mismatch".to_string()))
+    }
+
+    #[test]
+    fn test_retractions() {
+        let conn = test_conn();
+        conn.transact(parse_tx("retract (11 parent 10)").unwrap())
+            .unwrap();
+        let result = conn.db()
+            .unwrap()
+            .query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap())
+            .unwrap();
+
+        assert_eq!(
+            result,
+            QueryResult(vec![Var::new("a"), Var::new("b")], vec![])
+        );
+    }
+    #[bench]
+    // Parse + run a query on a small db
+    fn parse_bench(b: &mut Bencher) {
+        // the implicit join query
+        let input = black_box(
+            r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
+        );
+
+        b.iter(|| parse_query(input).unwrap());
+    }
+
+    #[bench]
+    // Parse + run a query on a small db
+    fn run_bench(b: &mut Bencher) {
+        // the implicit join query
+        let input = black_box(
+            r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
+        );
+        let query = parse_query(input).unwrap();
+        let db = test_db();
+
+        b.iter(|| db.query(&query));
+    }
+
+    #[bench]
+    fn bench_add(b: &mut Bencher) {
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
+        parse_tx("{db:ident blah}")
+            .map(|tx| conn.transact(tx))
+            .unwrap()
+            .unwrap();
+
+        let mut e = 0;
+
+        b.iter(|| {
+            let entity = Entity(e);
+            e += 1;
+
+            conn.transact(Tx {
+                items: vec![
+                    TxItem::Addition(Fact::new(entity, "blah", Value::Entity(entity))),
+                ],
+            }).unwrap();
+        });
+    }
+
+    fn test_db_large() -> Db {
+        let store = HeapStore::new::<Record>();
+        let conn = Conn::new(Arc::new(store)).unwrap();
+        let n = 10_000;
+
+        parse_tx("{db:ident name} {db:ident Hello}")
+            .map_err(|e| e.into())
+            .and_then(|tx| conn.transact(tx))
+            .unwrap();
+
+        for i in (0..n).into_iter() {
+            let a = if i % 23 <= 10 {
+                "name".to_string()
+            } else {
+                "Hello".to_string()
+            };
+
+            let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
+
+            conn.transact(Tx {
+                items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))],
+            }).unwrap();
+        }
+
+        conn.db().unwrap()
+    }
+
+
+    #[bench]
+    fn bench_large_db_simple(b: &mut Bencher) {
+        // Don't run on 'cargo test', only 'cargo bench'
+        if cfg!(not(debug_assertions)) {
+            let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
+            let db = test_db_large();
+
+            b.iter(|| db.query(&query).unwrap());
+        }
+    }
+}

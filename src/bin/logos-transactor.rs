@@ -9,7 +9,7 @@ use std::sync::{Arc, Mutex};
 use std::net::SocketAddr;
 use std::str::FromStr;
 
-use logos::db::{store_from_uri, TxClient};
+use logos::conn::{store_from_uri, TxClient};
 use logos::tx::Transactor;
 use logos::network::{LineProto, TransactorService};
 

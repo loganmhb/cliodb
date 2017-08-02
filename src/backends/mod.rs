@@ -7,7 +7,8 @@ use std::marker::{Send, Sync};
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-use db::{DbContents, TxClient};
+use conn::TxClient;
+use db::DbContents;
 use tx::TxRaw;
 use super::Result;
 

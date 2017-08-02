@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::KVStore;
-use db::TxClient;
+use conn::TxClient;
 use tx;
 use Result;
 
