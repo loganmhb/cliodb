@@ -140,7 +140,7 @@ impl Transactor {
                             Err(e) => return Ok(TxReport::Failure(e.to_string())),
                         };
                     db_after = add!(
-                        &self.current_db,
+                        &db_after,
                         Record::addition(f.entity, attr, f.value, tx_entity)
                     )?;
                 }
@@ -156,10 +156,7 @@ impl Transactor {
                             Err(e) => return Ok(TxReport::Failure(e)),
                         };
 
-                        db_after = add!(
-                            &self.current_db,
-                            Record::addition(entity, attr, v, tx_entity)
-                        )?;
+                        db_after = add!(&db_after, Record::addition(entity, attr, v, tx_entity))?;
                     }
                     new_entities.push(entity);
                 }
@@ -170,7 +167,7 @@ impl Transactor {
                             Err(e) => return Ok(TxReport::Failure(e)),
                         };
                     db_after = add!(
-                        &self.current_db,
+                        &db_after,
                         Record::retraction(f.entity, attr, f.value, tx_entity)
                     )?;
                 }
@@ -260,10 +257,10 @@ fn check_schema_and_get_attr(
         None => {
             return Err(
                 format!(
-                    "invalid attribute: '{}' does not specify value type",
+                    "invalid attribute: `{}` does not specify value type",
                     &fact.attribute
                 ).into(),
-            )
+            );
         }
     }
 }
