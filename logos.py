@@ -58,6 +58,7 @@ query = c_char_p(b"find ?e ?a where (?e ?a ?v)")
 
 class Query(object):
     def __init__(self, query_string):
+        # TODO: Allow passing a string & decode to bytes
         self.query_string = query_string
 
     def execute(self, conn):

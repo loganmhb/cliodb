@@ -6,7 +6,7 @@ use std::os::raw::{c_char, c_int, c_long};
 
 use logos::{Result, Value, QueryResult, TxReport};
 use logos::{parse_query, parse_tx};
-use logos::db::{Conn, store_from_uri};
+use logos::conn::{Conn, store_from_uri};
 
 fn conn_from_c_string(uri: &CStr) -> Result<Conn> {
     let uri = uri.to_str()?;
