@@ -82,14 +82,6 @@ fn bound_val<'v: 'b, 'b>(val: &'v Term<Value>, binding: &'b Binding) -> Option<&
 
 impl Constraint {
     pub fn check(&self, binding: &Binding) -> bool {
-        println!("Binding: {:?}", binding);
-        println!(
-            "Check: {:?} {:?} {:?}",
-            self.first_value,
-            self.comparator,
-            self.second_value
-        );
-
         let res = match (
             self.comparator,
             bound_val(&self.first_value, binding),
@@ -101,8 +93,6 @@ impl Constraint {
             (Comparator::LesserThan, Some(fst_val), Some(snd_val)) => fst_val < snd_val,
             (Comparator::NotEqualTo, Some(fst_val), Some(snd_val)) => fst_val != snd_val,
         };
-
-        println!("Res: {:?}", res);
 
         res
     }
