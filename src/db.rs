@@ -100,6 +100,8 @@ impl Db {
     }
 
     pub fn query(&self, query: &Query) -> Result<QueryResult> {
+        query.validate()?;
+
         // TODO: automatically bind ?tx in queries
         let mut bindings = vec![HashMap::new()];
 

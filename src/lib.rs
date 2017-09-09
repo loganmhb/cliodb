@@ -53,7 +53,7 @@ mod rbtree;
 mod durable_tree;
 mod ident;
 
-pub use parser::*;
+pub use parser::{parse_input, parse_tx, parse_query, Input};
 use query::{Query, Clause, Term, Var};
 use index::Comparator;
 use backends::KVStore;

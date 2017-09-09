@@ -1,4 +1,5 @@
-use {Entity, Value, Binding};
+use {Result, Entity, Value, Binding};
+use std::collections::HashSet;
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
 #[derive(Debug, PartialEq)]
@@ -15,6 +16,47 @@ impl Query {
             clauses: clauses,
             constraints: constraints,
         }
+    }
+
+    pub fn validate(&self) -> Result<()> {
+        let mut where_set = HashSet::new();
+
+        // Macro to turn a heterogeneous argument list of Term<T>s into
+        // a list of the names of the terms that are unbound.
+        macro_rules! names {
+            ($($term:expr),*) => {{
+                let mut name_vec = Vec::new();
+                $(
+                    match $term {
+                        Term::Unbound(Var { ref name }) => name_vec.push(name.clone()),
+                        Term::Bound(_) => (),
+                    }
+                )*
+                name_vec
+            }}
+        }
+
+        for clause in &self.clauses {
+            for name in names![clause.entity, clause.attribute, clause.value] {
+                where_set.insert(name);
+            }
+        }
+
+        for constraint in &self.constraints {
+            for name in names![constraint.first_value, constraint.second_value] {
+                where_set.insert(name);
+            }
+        }
+
+        for &Var { ref name } in &self.find {
+            if !where_set.contains(name) {
+                return Err(
+                    "Variables in `find` spec must match those appearing in clauses".into(),
+                );
+            }
+        }
+
+        Ok(())
     }
 }
 

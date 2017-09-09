@@ -1,8 +1,5 @@
 extern crate logos;
 extern crate clap;
-extern crate serde;
-extern crate rmp_serde;
-extern crate chrono;
 extern crate tokio_proto;
 
 use std::sync::{Arc, Mutex};
