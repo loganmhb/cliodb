@@ -6,7 +6,7 @@ logos.connect.argtypes = [c_char_p, c_void_p]
 logos.connect.restype = c_int
 
 logos.transact.argtypes = [c_void_p, c_char_p]
-logos.transact.restype = c_int 
+logos.transact.restype = c_int
 
 # ValueTag enum
 (VAL_ENTITY, VAL_IDENT, VAL_STRING, VAL_TIMESTAMP) = (0, 1, 2, 3)
@@ -56,12 +56,41 @@ query = c_char_p(b"find ?e ?a where (?e ?a ?v)")
 
 # res = logos.query(conn, query).contents
 
-class Query(object):
-    def __init__(self, query_string):
-        # TODO: Allow passing a string & decode to bytes
-        self.query_string = query_string
+class Db(object):
+    def __init__(self, db_ptr):
+        self.db_ptr = db_ptr
 
-    def execute(self, conn):
+    # FIXME: not nice for the user to have to call close() to avoid a
+    # leak
+    def close(self):
+        logos.drop_db(self.db_ptr)
+
+class Logos(object):
+    def __init__(self, uri):
+        """Takes a Logos URL and returns a connection."""
+        self.conn_ptr = c_void_p()
+        logos.connect(uri.encode('utf-8'), byref(self.conn_ptr))
+
+    def db(self):
+        db_ptr = c_void_p()
+        logos.get_db(self.conn_ptr, byref(db_ptr))
+        return Db(db_ptr)
+
+    def transact(self, tx_string):
+        tx_bytes = tx_string.encode('utf-8')
+        return logos.transact(self.conn_ptr, tx_bytes)
+
+    def close(self):
+        logos.close(self.conn_ptr)
+
+
+class Query(object):
+    # TODO: queries should be parameterizable
+
+    def __init__(self, query_string):
+        self.query_string = query_string.encode('utf-8')
+
+    def run(self, db):
         self.results = []
         def row_cb(num_cols, row_ptr):
             row = []
@@ -69,5 +98,5 @@ class Query(object):
                 row.append(row_ptr[i].value())
             self.results.append(row)
 
-        logos.query(conn, self.query_string, ROW_CALLBACK(row_cb))
+        logos.query(db.db_ptr, self.query_string, ROW_CALLBACK(row_cb))
         return self.results

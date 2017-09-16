@@ -7,6 +7,7 @@ use std::os::raw::{c_char, c_int, c_long};
 use logos::{Result, Value, QueryResult, TxReport};
 use logos::{parse_query, parse_tx};
 use logos::conn::{Conn, store_from_uri};
+use logos::db::Db;
 
 fn conn_from_c_string(uri: &CStr) -> Result<Conn> {
     let uri = uri.to_str()?;
@@ -28,6 +29,29 @@ pub extern "C" fn connect(uri_ptr: *mut c_char, ret_ptr: *mut *mut Conn) -> c_in
             return -1;
         }
     }
+}
+
+#[no_mangle]
+pub extern "C" fn get_db(conn_ptr: *mut Conn, ret_ptr: *mut *mut Db) -> c_int {
+    let db_result = unsafe { (*conn_ptr).db() };
+    match db_result {
+        Ok(db) => {
+            unsafe { *ret_ptr = mem::transmute(Box::new(db)) };
+            return 0;
+        }
+        Err(_) => {
+            return -1;
+        }
+    }
+}
+
+#[no_mangle]
+pub extern "C" fn drop_db(db: *mut Db) -> c_int {
+    unsafe {
+        let _ = Box::from_raw(db);
+    }
+
+    0
 }
 
 #[no_mangle]
@@ -89,17 +113,20 @@ impl CValue {
 
 #[no_mangle]
 pub extern "C" fn query(
-    ptr: *mut Conn,
+    db_ptr: *mut Db,
     query: *const c_char,
     cb: extern "C" fn(num_items: c_int, row: *const CValue),
 ) -> c_int {
-    let conn: &Conn = unsafe { &*ptr };
+    let db: &Db = unsafe { &*db_ptr };
     let query_str = unsafe { CStr::from_ptr(query) };
-    let db = match conn.db() {
-        Ok(db) => db,
-        Err(_) => return -1,
+    let q = match parse_query(query_str.to_str().unwrap()) {
+        Ok(query) => query,
+        Err(err) => {
+            // FIXME: implement a more robust way to retrieve error msgs
+            println!("{}", err);
+            return -1;
+        }
     };
-    let q = parse_query(query_str.to_str().unwrap()).unwrap();
 
     match db.query(&q) {
         Ok(QueryResult(vars, rows)) => {
