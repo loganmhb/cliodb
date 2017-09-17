@@ -64,9 +64,13 @@ fn has_red_child<T>(tree: &RBTreeNode<T>) -> bool {
 /// A tree needs balancing if it is a black node which has a red child
 /// which itself has a red child.
 fn needs_balancing<T: ::std::fmt::Debug>(tree: &RBTreeNode<T>) -> bool {
-    tree.color == Color::Black && has_red_child(tree) &&
-        (tree.left.as_ref().map_or(false, |t| has_red_child(&*t)) ||
-             tree.right.as_ref().map_or(false, |t| has_red_child(&*t)))
+    tree.color == Color::Black &&
+        (tree.left.as_ref().map_or(false, |t| {
+            t.color == Color::Red && has_red_child(&*t)
+        }) ||
+             tree.right.as_ref().map_or(false, |t| {
+                t.color == Color::Red && has_red_child(&*t)
+            }))
 }
 
 /// Takes a potentially-unbalanced red-black tree and returns a

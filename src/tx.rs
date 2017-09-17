@@ -174,6 +174,8 @@ impl Transactor {
             }
         }
 
+        // FIXME: Race condition. If adding the tx completes but
+        // saving the contents does not, the tx log will be polluted.
         self.store.add_tx(&raw_tx)?;
         self.latest_tx = raw_tx.id;
         save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
