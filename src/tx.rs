@@ -1,5 +1,7 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::sync::mpsc;
+use std::sync::mpsc::{Sender, Receiver};
 
 use chrono::prelude::Utc;
 
@@ -13,6 +15,37 @@ pub struct Transactor {
     store: Arc<KVStore>,
     latest_tx: i64,
     last_indexed_tx: i64,
+    recv: Receiver<Event>,
+    send: Sender<Event>,
+}
+
+enum Event {
+    Tx(Tx, Sender<TxReport>),
+}
+
+/// TxHandle is a wrapper over Transactor that provides a thread-safe
+/// interface for submitting transactions and receiving their results,
+/// abstracting away the implementation of the thread-safety.
+#[derive(Clone)]
+pub struct TxHandle {
+    chan: Sender<Event>,
+}
+
+impl TxHandle {
+    pub fn new(transactor: &mut Transactor) -> TxHandle {
+        let chan = transactor.send.clone();
+
+        TxHandle { chan }
+    }
+
+    pub fn transact(&self, tx: Tx) -> Result<TxReport> {
+        let (report_send, report_recv) = mpsc::channel();
+        self.chan.send(Event::Tx(tx, report_send))?;
+        match report_recv.recv() {
+            Ok(report) => Ok(report),
+            Err(msg) => Err(msg.into()),
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -26,6 +59,8 @@ impl Transactor {
     /// the store (if it exists already) or creating the metadata for
     /// a new database (if no metadata is present in the store).
     pub fn new(store: Arc<KVStore>) -> Result<Transactor> {
+        let (send, recv) = mpsc::channel();
+
         match store.get_contents() {
             Ok(contents) => {
                 let mut next_id = contents.next_id;
@@ -51,6 +86,8 @@ impl Transactor {
                     latest_tx: latest_tx,
                     last_indexed_tx: last_id,
                     current_db: db,
+                    send,
+                    recv,
                 })
             }
             Err(_) => {
@@ -60,6 +97,8 @@ impl Transactor {
                     latest_tx: 0,
                     last_indexed_tx: -1,
                     current_db: create_db(store)?,
+                    send,
+                    recv,
                 };
 
                 tx.rebuild_indices()?;
@@ -103,6 +142,7 @@ impl Transactor {
         Ok(())
     }
 
+    // FIXME: make this not public (fix local transactor in conn.rs)
     pub fn process_tx(&mut self, tx: Tx) -> Result<TxReport> {
         let mut new_entities = vec![];
         let tx_id = self.get_id();
@@ -193,6 +233,22 @@ impl Transactor {
         let id = self.next_id;
         self.next_id += 1;
         id
+    }
+
+    /// Runs the transactor, listening on an MPSC channel for
+    /// transactions and other events.
+    pub fn run(&mut self) -> Result<()> {
+        loop {
+            match self.recv.recv().unwrap() {
+                Event::Tx(tx, cb_chan) => {
+                    let result = self.process_tx(tx)?;
+                    // We don't actually care whether the client gets
+                    // the report or not.
+                    let _ = cb_chan.send(result);
+                }
+                // TODO: implement event for reindexing.
+            }
+        }
     }
 }
 

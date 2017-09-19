@@ -1,9 +1,6 @@
 use super::*;
 
 use std::io::{self, Cursor};
-use std::sync::{Arc, Mutex};
-
-use super::tx::Transactor;
 
 use bytes::{Buf, BufMut, BytesMut, BigEndian};
 
@@ -138,7 +135,7 @@ impl<T: AsyncRead + AsyncWrite + 'static> ClientProto<T> for LineProto {
 
 
 pub struct TransactorService {
-    pub mutex: Arc<Mutex<Transactor>>,
+    pub tx_handle: tx::TxHandle,
 }
 
 impl Service for TransactorService {
@@ -154,8 +151,7 @@ impl Service for TransactorService {
 
     // Produce a future for computing a response from a request.
     fn call(&self, req: Self::Request) -> Self::Future {
-        let mut transactor = self.mutex.lock().unwrap();
-        let report = transactor.process_tx(req);
+        let report = self.tx_handle.transact(req);
 
         println!("Transacted tx! Report: {:?}", &report);
 

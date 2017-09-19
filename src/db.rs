@@ -14,6 +14,7 @@ pub enum ValueType {
 
 /// An *immutable* view of the database at a point in time.
 /// Only used for querying; for transactions, you need a Conn.
+#[derive(Clone)]
 pub struct Db {
     pub idents: IdentMap,
     pub schema: HashMap<Entity, ValueType>,
