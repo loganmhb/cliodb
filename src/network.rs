@@ -152,9 +152,6 @@ impl Service for TransactorService {
     // Produce a future for computing a response from a request.
     fn call(&self, req: Self::Request) -> Self::Future {
         let report = self.tx_handle.transact(req);
-
-        println!("Transacted tx! Report: {:?}", &report);
-
         future::ok(report).boxed()
     }
 }

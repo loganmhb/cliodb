@@ -2,6 +2,8 @@ use std::collections::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
+use std::thread;
+use std::time::Duration;
 
 use chrono::prelude::Utc;
 
@@ -15,12 +17,28 @@ pub struct Transactor {
     store: Arc<KVStore>,
     latest_tx: i64,
     last_indexed_tx: i64,
+
+    /// Interactions with a running transactor happen over an event
+    /// channel.
     recv: Receiver<Event>,
     send: Sender<Event>,
+
+    /// While asynchronously rebuilding the durable indices, it's
+    /// necessary to keep track of transactions which will need to be
+    /// added to the rebuilt indices' in-memory trees before swapping
+    /// over.
+    catchup_txs: Option<Vec<TxRaw>>,
+    throttled: bool,
 }
 
+/// Represents any input that might need to be given to a
+/// running transactor. Usually this would be a transaction to
+/// process, but any other interrupts that require linearization
+/// (e.g. swapping over to a new index) would be delivered through the
+/// same channel.
 enum Event {
     Tx(Tx, Sender<TxReport>),
+    RebuiltIndex(Db),
 }
 
 /// TxHandle is a wrapper over Transactor that provides a thread-safe
@@ -88,6 +106,8 @@ impl Transactor {
                     current_db: db,
                     send,
                     recv,
+                    catchup_txs: None,
+                    throttled: false,
                 })
             }
             Err(_) => {
@@ -99,6 +119,8 @@ impl Transactor {
                     current_db: create_db(store)?,
                     send,
                     recv,
+                    catchup_txs: None,
+                    throttled: false,
                 };
 
                 tx.rebuild_indices()?;
@@ -110,34 +132,63 @@ impl Transactor {
     /// Builds a new set of durable indices by combining the existing
     /// durable indices and the in-memory indices.
     pub fn rebuild_indices(&mut self) -> Result<()> {
-        let new_db = {
+        println!("Rebuilding indices...");
+        let checkpoint = self.current_db.clone();
+        let send = self.send.clone();
+        self.catchup_txs = Some(Vec::new());
+
+        thread::spawn(move || {
             let Db {
                 ref eav,
                 ref ave,
                 ref aev,
                 ref vae,
                 ..
-            } = self.current_db;
+            } = checkpoint;
 
             let new_eav = eav.rebuild();
             let new_ave = ave.rebuild();
             let new_aev = aev.rebuild();
             let new_vae = vae.rebuild();
 
-            Db {
+            send.send(Event::RebuiltIndex(Db {
                 eav: new_eav,
                 ave: new_ave,
                 aev: new_aev,
                 vae: new_vae,
-                idents: self.current_db.idents.clone(),
-                schema: self.current_db.schema.clone(),
-                store: self.current_db.store.clone(),
-            }
-        };
+                idents: checkpoint.idents.clone(),
+                schema: checkpoint.schema.clone(),
+                store: checkpoint.store.clone(),
+            }))
+        });
 
-        // FIXME: Make all this async-safe.
-        save_contents(&new_db, self.next_id, self.latest_tx)?;
-        self.current_db = new_db;
+        Ok(())
+    }
+
+    fn switch_to_rebuilt_indexes(&mut self, new_db: Db) -> Result<()> {
+        // First, replay the catchup transactions into the new DB.
+        // (This function should never be called when catchup_txs is
+        // None.)
+        println!("Replaying transactions on rebuilt indices...");
+        let mut final_db = new_db;
+        for tx in self.catchup_txs.clone().unwrap() {
+            for rec in tx.records {
+                final_db = add(&final_db, rec)?;
+            }
+        }
+
+        println!("Switching over to rebuilt indices.");
+        save_contents(&final_db, self.next_id, self.latest_tx)?;
+        self.current_db = final_db;
+        self.catchup_txs = None;
+
+        // If the mem index filled up during the rebuild, we need to
+        // immediately kick off another.
+        if self.throttled {
+            self.rebuild_indices()?;
+            println!("Unthrottling.");
+            self.throttled = false;
+        }
 
         Ok(())
     }
@@ -218,12 +269,31 @@ impl Transactor {
         // saving the contents does not, the tx log will be polluted.
         self.store.add_tx(&raw_tx)?;
         self.latest_tx = raw_tx.id;
+        if let Some(txs) = self.catchup_txs.as_mut() {
+            println!("recording tx for catchup");
+            txs.push(raw_tx.clone());
+        }
+
         save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
         self.current_db = db_after;
 
         if self.current_db.mem_index_size() > 10000 {
-            println!("Rebuilding indices...");
-            self.rebuild_indices()?;
+            match self.catchup_txs {
+                Some(_) => {
+                    if self.current_db.mem_index_size() > 20000 {
+                        println!(
+                            "Mem limit high water mark surpassed during reindexing -- throttling transactions."
+                        );
+                        self.throttled = true;
+                    }
+                }
+                None => self.rebuild_indices()?,
+            }
+        }
+
+        if self.throttled {
+            println!("throttled - sleeping");
+            thread::sleep(Duration::from_millis(1000));
         }
 
         Ok(TxReport::Success { new_entities })
@@ -241,10 +311,14 @@ impl Transactor {
         loop {
             match self.recv.recv().unwrap() {
                 Event::Tx(tx, cb_chan) => {
+                    // TODO: check for more txs & batch them.
                     let result = self.process_tx(tx)?;
                     // We don't actually care whether the client gets
                     // the report or not.
                     let _ = cb_chan.send(result);
+                }
+                Event::RebuiltIndex(new_db) => {
+                    self.switch_to_rebuilt_indexes(new_db)?;
                 }
                 // TODO: implement event for reindexing.
             }
