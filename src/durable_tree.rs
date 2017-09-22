@@ -233,6 +233,13 @@ where
                             // first one of the right child, so it
                             // doesn't actually make a difference if
                             // the key exists in this node or not.
+                            if idx == 0 && links.len() == 0 {
+                                // Hack: empty interior node only
+                                // happens when the root is empty and
+                                // there are no leaves.
+                                // FIXME: Initialize the tree better to avoid this special case.
+                                return Ok(Iter { stack, store: self.store.clone() });
+                            }
                             stack.push(IterState {
                                 item_idx: idx,
                                 link_idx: idx + 1,
