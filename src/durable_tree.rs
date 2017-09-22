@@ -194,8 +194,8 @@ where
 
             let node = self.store.get_node(&node_ref)?;
 
-            match node {
-                Node::Leaf { items } => {
+            match *node {
+                Node::Leaf { ref items } => {
                     match items.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) => {
                             stack.push(IterState {
@@ -222,7 +222,10 @@ where
                         }
                     }
                 }
-                Node::Interior { keys, links } => {
+                Node::Interior {
+                    ref keys,
+                    ref links,
+                } => {
                     match keys.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) | Err(idx) => {
                             // If the key is found in an interior
@@ -289,7 +292,7 @@ where
                 Err(e) => return Some(Err(e)),
             };
 
-            match node {
+            match *node {
                 Node::Leaf { ref items } => {
                     if item_idx < items.len() {
                         let item: &T = items.get(item_idx).unwrap();
@@ -303,7 +306,7 @@ where
 
                     }
                 }
-                Node::Interior { links, .. } => {
+                Node::Interior { ref links, .. } => {
                     if link_idx < links.len() {
                         // Re-push own dir for later.
                         self.stack.push(IterState {
@@ -329,7 +332,7 @@ where
 /// network and deserialization overhead.
 #[derive(Clone)]
 pub struct NodeStore<T> {
-    cache: Arc<Mutex<LruCache<String, Node<T>>>>,
+    cache: Arc<Mutex<LruCache<String, Arc<Node<T>>>>>,
     store: Arc<KVStore>,
 }
 
@@ -354,7 +357,7 @@ where
     }
 
     /// Fetches and deserializes the node with the given key.
-    fn get_node(&self, key: &str) -> Result<Node<T>> {
+    fn get_node(&self, key: &str) -> Result<Arc<Node<T>>> {
         let mut cache = self.cache.lock().unwrap();
         let res = cache.get_mut(key).map(|n| n.clone());
         match res {
@@ -362,7 +365,7 @@ where
             None => {
                 let serialized = self.store.get(key)?;
                 let mut de = Deserializer::new(&serialized[..]);
-                let node: Node<T> = Deserialize::deserialize(&mut de)?;
+                let node: Arc<Node<T>> = Arc::new(Deserialize::deserialize(&mut de)?);
                 cache.insert(key.to_string(), node.clone());
                 Ok(node.clone())
             }

@@ -320,7 +320,6 @@ impl Transactor {
                 Event::RebuiltIndex(new_db) => {
                     self.switch_to_rebuilt_indexes(new_db)?;
                 }
-                // TODO: implement event for reindexing.
             }
         }
     }
