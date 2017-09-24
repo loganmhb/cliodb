@@ -45,7 +45,7 @@ impl Db {
     }
 
     fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
-        let expanded = clause.substitute(binding)?;
+        let expanded = clause.substitute(binding, &self.idents)?;
         match expanded {
             // ?e a v => use the ave index
             Clause {

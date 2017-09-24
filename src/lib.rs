@@ -246,7 +246,7 @@ pub enum TxReport {
 type Binding = HashMap<Var, Value>;
 
 impl Clause {
-    fn substitute(&self, env: &Binding) -> Result<Clause> {
+    fn substitute(&self, env: &Binding, idents: &IdentMap) -> Result<Clause> {
         let entity = match &self.entity {
             &Term::Bound(_) => self.entity.clone(),
             &Term::Unbound(ref var) => {
@@ -267,6 +267,9 @@ impl Clause {
                 if let Some(val) = env.get(&var) {
                     match val {
                         &Value::String(ref s) => Term::Bound(s.clone()),
+                        &Value::Entity(e) => idents.get_ident(e)
+                            .map(Term::Bound)
+                            .expect("non-attribute bound in attribute position"),
                         _ => return Err("type mismatch".into()),
                     }
                 } else {
