@@ -123,6 +123,8 @@ impl Transactor {
                     throttled: false,
                 };
 
+                save_contents(&tx.current_db, tx.next_id, tx.last_indexed_tx)?;
+                // FIXME: Is this necessary?
                 tx.rebuild_indices()?;
                 Ok(tx)
             }

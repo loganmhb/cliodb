@@ -18,9 +18,11 @@ use super::Result;
 pub trait KVStore: Send + Sync {
     /// Set a value in the store. This method implies only eventual consistency;
     /// use `compare_and_set` when consistency is required.
+    // FIXME: This is currently used for setting db_contents as well as index segments,
+    // which isn't ACID-safe.
     fn set(&self, key: &str, value: &[u8]) -> Result<()>;
 
-    // TODO: implement: fn compare_and_set
+    // TODO: implement: fn compare_and_set for db metadata
 
     /// Get a value out of the store.
     fn get(&self, key: &str) -> Result<Vec<u8>>;
