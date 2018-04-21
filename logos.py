@@ -60,9 +60,7 @@ class Db(object):
     def __init__(self, db_ptr):
         self.db_ptr = db_ptr
 
-    # FIXME: not nice for the user to have to call close() to avoid a
-    # leak
-    def close(self):
+    def __del__(self):
         logos.drop_db(self.db_ptr)
 
 class Logos(object):
@@ -73,12 +71,18 @@ class Logos(object):
 
     def db(self):
         db_ptr = c_void_p()
-        logos.get_db(self.conn_ptr, byref(db_ptr))
+        err = logos.get_db(self.conn_ptr, byref(db_ptr))
+        if err < 0:
+            # TODO: Set an error string
+            raise Error("Error opening db")
         return Db(db_ptr)
 
     def transact(self, tx_string):
         tx_bytes = tx_string.encode('utf-8')
-        return logos.transact(self.conn_ptr, tx_bytes)
+        ret = logos.transact(self.conn_ptr, tx_bytes)
+        if ret < 1:
+            # TODO: Set an error string
+            raise Error("Error executing transaction")
 
     def close(self):
         logos.close(self.conn_ptr)

@@ -185,6 +185,10 @@ impl<S: ToString> From<S> for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
+/// A struct representing the answer to a query. The first term is the find clause of the query,
+/// used to order the result bindings into tuples for display; the second term is a vector of bindings
+/// that satisfy the query.
+// FIXME: this should just be a Vec<Vec<Value>>, probably.
 #[derive(Debug, PartialEq)]
 pub struct QueryResult(pub Vec<Var>, pub Vec<HashMap<Var, Value>>);
 
