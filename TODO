@@ -3,3 +3,4 @@
 - Make InteriorNode and LeafNode different types to enforce invariants on add_leaf & persist
 - Implement rebuild_with_novelty
 - Write some tests that use the FFI (maybe via Hypothesis?)
+- Smart query planning

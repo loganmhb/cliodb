@@ -41,7 +41,6 @@ use std::result;
 
 pub mod db;
 pub mod parser;
-pub mod string_ref;
 pub mod index;
 pub mod backends;
 pub mod tx;
