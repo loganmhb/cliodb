@@ -76,17 +76,20 @@ use std::collections::HashSet;
 ///! like this, but in the absence of a more sophisticated planner it
 ///! at least offers some control over performance.
 
+/// A representation of an execution plan for answering a query or
+/// a part of one.  It consists of either a simple fetch or a way of
+/// combining or building on a previous plan.
 #[derive(Clone, Debug, PartialEq, Eq)]
-pub enum PlanStep {
-    Join(Box<PlanStep>, Box<PlanStep>),
+pub enum Plan {
+    Join(Box<Plan>, Box<Plan>),
     Fetch(Clause),
-    LookupEach(Box<PlanStep>, Clause),
-    CartesianProduct(Vec<Box<PlanStep>>),
+    LookupEach(Box<Plan>, Clause),
+    CartesianProduct(Vec<Box<Plan>>),
 }
 
-impl PlanStep {
+impl Plan {
     fn outputs(&self) -> HashSet<Var> {
-        use self::PlanStep::*;
+        use self::Plan::*;
         match self {
             &Join(ref plan_a, ref plan_b) => plan_a.outputs()
                 .union(&plan_b.outputs())
@@ -104,7 +107,8 @@ impl PlanStep {
         }
     }
 }
-fn overlaps(clause: &Clause, relation: &PlanStep) -> bool {
+
+fn overlaps(clause: &Clause, relation: &Plan) -> bool {
     let outputs = relation.outputs();
     for var in clause.unbound_vars() {
         if outputs.contains(&var) {
@@ -115,8 +119,8 @@ fn overlaps(clause: &Clause, relation: &PlanStep) -> bool {
     return false;
 }
 
-fn plan(q: Query) -> PlanStep {
-    let mut relations: Vec<PlanStep> = vec![];
+fn plan(q: Query) -> Plan {
+    let relations: Vec<Plan> = vec![];
     let final_relations = q.clauses.iter().fold(vec![], |relations, clause| {
         // Cases to care about:
         //
@@ -131,7 +135,7 @@ fn plan(q: Query) -> PlanStep {
         // 3. All unbound vars in the clause match the same relation
         //    (at least one).  In this case no data fetch is
         //    necessary; the clause acts only as a constraint. (TODO)
-        let (mut overlapping, mut non_overlapping): (Vec<PlanStep>, Vec<PlanStep>) = relations
+        let (mut overlapping, mut non_overlapping): (Vec<Plan>, Vec<Plan>) = relations
             .iter()
             .cloned()
             .partition(|r| overlaps(&clause, &r));
@@ -146,7 +150,7 @@ fn plan(q: Query) -> PlanStep {
             }
 
             // Replace the old Plan with a new Plan that contains it as a child
-            overlapping[0] = PlanStep::LookupEach(Box::new(prior_rel), clause.clone());
+            overlapping[0] = Plan::LookupEach(Box::new(prior_rel), clause.clone());
 
             // If there are multiple relations that overlap with the
             // clause, they can now be joined.
@@ -154,7 +158,7 @@ fn plan(q: Query) -> PlanStep {
             non_overlapping
         } else {
             non_overlapping.push(
-                PlanStep::Fetch(clause.clone())
+                Plan::Fetch(clause.clone())
             );
             non_overlapping
         }
@@ -163,13 +167,13 @@ fn plan(q: Query) -> PlanStep {
     if final_relations.len() == 1 {
         final_relations[0].clone()
     } else {
-        PlanStep::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())
+        Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())
     }
 }
 
 /// Given a vector of joinable relations, returns plan step
 /// representing the necessary joins.
-fn join(mut relations: Vec<PlanStep>) -> PlanStep {
+fn join(mut relations: Vec<Plan>) -> Plan {
     // Can't join zero relations
     assert!(relations.len() > 0);
 
@@ -179,7 +183,7 @@ fn join(mut relations: Vec<PlanStep>) -> PlanStep {
         first_rel,
         |acc_step, next_step| {
             assert!(!acc_step.outputs().is_disjoint(&next_step.outputs()));
-            PlanStep::Join(Box::new(acc_step), Box::new(next_step))
+            Plan::Join(Box::new(acc_step), Box::new(next_step))
         }
     )
 }
@@ -194,7 +198,7 @@ mod tests {
     use queries::query::{Query, Clause, Term};
     use queries::query::Term::{Bound, Unbound};
     use queries::planner;
-    use queries::planner::{PlanStep};
+    use queries::planner::{Plan};
 
     #[test]
     fn test_plan_single_clause() {
@@ -207,7 +211,7 @@ mod tests {
         let plan = planner::plan(query);
         assert_eq!(
             plan,
-            PlanStep::Fetch(clause)
+            Plan::Fetch(clause)
         )
     }
 
@@ -220,10 +224,10 @@ mod tests {
             clauses: vec![clause_a.clone(), clause_b.clone()],
             constraints: vec![],
         };
-        let fetch_plan = PlanStep::Fetch(clause_a);
+        let fetch_plan = Plan::Fetch(clause_a);
         assert_eq!(
             planner::plan(query),
-            PlanStep::LookupEach(Box::new(fetch_plan), clause_b)
+            Plan::LookupEach(Box::new(fetch_plan), clause_b)
         )
     }
 
@@ -260,19 +264,19 @@ mod tests {
         }
     }
 
-    fn arb_plan_step() -> BoxedStrategy<PlanStep> {
-        let leaf = arb_clause().prop_map(|c| PlanStep::Fetch(c));
+    fn arb_plan_step() -> BoxedStrategy<Plan> {
+        let leaf = arb_clause().prop_map(|c| Plan::Fetch(c));
         leaf.prop_recursive(
             4,
             64,
             5,
             // FIXME: make sure generated plans make sense (joins + lookups are not disjoint)
             |inner| prop_oneof![
-                (inner.clone(), inner.clone()).prop_map(|(a, b)| PlanStep::Join(Box::new(a), Box::new(b))),
-                (inner.clone(), arb_clause()).prop_map(|(p, c)| PlanStep::LookupEach(Box::new(p), c)),
+                (inner.clone(), inner.clone()).prop_map(|(a, b)| Plan::Join(Box::new(a), Box::new(b))),
+                (inner.clone(), arb_clause()).prop_map(|(p, c)| Plan::LookupEach(Box::new(p), c)),
                 prop::collection::vec(inner.clone(), 0..5)
                     .prop_map(|v| v.into_iter().map(|item| Box::new(item)).collect())
-                    .prop_map(PlanStep::CartesianProduct)
+                    .prop_map(Plan::CartesianProduct)
             ].boxed()
         ).boxed()
     }
@@ -309,12 +313,12 @@ mod tests {
             clauses: vec![clause_a.clone(), clause_b.clone(), clause_c.clone()],
             constraints: vec![],
         };
-        let fetch_plan_a = PlanStep::Fetch(clause_a);
-        let fetch_plan_b = PlanStep::Fetch(clause_b);
-        let lookup_plan = PlanStep::LookupEach(Box::new(fetch_plan_a), clause_c);
+        let fetch_plan_a = Plan::Fetch(clause_a);
+        let fetch_plan_b = Plan::Fetch(clause_b);
+        let lookup_plan = Plan::LookupEach(Box::new(fetch_plan_a), clause_c);
         assert_eq!(
             planner::plan(query),
-            PlanStep::Join(Box::new(lookup_plan), Box::new(fetch_plan_b))
+            Plan::Join(Box::new(lookup_plan), Box::new(fetch_plan_b))
         );
     }
 }

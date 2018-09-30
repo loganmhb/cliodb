@@ -100,7 +100,7 @@ impl Db {
         }
     }
 
-    pub fn query(&self, query: &Query) -> Result<QueryResult> {
+    pub fn query(&self, query: &Query) -> Result<Relation> {
         query.validate()?;
 
         // TODO: automatically bind ?tx in queries
@@ -148,7 +148,7 @@ impl Db {
                 .collect();
         }
 
-        Ok(QueryResult(query.find.clone(), bindings))
+        Ok(Relation(query.find.clone(), bindings))
     }
 }
 

@@ -4,7 +4,7 @@ use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::{c_char, c_int, c_long};
 
-use logos::{Result, Value, QueryResult, TxReport};
+use logos::{Result, Value, Relation, TxReport};
 use logos::{parse_query, parse_tx};
 use logos::conn::{Conn, store_from_uri};
 use logos::db::Db;
@@ -130,7 +130,7 @@ pub extern "C" fn query(
     };
 
     match db.query(&q) {
-        Ok(QueryResult(vars, rows)) => {
+        Ok(Relation(vars, rows)) => {
             for row in rows {
                 let row_vec: Vec<CValue> =
                     vars.iter().map(|k| row.get(k).unwrap().into()).collect();

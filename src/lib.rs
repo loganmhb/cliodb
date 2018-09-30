@@ -190,11 +190,10 @@ pub type Result<T> = result::Result<T, Error>;
 /// A struct representing the answer to a query. The first term is the find clause of the query,
 /// used to order the result bindings into tuples for display; the second term is a vector of bindings
 /// that satisfy the query.
-// FIXME: this should just be a Vec<Vec<Value>>, probably.
 #[derive(Debug, PartialEq)]
-pub struct QueryResult(pub Vec<Var>, pub Vec<HashMap<Var, Value>>);
+pub struct Relation(pub Vec<Var>, pub Vec<HashMap<Var, Value>>);
 
-impl Display for QueryResult {
+impl Display for Relation {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let num_columns = self.0.len();
         let align = pt::format::Alignment::CENTER;
@@ -340,7 +339,7 @@ pub mod tests {
     use conn::Conn;
     use db::Db;
 
-    fn expect_query_result(query: &Query, expected: QueryResult) {
+    fn expect_query_result(query: &Query, expected: Relation) {
         let db = test_db();
         let result = db.query(query).unwrap();
         assert_eq!(expected, result);
@@ -397,7 +396,7 @@ pub mod tests {
         // find ?a where (?a name "Bob")
         expect_query_result(
             &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("a")],
                 vec![
                     iter::once((Var::new("a"), Value::Entity(Entity(10)))).collect(),
@@ -411,7 +410,7 @@ pub mod tests {
         // find ?a where (0 name ?a)
         expect_query_result(
             &parse_query("find ?a where (10 name ?a)").unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("a")],
                 vec![
                     iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
@@ -427,7 +426,7 @@ pub mod tests {
     // fn test_query_unknown_attribute() {
     //     // find ?a where (1 ?a "John")
     //     expect_query_result(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
-    //                         QueryResult(vec![Var::new("a")],
+    //                         Relation(vec![Var::new("a")],
     //                                     vec![
     //         iter::once((Var::new("a"),
     //                     Value::String("name".into())))
@@ -440,7 +439,7 @@ pub mod tests {
         // find ?a ?b where (?a name ?b)
         expect_query_result(
             &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
                     vec![
@@ -463,7 +462,7 @@ pub mod tests {
         // find ?a ?b where (?a name ?b) (< ?b "Charlie")
         expect_query_result(
             &parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
                     vec![
@@ -480,7 +479,7 @@ pub mod tests {
     fn test_query_explicit_join() {
         expect_query_result(
             &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("b")],
                 vec![
                     iter::once((Var::new("b"), Value::Entity(Entity(11)))).collect(),
@@ -495,7 +494,7 @@ pub mod tests {
             &parse_query(
                 "find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)",
             ).unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("c")],
                 vec![
                     iter::once((Var::new("c"), Value::String("John".into()))).collect(),
@@ -523,7 +522,7 @@ pub mod tests {
 
         assert_eq!(
             result,
-            QueryResult(vec![Var::new("a"), Var::new("b")], vec![])
+            Relation(vec![Var::new("a"), Var::new("b")], vec![])
         );
     }
     #[bench]
