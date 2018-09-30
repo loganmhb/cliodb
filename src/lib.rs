@@ -1,5 +1,3 @@
-#![feature(collections_range)]
-#![feature(conservative_impl_trait)]
 #![cfg_attr(test, feature(test))]
 #![feature(slice_patterns)]
 
@@ -38,6 +36,7 @@ use itertools::*;
 use std::fmt::{self, Display, Formatter};
 use std::collections::HashMap;
 use std::iter;
+use std::ops::RangeBounds;
 use std::result;
 
 pub mod db;
@@ -60,7 +59,6 @@ use backends::KVStore;
 pub use ident::IdentMap;
 
 use std::collections::Bound;
-use std::collections::range::RangeArgument;
 use chrono::prelude::{DateTime, Utc};
 
 // The Record struct represents a single (entity, attribute, value,
@@ -121,12 +119,12 @@ impl Record {
     }
 }
 
-impl RangeArgument<Record> for Record {
-    fn start(&self) -> Bound<&Record> {
+impl RangeBounds<Record> for Record {
+    fn start_bound(&self) -> Bound<&Record> {
         Bound::Included(&self)
     }
 
-    fn end(&self) -> Bound<&Record> {
+    fn end_bound(&self) -> Bound<&Record> {
         Bound::Unbounded
     }
 }
