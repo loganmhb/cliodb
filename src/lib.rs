@@ -31,6 +31,10 @@ extern crate tokio_service;
 #[macro_use]
 extern crate lazy_static;
 
+#[cfg(test)]
+#[macro_use]
+extern crate proptest;
+
 use itertools::*;
 
 use std::fmt::{self, Display, Formatter};
@@ -47,6 +51,7 @@ pub mod tx;
 pub mod network;
 pub mod conn;
 mod query;
+mod queries;
 mod rbtree;
 mod durable_tree;
 mod ident;
