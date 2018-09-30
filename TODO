@@ -4,3 +4,5 @@
 - Implement rebuild_with_novelty
 - Write some tests that use the FFI (maybe via Hypothesis?)
 - Smart query planning
+-- Separate query handling into parser, query AST, query (query is query AST with idents inlined)
+-- Plan queries with fetch, join, lookup instead of always doing lookups
