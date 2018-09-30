@@ -39,7 +39,8 @@ pub extern "C" fn get_db(conn_ptr: *mut Conn, ret_ptr: *mut *mut Db) -> c_int {
             unsafe { *ret_ptr = mem::transmute(Box::new(db)) };
             return 0;
         }
-        Err(_) => {
+        Err(e) => {
+            println!("{:?}", e);
             return -1;
         }
     }
@@ -123,7 +124,7 @@ pub extern "C" fn query(
         Ok(query) => query,
         Err(err) => {
             // FIXME: implement a more robust way to retrieve error msgs
-            println!("{}", err);
+            println!("error {}", err);
             return -1;
         }
     };
@@ -143,7 +144,8 @@ pub extern "C" fn query(
             }
             return 0;
         }
-        Err(_) => {
+        Err(e) => {
+            println!("error {:?}", e);
             return -1;
         }
     }
@@ -156,14 +158,23 @@ pub extern "C" fn transact(conn_ptr: *mut Conn, tx_ptr: *const c_char) -> c_int 
     let tx = match parse_tx(tx_str.to_str().unwrap()) {
         Ok(tx) => tx,
         // FIXME: signal error
-        Err(_) => return -1,
+        Err(e) => {
+            println!("error {:?}", e);
+            return -1;
+        }
     };
 
     match conn.transact(tx) {
         // FIXME: Return list of new entities
         Ok(TxReport::Success { .. }) => return 0,
         // FIXME: Signal error
-        Ok(TxReport::Failure(_)) => return -1,
-        Err(_) => return -1,
+        Ok(TxReport::Failure(f)) => {
+            println!("error {:?}", f);
+            return -1;
+        },
+        Err(e) => {
+            println!("error {:?}", e);
+            return -1;
+        },
     }
 }

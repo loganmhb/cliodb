@@ -74,15 +74,16 @@ class Logos(object):
         err = logos.get_db(self.conn_ptr, byref(db_ptr))
         if err < 0:
             # TODO: Set an error string
-            raise Error("Error opening db")
+            raise Exception("Error opening db")
         return Db(db_ptr)
 
     def transact(self, tx_string):
         tx_bytes = tx_string.encode('utf-8')
         ret = logos.transact(self.conn_ptr, tx_bytes)
-        if ret < 1:
+        if ret < 0:
             # TODO: Set an error string
-            raise Error("Error executing transaction")
+            print("return value {}".format(ret))
+            raise Exception("Error executing transaction")
 
     def close(self):
         logos.close(self.conn_ptr)
