@@ -4,6 +4,10 @@ use std::sync::Arc;
 use {Result, EAVT, AEVT, AVET, VAET};
 use index::Index;
 
+// TODO move Relation into lib.rs and ditch this require
+use queries::execution;
+use queries::query;
+
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ValueType {
     String,
@@ -98,6 +102,58 @@ impl Db {
                 )
             }
         }
+    }
+
+    /// Given a clause, fetch the relation of matching records.
+    pub fn fetch(&self, clause: &query::Clause) -> Result<execution::Relation> {
+        let mut vars = vec![];
+        let mut selectors: Vec<Box<Fn(&Record) -> Value>> = vec![];
+
+        match clause.entity {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| Value::Entity(record.entity)));
+            }
+        };
+
+        match clause.attribute {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| Value::Entity(record.attribute)));
+            }
+        };
+        match clause.value {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| record.value.clone()));
+            }
+        };
+
+        let mut values: Vec<Vec<Value>> = vec![];
+        // FIXME: will need to remove retracted records from the relation
+        // (and eventually deal with cardinality:one)
+
+        // temp hack until query implementation is fully swapped over
+        let shim_clause = Clause::new(
+            clause.entity.clone(),
+            match clause.attribute {
+                Term::Bound(attr) => Term::Bound(self.idents.get_ident(attr).unwrap()),
+                Term::Unbound(ref var) => Term::Unbound(var.clone()),
+            },
+            clause.value.clone()
+        );
+        for record in self.records_matching(&shim_clause, &HashMap::new())? {
+            let mut tuple: Vec<Value> = vec![];
+            for selector in selectors.iter() {
+                tuple.push(selector(&record));
+            }
+            values.push(tuple);
+        }
+
+        Ok(execution::Relation(vars, values))
     }
 
     pub fn query(&self, query: &Query) -> Result<Relation> {
@@ -265,5 +321,21 @@ mod tests {
         let rec = &matching[0];
         assert_eq!(rec.entity, Entity(10));
         assert_eq!(rec.value, Value::String("Bob".into()));
+    }
+
+    #[test]
+    fn test_fetch() {
+        let name_entity = test_db().idents.get_entity("name").unwrap();
+        let clause = query::Clause::new(
+            Term::Unbound("e".into()),
+            Term::Bound(name_entity),
+            Term::Unbound("n".into()),
+        );
+        let relation = test_db().fetch(&clause).unwrap();
+        assert_eq!(relation.0, vec!["e".into(), "n".into()]);
+        assert_eq!(relation.1, vec![
+            vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
+            vec![Value::Entity(Entity(11)), Value::String("John".into())]
+        ]);
     }
 }

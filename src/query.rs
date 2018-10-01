@@ -1,4 +1,5 @@
 use {Result, Entity, Value, Binding};
+use queries::query::{Term, Var};
 use std::collections::HashSet;
 
 // A query looks like `find ?var where (?var <attribute> <value>)`
@@ -74,30 +75,6 @@ impl Clause {
             attribute: a,
             value: v,
         }
-    }
-}
-
-#[derive(Debug, PartialEq, Eq, Clone)]
-pub enum Term<T> {
-    Bound(T),
-    Unbound(Var),
-}
-
-// A free [logic] variable
-#[derive(Debug, Hash, PartialEq, Eq, Clone)]
-pub struct Var {
-    pub name: String,
-}
-
-impl Var {
-    pub fn new<T: Into<String>>(name: T) -> Var {
-        Var::from(name)
-    }
-}
-
-impl<T: Into<String>> From<T> for Var {
-    fn from(x: T) -> Self {
-        Var { name: x.into() }
     }
 }
 

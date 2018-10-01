@@ -1,4 +1,5 @@
-use {Entity, Value};
+use std::collections::HashMap;
+use {Entity, Value, Result};
 
 pub struct Query {
     pub find: Vec<Var>,
@@ -58,6 +59,49 @@ impl Clause {
         }
 
         return unbound;
+    }
+
+    fn substitute(&self, env: &HashMap<Var, Value>) -> Result<Clause> {
+        let entity = match &self.entity {
+            &Term::Bound(_) => self.entity.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    match *val {
+                        Value::Entity(e) => Term::Bound(e),
+                        _ => return Err("type mismatch".into()),
+                    }
+                } else {
+                    self.entity.clone()
+                }
+            }
+        };
+
+        let attribute = match &self.attribute {
+            &Term::Bound(_) => self.attribute.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    match val {
+                        &Value::Entity(e) => Term::Bound(e),
+                        _ => return Err("type mismatch".into()),
+                    }
+                } else {
+                    self.attribute.clone()
+                }
+            }
+        };
+
+        let value = match &self.value {
+            &Term::Bound(_) => self.value.clone(),
+            &Term::Unbound(ref var) => {
+                if let Some(val) = env.get(&var) {
+                    Term::Bound(val.clone())
+                } else {
+                    self.value.clone()
+                }
+            }
+        };
+
+        Ok(Clause::new(entity, attribute, value))
     }
 }
 

@@ -57,7 +57,8 @@ mod durable_tree;
 mod ident;
 
 pub use parser::{parse_input, parse_tx, parse_query, Input};
-use query::{Query, Clause, Term, Var};
+use query::{Query, Clause};
+use queries::query::{Term, Var};
 use index::Comparator;
 use backends::KVStore;
 pub use ident::IdentMap;
@@ -133,7 +134,7 @@ impl RangeBounds<Record> for Record {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
 pub enum Value {
     String(String),
     Ident(String),

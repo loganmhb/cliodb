@@ -88,7 +88,7 @@ pub enum Plan {
 }
 
 impl Plan {
-    fn outputs(&self) -> HashSet<Var> {
+    pub fn outputs(&self) -> HashSet<Var> {
         use self::Plan::*;
         match self {
             &Join(ref plan_a, ref plan_b) => plan_a.outputs()
@@ -106,6 +106,58 @@ impl Plan {
                 .collect(),
         }
     }
+
+    pub fn for_query(q: Query) -> Plan {
+        let relations: Vec<Plan> = vec![];
+        let final_relations = q.clauses.iter().fold(vec![], |relations, clause| {
+            // Cases to care about:
+            //
+            // 1. Some unbound vars in clause match at least one relation.
+            //    Do an each-lookup, by binding the clause to each element
+            //    in turn of the relation matching the most fields.
+            //
+            // 2. No vars in clause match a relation. In this case, add a
+            //    new Plan to fetch the clause and add it to the list of
+            //    current relations.
+            //
+            // 3. All unbound vars in the clause match the same relation
+            //    (at least one).  In this case no data fetch is
+            //    necessary; the clause acts only as a constraint. (TODO)
+            let (mut overlapping, mut non_overlapping): (Vec<Plan>, Vec<Plan>) = relations
+                .iter()
+                .cloned()
+                .partition(|r| overlaps(&clause, &r));
+
+            if overlapping.len() > 0 {
+                // add clause to relation
+                let prior_rel = overlapping[0].clone();
+                let mut outputs: HashSet<Var> = HashSet::new();
+
+                for output in prior_rel.outputs().iter().chain(clause.unbound_vars().iter()) {
+                    outputs.insert(output.clone());
+                }
+
+                // Replace the old Plan with a new Plan that contains it as a child
+                overlapping[0] = Plan::LookupEach(Box::new(prior_rel), clause.clone());
+
+                // If there are multiple relations that overlap with the
+                // clause, they can now be joined.
+                non_overlapping.push(join(overlapping));
+                non_overlapping
+            } else {
+                non_overlapping.push(
+                    Plan::Fetch(clause.clone())
+                );
+                non_overlapping
+            }
+        });
+
+        if final_relations.len() == 1 {
+            final_relations[0].clone()
+        } else {
+            Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())
+        }
+    }
 }
 
 fn overlaps(clause: &Clause, relation: &Plan) -> bool {
@@ -119,57 +171,6 @@ fn overlaps(clause: &Clause, relation: &Plan) -> bool {
     return false;
 }
 
-fn plan(q: Query) -> Plan {
-    let relations: Vec<Plan> = vec![];
-    let final_relations = q.clauses.iter().fold(vec![], |relations, clause| {
-        // Cases to care about:
-        //
-        // 1. Some unbound vars in clause match at least one relation.
-        //    Do an each-lookup, by binding the clause to each element
-        //    in turn of the relation matching the most fields.
-        //
-        // 2. No vars in clause match a relation. In this case, add a
-        //    new Plan to fetch the clause and add it to the list of
-        //    current relations.
-        //
-        // 3. All unbound vars in the clause match the same relation
-        //    (at least one).  In this case no data fetch is
-        //    necessary; the clause acts only as a constraint. (TODO)
-        let (mut overlapping, mut non_overlapping): (Vec<Plan>, Vec<Plan>) = relations
-            .iter()
-            .cloned()
-            .partition(|r| overlaps(&clause, &r));
-
-        if overlapping.len() > 0 {
-            // add clause to relation
-            let prior_rel = overlapping[0].clone();
-            let mut outputs: HashSet<Var> = HashSet::new();
-
-            for output in prior_rel.outputs().iter().chain(clause.unbound_vars().iter()) {
-                outputs.insert(output.clone());
-            }
-
-            // Replace the old Plan with a new Plan that contains it as a child
-            overlapping[0] = Plan::LookupEach(Box::new(prior_rel), clause.clone());
-
-            // If there are multiple relations that overlap with the
-            // clause, they can now be joined.
-            non_overlapping.push(join(overlapping));
-            non_overlapping
-        } else {
-            non_overlapping.push(
-                Plan::Fetch(clause.clone())
-            );
-            non_overlapping
-        }
-    });
-
-    if final_relations.len() == 1 {
-        final_relations[0].clone()
-    } else {
-        Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())
-    }
-}
 
 /// Given a vector of joinable relations, returns plan step
 /// representing the necessary joins.
@@ -208,7 +209,7 @@ mod tests {
             clauses: vec![clause.clone()],
             constraints: vec![],
         };
-        let plan = planner::plan(query);
+        let plan = Plan::for_query(query);
         assert_eq!(
             plan,
             Plan::Fetch(clause)
@@ -226,7 +227,7 @@ mod tests {
         };
         let fetch_plan = Plan::Fetch(clause_a);
         assert_eq!(
-            planner::plan(query),
+            Plan::for_query(query),
             Plan::LookupEach(Box::new(fetch_plan), clause_b)
         )
     }
@@ -317,7 +318,7 @@ mod tests {
         let fetch_plan_b = Plan::Fetch(clause_b);
         let lookup_plan = Plan::LookupEach(Box::new(fetch_plan_a), clause_c);
         assert_eq!(
-            planner::plan(query),
+            Plan::for_query(query),
             Plan::Join(Box::new(lookup_plan), Box::new(fetch_plan_b))
         );
     }

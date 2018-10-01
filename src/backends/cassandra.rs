@@ -29,7 +29,7 @@ impl CassandraStore {
 
         let store = CassandraStore { pool: pool.clone() };
 
-        let mut session = pool.get()?;
+        let session = pool.get()?;
         // TODO: detect new Cass cluster + set up logos keyspace & logos_kvs table
         // real TODO: do that in a different `create-db` function
         // FIXME: This seems to fail when the tables don't already exist.
@@ -64,7 +64,7 @@ impl KVStore for CassandraStore {
         let select_query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = ?")
             .values(vec![Value::new_normal(key)])
             .finalize();
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
         let result = session.query(select_query, false, false)?;
         let rows_result = result.get_body()?.into_rows();
         match rows_result {
