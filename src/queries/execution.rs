@@ -1,11 +1,11 @@
 use std::collections::{HashSet, HashMap};
-use {Result, Value};
+use {Result, Value, Entity, Error};
 use db::Db;
-use queries::query::{Query, Var};
+use queries::query::{Query, Var, Clause, Term};
 use queries::planner::{Plan};
 
 // temporary definition -- will go in lib.rs
-#[derive(Debug, Clone)]
+#[derive(Debug, Clone, PartialEq, Eq)]
 pub struct Relation(pub Vec<Var>, pub Vec<Vec<Value>>);
 
 pub fn execute(query: Query, db: &Db) -> Result<Relation> {
@@ -22,10 +22,10 @@ fn execute_plan(plan: &Plan, db: &Db) -> Result<Relation> {
             // 2. hash-join the two relations on the join key (inner join)
             Ok(join(execute_plan(&plan_a, db)?, execute_plan(&plan_b, db)?))
         },
-        Plan::LookupEach(p, clause) => {
-            // for each binding in the relation, bind the clause and fetch matching records
-            // use results to build a new output relation including new vars which the clause binds
-            unimplemented!()
+        Plan::LookupEach(prior_plan, clause) => {
+            let relation = execute_plan(prior_plan, db)?;
+
+            lookup_each(db, relation, &clause)
         },
         Plan::Fetch(clause) => {
             db.fetch(clause)
@@ -40,6 +40,84 @@ fn execute_plan(plan: &Plan, db: &Db) -> Result<Relation> {
             Ok(cartesian_product(relations))
         },
     }
+}
+
+fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation> {
+    // for each binding in the relation, bind the clause and fetch matching records
+    // then, use results to build a new output relation including new vars which the clause binds
+    let Relation(in_vars, in_tuples) = relation;
+
+    let entity_index: Option<usize> = match clause.entity {
+        Term::Bound(_) => None,
+        Term::Unbound(ref var) => in_vars.iter().position(|v| v == var)
+    };
+
+    let attribute_index: Option<usize> = match clause.attribute {
+        Term::Bound(_) => None,
+        Term::Unbound(ref var) => in_vars.iter().position(|v| v == var)
+    };
+
+    let value_index: Option<usize> = match clause.value {
+        Term::Bound(_) => None,
+        Term::Unbound(ref var) => in_vars.iter().position(|v| v == var)
+    };
+
+    fn bind_clause(clause: &Clause, entity: Option<Value>, attribute: Option<Value>, value: Option<Value>) -> Result<Clause> {
+        let entity = if let Some(entity_val) = entity {
+            match entity_val {
+                Value::Entity(e) => Some(e),
+                other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in entity position for clause {:?}", other_value, clause]))
+            }
+        } else { None };
+
+        let attribute = if let Some(entity_val) = attribute {
+            match entity_val {
+                Value::Entity(e) => Some(e),
+                other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in entity position for clause {:?}", other_value, clause]))
+            }
+        } else { None };
+
+        Ok(Clause::new(
+            entity.map_or(clause.entity.clone(), |e|  Term::Bound(e)),
+            attribute.map_or(clause.attribute.clone(), |a| Term::Bound(a)),
+            value.map_or(clause.value.clone(), |v| Term::Bound(v))
+        ))
+    }
+
+    let substitute_clause = |tuple: &Vec<Value>| {
+        println!("Substituting clause with tuple {:?}", tuple);
+        bind_clause(
+            clause,
+            entity_index.map(|idx| tuple[idx].clone()),
+            attribute_index.map(|idx| tuple[idx].clone()),
+            value_index.map(|idx| tuple[idx].clone()),
+        )
+    };
+
+    // New vars will be set by the first query. Every subsequent query
+    // should return the same set of out vars.
+    let mut new_vars: Option<Vec<Var>> = None;
+    let mut out_tuples: Vec<Vec<Value>> = vec![];
+    for tuple in in_tuples {
+        let sub_clause = substitute_clause(&tuple)?;
+        println!("sub_clause {:?}", sub_clause);
+        let Relation(new_var_results, new_tuples) = db.fetch(&sub_clause)?;
+
+        println!("new tuples {:?}", new_tuples);
+        new_vars.get_or_insert_with(|| new_var_results.clone());
+        assert_eq!(new_vars.clone().unwrap(), new_var_results);
+
+        for new_tuple in new_tuples {
+            let mut out_tuple = tuple.clone();
+            out_tuple.extend(new_tuple);
+            println!("Appending {:?}", out_tuple);
+            out_tuples.push(out_tuple);
+        }
+    }
+
+    let mut out_vars = in_vars.clone();
+    out_vars.extend(new_vars.unwrap());
+    Ok(Relation(out_vars, out_tuples))
 }
 
 /// Implements the cartesian product of relations, none of which
@@ -166,6 +244,7 @@ fn hash_relation(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use tests::test_db;
     use {Value};
     use itertools::assert_equal;
 
@@ -195,6 +274,37 @@ mod tests {
     }
 
     #[test]
-    fn test_join_on_multiple_fields() {
+    fn test_lookup_each() {
+        let db = test_db();
+        let name_entity = db.idents.get_entity("name").unwrap();
+        let parent_entity = test_db().idents.get_entity("parent").unwrap();
+        let fetch_clause = Clause::new(
+            Term::Unbound("person".into()),
+            Term::Bound(name_entity),
+            Term::Bound(Value::String("Bob".into()))
+        );
+        println!("all records {:?}", db.fetch(&Clause::new(
+            Term::Unbound("e".into()),
+            Term::Unbound("a".into()),
+            Term::Unbound("v".into())
+        )));
+        let prior_relation = db.fetch(&fetch_clause).unwrap();
+        println!("prior relation {:?}", prior_relation);
+        let lookup_clause = Clause::new(
+            Term::Unbound("parent".into()),
+            Term::Bound(parent_entity),
+            Term::Unbound("person".into())
+        );
+
+        let result = lookup_each(&db, prior_relation, &lookup_clause).unwrap();
+        assert_eq!(
+            result,
+            Relation(
+                vec!["person".into(), "parent".into()],
+                vec![
+                    vec![Value::Entity(Entity(10)), Value::Entity(Entity(11))]
+                ]
+            )
+        )
     }
 }
