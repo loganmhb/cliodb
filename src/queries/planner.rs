@@ -85,6 +85,7 @@ pub enum Plan {
     Fetch(Clause),
     LookupEach(Box<Plan>, Clause),
     CartesianProduct(Vec<Box<Plan>>),
+    Project(Box<Plan>, Vec<Var>),
 }
 
 impl Plan {
@@ -104,6 +105,7 @@ impl Plan {
                 .iter()
                 .flat_map(|p| p.outputs().clone())
                 .collect(),
+            &Project(ref plan, ref projection) => projection.iter().cloned().collect(),
         }
     }
 
@@ -153,9 +155,9 @@ impl Plan {
         });
 
         if final_relations.len() == 1 {
-            final_relations[0].clone()
+            Plan::Project(Box::new(final_relations[0].clone()), q.find)
         } else {
-            Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())
+            Plan::Project(Box::new(Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())), q.find)
         }
     }
 }
@@ -204,15 +206,16 @@ mod tests {
     #[test]
     fn test_plan_single_clause() {
         let clause = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
+        let find = vec!["a".into(), "b".into()];
         let query = Query {
-            find: vec!["a".into(), "b".into()],
+            find: find.clone(),
             clauses: vec![clause.clone()],
             constraints: vec![],
         };
         let plan = Plan::for_query(query);
         assert_eq!(
             plan,
-            Plan::Fetch(clause)
+            Plan::Project(Box::new(Plan::Fetch(clause)), find)
         )
     }
 
@@ -220,15 +223,16 @@ mod tests {
     fn test_plan_fetch_and_lookup() {
         let clause_a = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
         let clause_b = Clause::new(Unbound("b".into()), Bound(Entity(2)), Unbound("c".into()));
+        let find = vec!["a".into(), "b".into(), "c".into()];
         let query = Query {
-            find: vec!["a".into(), "b".into(), "c".into()],
+            find: find.clone(),
             clauses: vec![clause_a.clone(), clause_b.clone()],
             constraints: vec![],
         };
         let fetch_plan = Plan::Fetch(clause_a);
         assert_eq!(
             Plan::for_query(query),
-            Plan::LookupEach(Box::new(fetch_plan), clause_b)
+            Plan::Project(Box::new(Plan::LookupEach(Box::new(fetch_plan), clause_b)), find)
         )
     }
 
@@ -309,8 +313,9 @@ mod tests {
         let clause_a = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
         let clause_b = Clause::new(Unbound("c".into()), Bound(Entity(2)), Unbound("d".into()));
         let clause_c = Clause::new(Unbound("b".into()), Bound(Entity(3)), Unbound("c".into()));
+        let find = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         let query = Query {
-            find: vec!["a".into(), "b".into(), "c".into(), "d".into()],
+            find: find.clone(),
             clauses: vec![clause_a.clone(), clause_b.clone(), clause_c.clone()],
             constraints: vec![],
         };
@@ -319,7 +324,7 @@ mod tests {
         let lookup_plan = Plan::LookupEach(Box::new(fetch_plan_a), clause_c);
         assert_eq!(
             Plan::for_query(query),
-            Plan::Join(Box::new(lookup_plan), Box::new(fetch_plan_b))
+            Plan::Project(Box::new(Plan::Join(Box::new(lookup_plan), Box::new(fetch_plan_b))), find)
         );
     }
 }
