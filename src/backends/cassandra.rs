@@ -87,7 +87,7 @@ impl KVStore for CassandraStore {
         ])
             .finalize();
 
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(()),
@@ -100,7 +100,7 @@ impl KVStore for CassandraStore {
             "SELECT id, val FROM logos.logos_txs WHERE tx = 'tx' and id > ?",
         ).values(vec![Value::new_normal(from)])
             .finalize();
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
         match session
             .query(select_query, false, false)
             .and_then(|r| r.get_body())
@@ -142,7 +142,7 @@ impl KVStore for CassandraStore {
         ])
             .finalize();
 
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(()),

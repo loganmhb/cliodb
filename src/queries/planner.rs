@@ -1,4 +1,4 @@
-use queries::query::{Var, Clause, Query};
+use queries::query::{Var, Clause, Query, Constraint};
 use std::collections::HashSet;
 ///! The query planner converts a query into an execution plan. In the
 ///! future it will be possible to improve the performance of queries
@@ -86,6 +86,7 @@ pub enum Plan {
     LookupEach(Box<Plan>, Clause),
     CartesianProduct(Vec<Box<Plan>>),
     Project(Box<Plan>, Vec<Var>),
+    Constrain(Box<Plan>, Vec<Constraint>)
 }
 
 impl Plan {
@@ -106,6 +107,7 @@ impl Plan {
                 .flat_map(|p| p.outputs().clone())
                 .collect(),
             &Project(ref plan, ref projection) => projection.iter().cloned().collect(),
+            &Constrain(ref plan, _) => plan.outputs()
         }
     }
 
@@ -122,9 +124,10 @@ impl Plan {
             //    new Plan to fetch the clause and add it to the list of
             //    current relations.
             //
-            // 3. All unbound vars in the clause match the same relation
-            //    (at least one).  In this case no data fetch is
-            //    necessary; the clause acts only as a constraint. (TODO)
+            // 3. All unbound vars in the clause match the same
+            //    relation (at least one). The clause essentially acts
+            //    as a constraint, but an each-lookup is still
+            //    required.
             let (mut overlapping, mut non_overlapping): (Vec<Plan>, Vec<Plan>) = relations
                 .iter()
                 .cloned()
@@ -154,10 +157,20 @@ impl Plan {
             }
         });
 
-        if final_relations.len() == 1 {
-            Plan::Project(Box::new(final_relations[0].clone()), q.find)
+        // TODO: it's fine for correctness to just apply constraints
+        // at the end, but it would be better for performance to apply
+        // them as soon as the bindings they require are satisfied as
+        // well.
+        let constrained_relations: Vec<Plan> = if q.constraints.len() > 0 {
+            final_relations.into_iter().map(|r| Plan::Constrain(Box::new(r), q.constraints.clone())).collect()
         } else {
-            Plan::Project(Box::new(Plan::CartesianProduct(relations.into_iter().map(|r| Box::new(r)).collect())), q.find)
+            final_relations
+        };
+
+        if constrained_relations.len() == 1 {
+            Plan::Project(Box::new(constrained_relations[0].clone()), q.find)
+        } else {
+            Plan::Project(Box::new(Plan::CartesianProduct(constrained_relations.into_iter().map(|r| Box::new(r)).collect())), q.find)
         }
     }
 }
@@ -197,15 +210,14 @@ mod tests {
     use proptest::prelude::*;
     use proptest::strategy::Strategy;
 
-    use {Entity, Value};
+    use {Entity, Value, Ident};
     use queries::query::{Query, Clause, Term};
     use queries::query::Term::{Bound, Unbound};
-    use queries::planner;
     use queries::planner::{Plan};
 
     #[test]
     fn test_plan_single_clause() {
-        let clause = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
+        let clause = Clause::new(Unbound("a".into()), Bound(Ident::Entity(Entity(1))), Unbound("b".into()));
         let find = vec!["a".into(), "b".into()];
         let query = Query {
             find: find.clone(),
@@ -221,8 +233,8 @@ mod tests {
 
     #[test]
     fn test_plan_fetch_and_lookup() {
-        let clause_a = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
-        let clause_b = Clause::new(Unbound("b".into()), Bound(Entity(2)), Unbound("c".into()));
+        let clause_a = Clause::new(Unbound("a".into()), Bound(Ident::Entity(Entity(1))), Unbound("b".into()));
+        let clause_b = Clause::new(Unbound("b".into()), Bound(Ident::Entity(Entity(2))), Unbound("c".into()));
         let find = vec!["a".into(), "b".into(), "c".into()];
         let query = Query {
             find: find.clone(),
@@ -246,6 +258,20 @@ mod tests {
         }
     }
 
+    prop_compose! {
+        fn arb_attribute_term()(entity in any::<i64>(), name in "[a-z]", is_bound in any::<bool>(), is_name in any::<bool>()) -> Term<Ident> {
+            if is_bound {
+                if is_name {
+                    Term::Bound(Ident::Name(name))
+                } else {
+                    Term::Bound(Ident::Entity(Entity(entity)))
+                }
+            } else {
+                Term::Unbound(name.into())
+            }
+        }
+    }
+
     fn arb_value() -> BoxedStrategy<Value> {
         prop_oneof![
             any::<i64>().prop_map(|i| Value::Entity(Entity(i))),
@@ -264,7 +290,7 @@ mod tests {
     }
 
     prop_compose! {
-        fn arb_clause()(entity in arb_entity_term(), attr in arb_entity_term(), value in arb_value_term()) -> Clause {
+        fn arb_clause()(entity in arb_entity_term(), attr in arb_attribute_term(), value in arb_value_term()) -> Clause {
             Clause::new(entity, attr, value)
         }
     }
@@ -310,9 +336,9 @@ mod tests {
     fn test_plan_with_join() {
         // fetch, fetch, lookup, join?
         // TODO
-        let clause_a = Clause::new(Unbound("a".into()), Bound(Entity(1)), Unbound("b".into()));
-        let clause_b = Clause::new(Unbound("c".into()), Bound(Entity(2)), Unbound("d".into()));
-        let clause_c = Clause::new(Unbound("b".into()), Bound(Entity(3)), Unbound("c".into()));
+        let clause_a = Clause::new(Unbound("a".into()), Bound(Ident::Entity(Entity(1))), Unbound("b".into()));
+        let clause_b = Clause::new(Unbound("c".into()), Bound(Ident::Entity(Entity(2))), Unbound("d".into()));
+        let clause_c = Clause::new(Unbound("b".into()), Bound(Ident::Entity(Entity(3))), Unbound("c".into()));
         let find = vec!["a".into(), "b".into(), "c".into(), "d".into()];
         let query = Query {
             find: find.clone(),

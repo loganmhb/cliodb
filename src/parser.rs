@@ -1,5 +1,6 @@
 use super::*;
-use super::query::{Comparator, Constraint};
+
+use queries::query::{Query, Term, Clause, Var, Constraint, Comparator};
 
 //// Parser
 use combine::char::{spaces, string, char, letter, digit};
@@ -74,7 +75,7 @@ fn comparator<I: combine::Stream<Item = char>>() -> impl Parser<Input = I, Outpu
         .skip(spaces())
         .map(|s| match s {
             ">" => Comparator::GreaterThan,
-            "<" => Comparator::LesserThan,
+            "<" => Comparator::LessThan,
             _ => Comparator::NotEqualTo,
         })
 }
@@ -116,7 +117,7 @@ where
         .skip(spaces());
     let ident_term = free_var()
         .map(|x| Term::Unbound(x))
-        .or(ident().map(|x| Term::Bound(x)))
+        .or(ident().map(|x| Term::Bound(Ident::Name(x))))
         .skip(spaces());
     let value_term = || {
         free_var()
@@ -129,8 +130,8 @@ where
     let constraint_contents = (comparator_term, value_term(), value_term()).map(|(c, fst, snd)| {
         ClauseConstraint::Constraint(Constraint {
             comparator: c,
-            first_value: fst,
-            second_value: snd,
+            left_hand_side: fst,
+            right_hand_side: snd,
         })
     });
     let clause_contents = (entity_term, ident_term, value_term()).map(|(e, a, v)| {
@@ -161,7 +162,11 @@ where
 
     find_spec.and(where_spec)
         // FIXME: add find vars
-        .map(|(find, (clauses, constraints))| Query::new(find, clauses, constraints))
+        .map(|(find, (clauses, constraints))| Query {
+            find: find,
+            clauses: clauses,
+            constraints: constraints
+        })
         .and(eof())
         .map(|x| x.0)
 }
@@ -238,20 +243,20 @@ mod tests {
                 clauses: vec![
                     Clause::new(
                         Term::Unbound("a".into()),
-                        Term::Bound("name".into()),
+                        Term::Bound(Ident::Name("name".into())),
                         Term::Bound(Value::String("Bob".into()))
                     ),
                     Clause::new(
                         Term::Unbound("a".into()),
-                        Term::Bound("age".into()),
+                        Term::Bound(Ident::Name("age".into())),
                         Term::Unbound("age".into())
                     ),
                 ],
                 constraints: vec![
                     Constraint {
                         comparator: Comparator::GreaterThan,
-                        first_value: Term::Unbound("age".into()),
-                        second_value: Term::Bound(Value::Entity(Entity(50))),
+                        left_hand_side: Term::Unbound("age".into()),
+                        right_hand_side: Term::Bound(Value::Entity(Entity(50))),
                     },
                 ],
             }
@@ -280,7 +285,7 @@ mod tests {
             clauses: vec![
                 Clause::new(
                     Term::Unbound("p".into()),
-                    Term::Bound("country".into()),
+                    Term::Bound(Ident::Name("country".into())),
                     Term::Bound(Value::Ident("country:US".into()))
                 ),
             ],

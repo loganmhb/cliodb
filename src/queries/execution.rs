@@ -1,19 +1,11 @@
 use std::collections::{HashSet, HashMap};
-use {Result, Value, Entity, Error};
+use {Result, Value, Entity, Error, Relation, Ident};
 use db::Db;
-use queries::query::{Query, Var, Clause, Term};
+use queries::query::{Query, Var, Clause, Term, Constraint};
 use queries::planner::{Plan};
 
-// temporary definition -- will go in lib.rs
-#[derive(Debug, Clone, PartialEq, Eq)]
-pub struct Relation(pub Vec<Var>, pub Vec<Vec<Value>>);
-
-pub fn execute(query: Query, db: &Db) -> Result<Relation> {
-    if query.constraints.len() > 0 {
-        panic!("Constraints are not yet implemented");
-    }
-
-    let plan = Plan::for_query(query);
+pub fn query(q: Query, db: &Db) -> Result<Relation> {
+    let plan = Plan::for_query(q);
     execute_plan(&plan, db)
 }
 
@@ -46,6 +38,9 @@ fn execute_plan(plan: &Plan, db: &Db) -> Result<Relation> {
         Plan::Project(ref plan, projection) => {
             execute_plan(plan, db).and_then(|relation| project(relation, projection.clone()))
         }
+        Plan::Constrain(ref plan, constraints) => {
+            execute_plan(plan, db).map(|relation| constrain(relation, constraints))
+        }
     }
 }
 
@@ -66,6 +61,18 @@ fn project(relation: Relation, projection: Vec<Var>) -> Result<Relation> {
             projected_indices.iter().map(|&idx| tuple[idx].clone()).collect()
         }).collect()
     ))
+}
+
+fn constrain(relation: Relation, constraints: &Vec<Constraint>) -> Relation {
+    //FIXME: assumes constraint is valid i.e. unbound vars in the constraint are present in the relation
+    let Relation(vars, tuples) = relation;
+
+    let out_tuples = tuples.into_iter().filter(|tuple| {
+        let bindings: HashMap<&Var, &Value> = vars.iter().zip(tuple.iter()).collect();
+        constraints.iter().all(|constraint| constraint.satisfied_by(&bindings))
+    }).collect();
+
+    Relation(vars, out_tuples)
 }
 
 fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation> {
@@ -96,10 +103,10 @@ fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation>
             }
         } else { None };
 
-        let attribute = if let Some(entity_val) = attribute {
-            match entity_val {
-                Value::Entity(e) => Some(e),
-                other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in entity position for clause {:?}", other_value, clause]))
+        let attribute = if let Some(attr_val) = attribute {
+            match attr_val {
+                Value::Entity(e) => Some(Ident::Entity(e)),
+                other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in attribute position for clause {:?}", other_value, clause]))
             }
         } else { None };
 
@@ -306,7 +313,7 @@ mod tests {
         let parent_entity = test_db().idents.get_entity("parent").unwrap();
         let fetch_clause = Clause::new(
             Term::Unbound("person".into()),
-            Term::Bound(name_entity),
+            Term::Bound(Ident::Entity(name_entity)),
             Term::Bound(Value::String("Bob".into()))
         );
         println!("all records {:?}", db.fetch(&Clause::new(
@@ -318,7 +325,7 @@ mod tests {
         println!("prior relation {:?}", prior_relation);
         let lookup_clause = Clause::new(
             Term::Unbound("parent".into()),
-            Term::Bound(parent_entity),
+            Term::Bound(Ident::Entity(parent_entity)),
             Term::Unbound("person".into())
         );
 
@@ -339,18 +346,18 @@ mod tests {
         let db = test_db();
         let name_entity = db.idents.get_entity("name").unwrap();
         let parent_entity = db.idents.get_entity("parent").unwrap();
-        let query = Query {
+        let q = Query {
             find: vec!["name".into()],
             clauses: vec![
-                Clause::new(Term::Unbound("person".into()), Term::Bound(name_entity), Term::Bound(Value::String("Bob".into()))),
-                Clause::new(Term::Unbound("child".into()), Term::Bound(name_entity), Term::Unbound("name".into())),
-                Clause::new(Term::Unbound("child".into()), Term::Bound(parent_entity), Term::Unbound("person".into()))
+                Clause::new(Term::Unbound("person".into()), Term::Bound(Ident::Entity(name_entity)), Term::Bound(Value::String("Bob".into()))),
+                Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(name_entity)), Term::Unbound("name".into())),
+                Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(parent_entity)), Term::Unbound("person".into()))
             ],
             constraints: vec![]
         };
 
         assert_eq!(
-            execute(query, &db).unwrap(),
+            query(q, &db).unwrap(),
             Relation(
                 vec!["name".into()],
                 vec![
