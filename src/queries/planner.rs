@@ -112,7 +112,6 @@ impl Plan {
     }
 
     pub fn for_query(q: Query) -> Plan {
-        let relations: Vec<Plan> = vec![];
         let final_relations = q.clauses.iter().fold(vec![], |relations, clause| {
             // Cases to care about:
             //

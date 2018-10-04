@@ -483,10 +483,10 @@ pub mod tests {
         let input = black_box(
             r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
         );
-        let query = parse_query(input).unwrap();
+        let q= parse_query(input).unwrap();
         let db = test_db();
 
-        b.iter(|| query(query.clone(), &db));
+        b.iter(|| query(q.clone(), &db));
     }
 
     #[bench]

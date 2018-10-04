@@ -143,7 +143,7 @@ impl Constraint {
             Term::Unbound(ref var) => binding[var],
         };
 
-        match (self.comparator) {
+        match self.comparator {
             Comparator::GreaterThan => lhs_value > rhs_value,
             Comparator::LessThan => lhs_value < rhs_value,
             Comparator::NotEqualTo => lhs_value != rhs_value,

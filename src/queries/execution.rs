@@ -1,5 +1,5 @@
 use std::collections::{HashSet, HashMap};
-use {Result, Value, Entity, Error, Relation, Ident};
+use {Result, Value, Error, Relation, Ident};
 use db::Db;
 use queries::query::{Query, Var, Clause, Term, Constraint};
 use queries::planner::{Plan};
@@ -282,7 +282,7 @@ fn hash_relation(
 mod tests {
     use super::*;
     use tests::test_db;
-    use {Value};
+    use {Value, Entity};
     use itertools::assert_equal;
 
     #[test]
