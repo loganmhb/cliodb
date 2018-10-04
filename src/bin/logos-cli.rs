@@ -73,7 +73,12 @@ Commands:
                     Err(e) => println!("Oh no! {}", e),
                 };
             }
-            Err(e) => println!("Error! {:?}", e.description()),
+            Err(e) => {
+                if let rustyline::error::ReadlineError::Eof = e {
+                    break;
+                }
+                println!("Error! {:?}", e.description())
+            }
         }
     }
 }

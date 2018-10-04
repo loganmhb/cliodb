@@ -80,6 +80,10 @@ fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation>
     // then, use results to build a new output relation including new vars which the clause binds
     let Relation(in_vars, in_tuples) = relation;
 
+    if in_tuples.len() == 0 {
+        return Ok(Relation(in_vars, in_tuples));
+    }
+
     let entity_index: Option<usize> = match clause.entity {
         Term::Bound(_) => None,
         Term::Unbound(ref var) => in_vars.iter().position(|v| v == var)
