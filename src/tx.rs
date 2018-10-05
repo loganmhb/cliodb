@@ -50,7 +50,7 @@ pub struct TxHandle {
 }
 
 impl TxHandle {
-    pub fn new(transactor: &mut Transactor) -> TxHandle {
+    pub fn new(transactor: &Transactor) -> TxHandle {
         let chan = transactor.send.clone();
 
         TxHandle { chan }
@@ -110,6 +110,7 @@ impl Transactor {
                     throttled: false,
                 })
             }
+            // FIXME: this should happen if contents is None, not on error
             Err(_) => {
                 let mut tx = Transactor {
                     next_id: 8,

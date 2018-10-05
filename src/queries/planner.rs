@@ -106,7 +106,7 @@ impl Plan {
                 .iter()
                 .flat_map(|p| p.outputs().clone())
                 .collect(),
-            &Project(ref plan, ref projection) => projection.iter().cloned().collect(),
+            &Project(ref _plan, ref projection) => projection.iter().cloned().collect(),
             &Constrain(ref plan, _) => plan.outputs()
         }
     }

@@ -1,5 +1,6 @@
 pub mod sqlite;
 pub mod mem;
+pub mod mysql;
 pub mod cassandra;
 
 use std::marker::{Send, Sync};

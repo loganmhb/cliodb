@@ -43,7 +43,7 @@ fn main() {
         .unwrap();
 
     let mut transactor = Transactor::new(store).expect("could not create transactor");
-    let tx_handle = Arc::new(Mutex::new(TxHandle::new(&mut transactor)));
+    let tx_handle = Arc::new(Mutex::new(TxHandle::new(&transactor)));
     thread::spawn(move || transactor.run());
     let server = TcpServer::new(LineProto, addr);
 

@@ -10,6 +10,7 @@ use {Result, Error, Tx, TxReport, Record, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
 use backends::sqlite::SqliteStore;
 use backends::mem::HeapStore;
+use backends::mysql::MysqlStore;
 use backends::cassandra::CassandraStore;
 use db::{Db, DbContents};
 use index::Index;
@@ -102,6 +103,10 @@ pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
         &["logos:cass:", url] => {
             let cass_store = CassandraStore::new(url)?;
             Ok(Arc::new(cass_store) as Arc<KVStore>)
+        }
+        &["logos:mysql:", url] => {
+            let mysql_store = MysqlStore::new(&format!("mysql://{}", url))?;
+            Ok(Arc::new(mysql_store) as Arc<KVStore>)
         }
         _ => Err("Invalid uri".into()),
     }
