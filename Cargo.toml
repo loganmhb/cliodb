@@ -5,24 +5,24 @@ version = "0.1.0"
 
 [dependencies]
 bytes = "0.4"
-r2d2 = "0.7.2"
+cdrs = "1.2.3"
 clap = "2.25.0"
-serde = "1.0.8"
-futures = "0.1"
-tokio-io = "0.1"
 combine = "2.3.2"
-tokio-core = "0.1"
+futures = "0.1"
 itertools = "0.6.0"
+lazy_static = "0.2.8"
 lru-cache = "0.1.1"
+prettytable-rs = "0.6.6"
+r2d2 = "0.8.2"
+rmp-serde = "0.13.4"
 rusqlite = "0.12.0"
 rustyline = "1.0.0"
-cdrs = "1.0.0-rc.2"
-tokio-proto = "0.1"
-rmp-serde = "0.13.4"
-lazy_static = "0.2.8"
-tokio-service = "0.1"
+serde = "1.0.8"
 serde_derive = "1.0.8"
-prettytable-rs = "0.6.6"
+tokio-core = "0.1"
+tokio-io = "0.1"
+tokio-proto = "0.1"
+tokio-service = "0.1"
 
 [dependencies.chrono]
 features = ["serde"]
@@ -31,3 +31,6 @@ version = "0.4.0"
 [dependencies.uuid]
 features = ["v4"]
 version = "0.5.0"
+
+[dev-dependencies]
+proptest = "0.8.7"

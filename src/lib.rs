@@ -31,6 +31,10 @@ extern crate tokio_service;
 #[macro_use]
 extern crate lazy_static;
 
+#[cfg(test)]
+#[macro_use]
+extern crate proptest;
+
 use itertools::*;
 
 use std::fmt::{self, Display, Formatter};
@@ -46,13 +50,14 @@ pub mod backends;
 pub mod tx;
 pub mod network;
 pub mod conn;
-mod query;
+mod queries;
 mod rbtree;
 mod durable_tree;
 mod ident;
 
 pub use parser::{parse_input, parse_tx, parse_query, Input};
-use query::{Query, Clause, Term, Var};
+use queries::query::{Clause, Term, Var};
+pub use queries::execution::query;
 use index::Comparator;
 use backends::KVStore;
 pub use ident::IdentMap;
@@ -128,7 +133,7 @@ impl RangeBounds<Record> for Record {
     }
 }
 
-#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord)]
+#[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, PartialOrd, Ord, Hash)]
 pub enum Value {
     String(String),
     Ident(String),
@@ -170,6 +175,11 @@ impl From<Entity> for Value {
 #[derive(Serialize, Deserialize, Debug, PartialEq, Eq, Clone, Copy, PartialOrd, Ord, Hash)]
 pub struct Entity(pub i64);
 
+#[derive(Debug, PartialEq, Eq, Clone)]
+pub enum Ident {
+    Name(String),
+    Entity(Entity)
+}
 
 #[derive(Debug, Serialize, Deserialize)]
 pub struct Error(String);
@@ -182,14 +192,10 @@ impl<S: ToString> From<S> for Error {
 
 pub type Result<T> = result::Result<T, Error>;
 
-/// A struct representing the answer to a query. The first term is the find clause of the query,
-/// used to order the result bindings into tuples for display; the second term is a vector of bindings
-/// that satisfy the query.
-// FIXME: this should just be a Vec<Vec<Value>>, probably.
-#[derive(Debug, PartialEq)]
-pub struct QueryResult(pub Vec<Var>, pub Vec<HashMap<Var, Value>>);
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Relation(pub Vec<Var>, pub Vec<Vec<Value>>);
 
-impl Display for QueryResult {
+impl Display for Relation {
     fn fmt(&self, f: &mut Formatter) -> fmt::Result {
         let num_columns = self.0.len();
         let align = pt::format::Alignment::CENTER;
@@ -198,8 +204,8 @@ impl Display for QueryResult {
 
         let rows = self.1
             .iter()
-            .map(|row_ht| {
-                self.0.iter().map(|var| format!("{}", row_ht[var])).into()
+            .map(|row| {
+                row.iter().map(|val| format!("{}", val)).into()
             })
             .collect_vec();
 
@@ -246,55 +252,6 @@ pub enum TxReport {
 
 type Binding = HashMap<Var, Value>;
 
-impl Clause {
-    fn substitute(&self, env: &Binding, idents: &IdentMap) -> Result<Clause> {
-        let entity = match &self.entity {
-            &Term::Bound(_) => self.entity.clone(),
-            &Term::Unbound(ref var) => {
-                if let Some(val) = env.get(&var) {
-                    match *val {
-                        Value::Entity(e) => Term::Bound(e),
-                        _ => return Err("type mismatch".into()),
-                    }
-                } else {
-                    self.entity.clone()
-                }
-            }
-        };
-
-        let attribute = match &self.attribute {
-            &Term::Bound(_) => self.attribute.clone(),
-            &Term::Unbound(ref var) => {
-                if let Some(val) = env.get(&var) {
-                    match val {
-                        &Value::String(ref s) => Term::Bound(s.clone()),
-                        &Value::Entity(e) => idents.get_ident(e)
-                            .map(Term::Bound)
-                            .expect("non-attribute bound in attribute position"),
-                        _ => return Err("type mismatch".into()),
-                    }
-                } else {
-                    self.attribute.clone()
-                }
-            }
-        };
-
-        let value = match &self.value {
-            &Term::Bound(_) => self.value.clone(),
-            &Term::Unbound(ref var) => {
-                if let Some(val) = env.get(&var) {
-                    Term::Bound(val.clone())
-                } else {
-                    self.value.clone()
-                }
-            }
-        };
-
-        Ok(Clause::new(entity, attribute, value))
-    }
-}
-
-
 macro_rules! comparator {
     ($name:ident, $first:ident, $second:ident, $third:ident, $fourth:ident) => {
         #[derive(Debug, Clone, Copy)]
@@ -328,16 +285,17 @@ pub mod tests {
     extern crate test;
     use self::test::{Bencher, black_box};
 
-    use std::iter;
     use std::sync::Arc;
 
     use backends::mem::HeapStore;
     use conn::Conn;
     use db::Db;
+    use queries::query::Query;
+    use queries::execution::query;
 
-    fn expect_query_result(query: &Query, expected: QueryResult) {
+    fn expect_query_result(q: Query, expected: Relation) {
         let db = test_db();
-        let result = db.query(query).unwrap();
+        let result = query(q, &db).unwrap();
         assert_eq!(expected, result);
     }
 
@@ -391,11 +349,11 @@ pub mod tests {
     fn test_query_unknown_entity() {
         // find ?a where (?a name "Bob")
         expect_query_result(
-            &parse_query("find ?a where (?a name \"Bob\")").unwrap(),
-            QueryResult(
+            parse_query("find ?a where (?a name \"Bob\")").unwrap(),
+            Relation(
                 vec![Var::new("a")],
                 vec![
-                    iter::once((Var::new("a"), Value::Entity(Entity(10)))).collect(),
+                    vec![Value::Entity(Entity(10))],
                 ],
             ),
         );
@@ -405,12 +363,10 @@ pub mod tests {
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
         expect_query_result(
-            &parse_query("find ?a where (10 name ?a)").unwrap(),
-            QueryResult(
+            parse_query("find ?a where (10 name ?a)").unwrap(),
+            Relation(
                 vec![Var::new("a")],
-                vec![
-                    iter::once((Var::new("a"), Value::String("Bob".into()))).collect(),
-                ],
+                vec![vec![Value::String("Bob".into())]],
             ),
         );
 
@@ -422,7 +378,7 @@ pub mod tests {
     // fn test_query_unknown_attribute() {
     //     // find ?a where (1 ?a "John")
     //     expect_query_result(&parse_query("find ?a where (1 ?a \"John\")").unwrap(),
-    //                         QueryResult(vec![Var::new("a")],
+    //                         Relation(vec![Var::new("a")],
     //                                     vec![
     //         iter::once((Var::new("a"),
     //                     Value::String("name".into())))
@@ -434,20 +390,12 @@ pub mod tests {
     fn test_query_multiple_results() {
         // find ?a ?b where (?a name ?b)
         expect_query_result(
-            &parse_query("find ?a ?b where (?a name ?b)").unwrap(),
-            QueryResult(
+            parse_query("find ?a ?b where (?a name ?b)").unwrap(),
+            Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![
-                        (Var::new("a"), Value::Entity(Entity(10))),
-                        (Var::new("b"), Value::String("Bob".into())),
-                    ].into_iter()
-                        .collect(),
-                    vec![
-                        (Var::new("a"), Value::Entity(Entity(11))),
-                        (Var::new("b"), Value::String("John".into())),
-                    ].into_iter()
-                        .collect(),
+                    vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
+                    vec![Value::Entity(Entity(11)), Value::String("John".into())]
                 ],
             ),
         );
@@ -457,15 +405,11 @@ pub mod tests {
     fn test_constraint() {
         // find ?a ?b where (?a name ?b) (< ?b "Charlie")
         expect_query_result(
-            &parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
-            QueryResult(
+            parse_query("find ?a ?b where (?a name ?b) (< ?b \"Charlie\")").unwrap(),
+            Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![
-                        (Var::new("a"), Value::Entity(Entity(10))),
-                        (Var::new("b"), Value::String("Bob".into())),
-                    ].into_iter()
-                        .collect(),
+                    vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
                 ],
             ),
         );
@@ -474,11 +418,11 @@ pub mod tests {
     #[test]
     fn test_query_explicit_join() {
         expect_query_result(
-            &parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
-            QueryResult(
+            parse_query("find ?b where (?a name \"Bob\") (?b parent ?a)").unwrap(),
+            Relation(
                 vec![Var::new("b")],
                 vec![
-                    iter::once((Var::new("b"), Value::Entity(Entity(11)))).collect(),
+                    vec![Value::Entity(Entity(11))]
                 ],
             ),
         );
@@ -487,13 +431,13 @@ pub mod tests {
     #[test]
     fn test_query_implicit_join() {
         expect_query_result(
-            &parse_query(
+            parse_query(
                 "find ?c where (?a name \"Bob\") (?b name ?c) (?b parent ?a)",
             ).unwrap(),
-            QueryResult(
+            Relation(
                 vec![Var::new("c")],
                 vec![
-                    iter::once((Var::new("c"), Value::String("John".into()))).collect(),
+                    vec![Value::String("John".into())],
                 ],
             ),
         );
@@ -502,8 +446,8 @@ pub mod tests {
     #[test]
     fn test_type_mismatch() {
         let db = test_db();
-        let q = &parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
-        assert_equal(db.query(&q), Err("type mismatch".to_string()))
+        let q = parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
+        assert_equal(query(q, &db), Err("type mismatch".to_string()))
     }
 
     #[test]
@@ -511,16 +455,16 @@ pub mod tests {
         let conn = test_conn();
         conn.transact(parse_tx("retract (11 parent 10)").unwrap())
             .unwrap();
-        let result = conn.db()
-            .unwrap()
-            .query(&parse_query("find ?a ?b where (?a parent ?b)").unwrap())
-            .unwrap();
+        let db = conn.db().unwrap();
+        let q = parse_query("find ?a ?b where (?a parent ?b)").unwrap();
+        let result = query(q, &db).unwrap();
 
         assert_eq!(
             result,
-            QueryResult(vec![Var::new("a"), Var::new("b")], vec![])
+            Relation(vec![Var::new("a"), Var::new("b")], vec![])
         );
     }
+
     #[bench]
     // Parse + run a query on a small db
     fn parse_bench(b: &mut Bencher) {
@@ -539,10 +483,10 @@ pub mod tests {
         let input = black_box(
             r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
         );
-        let query = parse_query(input).unwrap();
+        let q= parse_query(input).unwrap();
         let db = test_db();
 
-        b.iter(|| db.query(&query));
+        b.iter(|| query(q.clone(), &db));
     }
 
     #[bench]
@@ -600,10 +544,10 @@ pub mod tests {
     fn bench_large_db_simple(b: &mut Bencher) {
         // Don't run on 'cargo test', only 'cargo bench'
         if cfg!(not(debug_assertions)) {
-            let query = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
+            let q = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
             let db = test_db_large();
 
-            b.iter(|| db.query(&query).unwrap());
+            b.iter(|| query(q.clone(), &db).unwrap());
         }
     }
 }

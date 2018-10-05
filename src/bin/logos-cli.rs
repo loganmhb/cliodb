@@ -32,7 +32,7 @@ Commands:
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => {
                         let db = conn.db().unwrap();
-                        match db.query(&q) {
+                        match query(q, &db) {
                             Ok(res) => println!("{}", res),
                             Err(e) => println!("ERROR: {:?}", e),
                         }
@@ -61,19 +61,24 @@ Commands:
                     Ok(Input::Dump) => {
                         println!(
                             "{}",
-                            conn.db()
-                                .unwrap()
-                                .query(&parse_query(
+                            query(
+                                parse_query(
                                     "find ?ent ?attname ?val where (?ent ?att \
-                                                       ?val) (?att db:ident ?attname)",
-                                ).unwrap())
-                                .unwrap()
+                                     ?val) (?att db:ident ?attname)",
+                                ).unwrap(),
+                                &conn.db().unwrap()
+                            ).unwrap()
                         )
                     }
                     Err(e) => println!("Oh no! {}", e),
                 };
             }
-            Err(e) => println!("Error! {:?}", e.description()),
+            Err(e) => {
+                if let rustyline::error::ReadlineError::Eof = e {
+                    break;
+                }
+                println!("Error! {:?}", e.description())
+            }
         }
     }
 }

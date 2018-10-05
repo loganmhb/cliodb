@@ -1,8 +1,10 @@
 use super::*;
+
 use std::sync::Arc;
 
 use {Result, EAVT, AEVT, AVET, VAET};
 use index::Index;
+use queries::query;
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ValueType {
@@ -44,8 +46,15 @@ impl Db {
         self.eav.mem_index_size()
     }
 
+    fn ident_entity(&self, ident: &Ident) -> Option<Entity> {
+        match ident {
+            &Ident::Entity(e) => Some(e),
+            &Ident::Name(ref name) => self.idents.get_entity(name)
+        }
+    }
+
     fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
-        let expanded = clause.substitute(binding, &self.idents)?;
+        let expanded = clause.substitute(binding)?;
         match expanded {
             // ?e a v => use the ave index
             Clause {
@@ -53,7 +62,7 @@ impl Db {
                 attribute: Term::Bound(a),
                 value: Term::Bound(v),
             } => {
-                match self.idents.get_entity(&a) {
+                match self.ident_entity(&a) {
                     Some(attr) => {
                         let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
                         Ok(
@@ -72,7 +81,7 @@ impl Db {
                 attribute: Term::Bound(a),
                 value: Term::Unbound(_),
             } => {
-                match self.idents.get_entity(&a) {
+                match self.ident_entity(&a) {
                     Some(attr) => {
                         // Value::String("") is the lowest-sorted value
                         let range_start =
@@ -93,141 +102,140 @@ impl Db {
                 Ok(
                     self.eav
                         .iter()
-                        .filter(|f| unify(&binding, &self.idents, &clause, &f).is_some())
+                        .filter(|f| self.unify(&binding, &clause, &f).is_some())
                         .collect(),
                 )
             }
         }
     }
 
-    pub fn query(&self, query: &Query) -> Result<QueryResult> {
-        query.validate()?;
+    /// Given a clause, fetch the relation of matching records.
+    pub fn fetch(&self, clause: &query::Clause) -> Result<Relation> {
+        let mut vars = vec![];
+        let mut selectors: Vec<Box<Fn(&Record) -> Value>> = vec![];
 
-        // TODO: automatically bind ?tx in queries
-        let mut bindings = vec![HashMap::new()];
+        match clause.entity {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| Value::Entity(record.entity)));
+            }
+        };
 
-        for clause in &query.clauses {
-            let mut new_bindings = vec![];
+        match clause.attribute {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| Value::Entity(record.attribute)));
+            }
+        };
+        match clause.value {
+            query::Term::Bound(_) => {},
+            query::Term::Unbound(ref var) => {
+                vars.push(query::Var::new(var.name.clone()));
+                selectors.push(Box::new(|record: &Record| record.value.clone()));
+            }
+        };
 
-            for binding in bindings {
-                for record in self.records_matching(clause, &binding)? {
-                    if let Some(new_info) = unify(&binding, &self.idents, clause, &record)
-                        .into_iter()
-                        .filter(|potential_binding| {
-                            query.constraints.iter().all(|constraint| {
-                                constraint.check(potential_binding)
-                            })
-                        })
-                        .next()
-                    {
-                        if record.retracted {
-                            // The binding matches the retraction
-                            // so we discard any existing bindings
-                            // that are the same.  Note that this
-                            // relies on the fact that additions
-                            // and retractions are sorted by
-                            // transaction, so an older retraction
-                            // won't delete the binding for a
-                            // newer addition.
-                            new_bindings.retain(|b| *b != new_info);
-                        } else {
-                            new_bindings.push(new_info)
+        let mut values: Vec<Vec<Value>> = vec![];
+        // FIXME: will need to remove retracted records from the relation
+        // (and eventually deal with cardinality:one)
+
+        for record in self.records_matching(&clause, &HashMap::new())? {
+            let mut tuple: Vec<Value> = vec![];
+            if record.retracted {
+                // If the matching record is a retraction, the fact it
+                // retracts will be the fact matched immediately
+                // beforehand.
+                values.pop();
+            } else {
+                for selector in selectors.iter() {
+                    tuple.push(selector(&record));
+                }
+                values.push(tuple);
+            }
+        }
+
+        Ok(Relation(vars, values))
+    }
+
+    /// Attempts to unify a new record and a clause with existing
+    /// bindings.  If bound fields in the clause match the record, then
+    /// any fields in the record which match an unbound clause will be
+    /// bound in the returned binding.  If bound fields in the clause
+    /// conflict with fields in the record, unification fails.
+    fn unify(&self, env: &Binding, clause: &Clause, record: &Record) -> Option<Binding> {
+        let mut new_env: Binding = env.clone();
+
+        match clause.entity {
+            Term::Bound(ref e) => {
+                if *e != record.entity {
+                    return None;
+                }
+            }
+            Term::Unbound(ref var) => {
+                match env.get(var) {
+                    Some(e) => {
+                        if *e != Value::Entity(record.entity) {
+                            return None;
                         }
                     }
-                }
-            }
-
-            bindings = new_bindings;
-        }
-
-        for binding in bindings.iter_mut() {
-            *binding = binding
-                .iter()
-                .filter(|&(k, _)| query.find.contains(k))
-                .map(|(var, value)| (var.clone(), value.clone()))
-                .collect();
-        }
-
-        Ok(QueryResult(query.find.clone(), bindings))
-    }
-}
-
-/// Attempts to unify a new record and a clause with existing
-/// bindings.  If bound fields in the clause match the record, then
-/// any fields in the record which match an unbound clause will be
-/// bound in the returned binding.  If bound fields in the clause
-/// conflict with fields in the record, unification fails.
-fn unify(env: &Binding, idents: &IdentMap, clause: &Clause, record: &Record) -> Option<Binding> {
-    let mut new_env: Binding = env.clone();
-
-    match clause.entity {
-        Term::Bound(ref e) => {
-            if *e != record.entity {
-                return None;
-            }
-        }
-        Term::Unbound(ref var) => {
-            match env.get(var) {
-                Some(e) => {
-                    if *e != Value::Entity(record.entity) {
-                        return None;
+                    _ => {
+                        new_env.insert(var.clone(), Value::Entity(record.entity));
                     }
                 }
-                _ => {
-                    new_env.insert(var.clone(), Value::Entity(record.entity));
-                }
             }
         }
-    }
 
-    match clause.attribute {
-        Term::Bound(ref a) => {
-            // The query will use an ident to refer to the attribute, but we need the
-            // actual attribute entity.
-            match idents.get_entity(a) {
-                Some(e) => {
-                    if e != record.attribute {
-                        return None;
+        match clause.attribute {
+            Term::Bound(ref a) => {
+                // The query will use an ident to refer to the attribute, but we need the
+                // actual attribute entity.
+                match self.ident_entity(a) {
+                    Some(e) => {
+                        if e != record.attribute {
+                            return None;
+                        }
+                    }
+                    _ => return None,
+                }
+            }
+            Term::Unbound(ref var) => {
+                match env.get(var) {
+                    Some(e) => {
+                        if *e != Value::Entity(record.attribute) {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        new_env.insert(var.clone(), Value::Entity(record.attribute));
                     }
                 }
-                _ => return None,
             }
         }
-        Term::Unbound(ref var) => {
-            match env.get(var) {
-                Some(e) => {
-                    if *e != Value::Entity(record.attribute) {
-                        return None;
+
+        match clause.value {
+            Term::Bound(ref v) => {
+                if *v != record.value {
+                    return None;
+                }
+            }
+            Term::Unbound(ref var) => {
+                match env.get(var) {
+                    Some(e) => {
+                        if *e != record.value {
+                            return None;
+                        }
+                    }
+                    _ => {
+                        new_env.insert(var.clone(), record.value.clone());
                     }
                 }
-                _ => {
-                    new_env.insert(var.clone(), Value::Entity(record.attribute));
-                }
             }
         }
-    }
 
-    match clause.value {
-        Term::Bound(ref v) => {
-            if *v != record.value {
-                return None;
-            }
-        }
-        Term::Unbound(ref var) => {
-            match env.get(var) {
-                Some(e) => {
-                    if *e != record.value {
-                        return None;
-                    }
-                }
-                _ => {
-                    new_env.insert(var.clone(), record.value.clone());
-                }
-            }
-        }
+        Some(new_env)
     }
-
-    Some(new_env)
 }
 
 /// A structure designed to be stored in the backing store that enables
@@ -255,7 +263,7 @@ mod tests {
             .records_matching(
                 &Clause::new(
                     Term::Unbound("e".into()),
-                    Term::Bound("name".into()),
+                    Term::Bound(Ident::Name("name".into())),
                     Term::Bound(Value::String("Bob".into())),
                 ),
                 &Binding::default(),
@@ -265,5 +273,21 @@ mod tests {
         let rec = &matching[0];
         assert_eq!(rec.entity, Entity(10));
         assert_eq!(rec.value, Value::String("Bob".into()));
+    }
+
+    #[test]
+    fn test_fetch() {
+        let name_entity = test_db().idents.get_entity("name").unwrap();
+        let clause = query::Clause::new(
+            Term::Unbound("e".into()),
+            Term::Bound(Ident::Entity(name_entity)),
+            Term::Unbound("n".into()),
+        );
+        let relation = test_db().fetch(&clause).unwrap();
+        assert_eq!(relation.0, vec!["e".into(), "n".into()]);
+        assert_eq!(relation.1, vec![
+            vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
+            vec![Value::Entity(Entity(11)), Value::String("John".into())]
+        ]);
     }
 }

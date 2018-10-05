@@ -9,7 +9,8 @@ use cdrs::query::QueryBuilder;
 use cdrs::compression::Compression;
 use cdrs::authenticators::NoneAuthenticator;
 use cdrs::transport::TransportTcp;
-use cdrs::types::ByName;
+use cdrs::types::{ByName};
+use cdrs::types::blob::Blob;
 use cdrs::types::value::{Value, Bytes};
 use r2d2;
 
@@ -22,14 +23,13 @@ impl CassandraStore {
     pub fn new(addr: &str) -> Result<CassandraStore> {
 
         let tcp = TransportTcp::new(addr)?;
-        let config = r2d2::Config::builder().pool_size(15).build();
         let authenticator = NoneAuthenticator;
         let manager = ConnectionManager::new(tcp, authenticator, Compression::Snappy);
-        let pool = r2d2::Pool::new(config, manager)?;
+        let pool = r2d2::Pool::builder().max_size(15).build(manager)?;
 
         let store = CassandraStore { pool: pool.clone() };
 
-        let mut session = pool.get()?;
+        let session = pool.get()?;
         // TODO: detect new Cass cluster + set up logos keyspace & logos_kvs table
         // real TODO: do that in a different `create-db` function
         // FIXME: This seems to fail when the tables don't already exist.
@@ -64,20 +64,17 @@ impl KVStore for CassandraStore {
         let select_query = QueryBuilder::new("SELECT val FROM logos.logos_kvs WHERE key = ?")
             .values(vec![Value::new_normal(key)])
             .finalize();
-        let mut session = self.pool.get()?;
-        match session
-            .query(select_query, false, false)
-            .and_then(|r| r.get_body())
-            .map(|b| b.into_rows()) {
-            Ok(Some(rows)) => {
-                let v: Vec<u8> = rows.get(0)
+        let session = self.pool.get()?;
+        let result = session.query(select_query, false, false)?;
+        let rows_result = result.get_body()?.into_rows();
+        match rows_result {
+            Some(rows) => {
+                let v: Blob = rows.get(0)
                     .ok_or("no rows found")?
-                    .r_by_name("val")
-                    .unwrap();
-                Ok(v)
+                    .r_by_name("val")?;
+                Ok(v.into_vec())
             }
-            Ok(None) => Err("node not found".into()),
-            Err(e) => Err(e.into()),
+            None => Err("node not found".into()),
         }
     }
 
@@ -90,7 +87,7 @@ impl KVStore for CassandraStore {
         ])
             .finalize();
 
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(()),
@@ -103,7 +100,7 @@ impl KVStore for CassandraStore {
             "SELECT id, val FROM logos.logos_txs WHERE tx = 'tx' and id > ?",
         ).values(vec![Value::new_normal(from)])
             .finalize();
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
         match session
             .query(select_query, false, false)
             .and_then(|r| r.get_body())
@@ -111,7 +108,7 @@ impl KVStore for CassandraStore {
             Ok(Some(rows)) => {
                 let results = rows.iter()
                     .map(|row| {
-                        let v: Vec<u8> = row.r_by_name("val").unwrap();
+                        let v: Vec<u8> = row.r_by_name::<Blob>("val")?.into_vec();
                         let mut de = Deserializer::new(&v[..]);
                         let records: Vec<Record> = Deserialize::deserialize(&mut de)?;
 
@@ -145,7 +142,7 @@ impl KVStore for CassandraStore {
         ])
             .finalize();
 
-        let mut session = self.pool.get()?;
+        let session = self.pool.get()?;
 
         match session.query(insert_query, false, false) {
             Ok(_) => Ok(()),

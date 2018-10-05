@@ -4,8 +4,7 @@ use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::{c_char, c_int, c_long};
 
-use logos::{Result, Value, QueryResult, TxReport};
-use logos::{parse_query, parse_tx};
+use logos::{Result, Value, Relation, TxReport};
 use logos::conn::{Conn, store_from_uri};
 use logos::db::Db;
 
@@ -115,13 +114,13 @@ impl CValue {
 #[no_mangle]
 pub extern "C" fn query(
     db_ptr: *mut Db,
-    query: *const c_char,
+    query_string_ptr: *const c_char,
     cb: extern "C" fn(num_items: c_int, row: *const CValue),
 ) -> c_int {
     let db: &Db = unsafe { &*db_ptr };
-    let query_str = unsafe { CStr::from_ptr(query) };
-    let q = match parse_query(query_str.to_str().unwrap()) {
-        Ok(query) => query,
+    let query_str = unsafe { CStr::from_ptr(query_string_ptr) };
+    let q = match logos::parse_query(query_str.to_str().unwrap()) {
+        Ok(q) => q,
         Err(err) => {
             // FIXME: implement a more robust way to retrieve error msgs
             println!("error {}", err);
@@ -129,11 +128,10 @@ pub extern "C" fn query(
         }
     };
 
-    match db.query(&q) {
-        Ok(QueryResult(vars, rows)) => {
+    match logos::query(q, &db) {
+        Ok(Relation(vars, rows)) => {
             for row in rows {
-                let row_vec: Vec<CValue> =
-                    vars.iter().map(|k| row.get(k).unwrap().into()).collect();
+                let row_vec: Vec<CValue> = row.iter().map(|v| v.into()).collect();
                 cb(vars.len() as i32, row_vec.as_ptr());
                 // Free the CString's value.
                 for val in row_vec {
@@ -155,7 +153,7 @@ pub extern "C" fn query(
 pub extern "C" fn transact(conn_ptr: *mut Conn, tx_ptr: *const c_char) -> c_int {
     let conn: &Conn = unsafe { &*conn_ptr };
     let tx_str = unsafe { CStr::from_ptr(tx_ptr) };
-    let tx = match parse_tx(tx_str.to_str().unwrap()) {
+    let tx = match logos::parse_tx(tx_str.to_str().unwrap()) {
         Ok(tx) => tx,
         // FIXME: signal error
         Err(e) => {
@@ -166,6 +164,7 @@ pub extern "C" fn transact(conn_ptr: *mut Conn, tx_ptr: *const c_char) -> c_int 
 
     match conn.transact(tx) {
         // FIXME: Return list of new entities
+        // (via result callback like query?)
         Ok(TxReport::Success { .. }) => return 0,
         // FIXME: Signal error
         Ok(TxReport::Failure(f)) => {
