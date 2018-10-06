@@ -18,7 +18,7 @@ Commands:
 "
     );
     let store = store_from_uri(uri).expect("Couldn't create store");
-    let conn = Conn::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
+    let mut conn = Conn::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");

@@ -57,6 +57,7 @@ impl Db {
         let expanded = clause.substitute(binding)?;
         match expanded {
             // ?e a v => use the ave index
+            // FIXME: should use VAE if value is indexed
             Clause {
                 entity: Term::Unbound(_),
                 attribute: Term::Bound(a),
@@ -76,6 +77,8 @@ impl Db {
                 }
             }
             // e a ?v => use the eav index
+            // FIXME: should use AEV index if looking up many entities with the same attribute
+            // (for cache locality)
             Clause {
                 entity: Term::Bound(e),
                 attribute: Term::Bound(a),
@@ -240,7 +243,7 @@ impl Db {
 
 /// A structure designed to be stored in the backing store that enables
 /// a process to locate the indexes, tx log, etc.
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub struct DbContents {
     pub next_id: i64,
     pub last_indexed_tx: i64,

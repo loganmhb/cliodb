@@ -6,7 +6,7 @@ use tokio_proto::TcpClient;
 use tokio_core::reactor::Core;
 use tokio_service::Service;
 
-use {Result, Error, Tx, TxReport, Record, EAVT, AEVT, AVET, VAET};
+use {Result, Error, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
 use backends::sqlite::SqliteStore;
 use backends::mem::HeapStore;
@@ -33,40 +33,52 @@ lazy_static! {
 pub struct Conn {
     transactor: TxClient,
     store: Arc<KVStore>,
+    latest_db: Option<Db>,
+    last_known_tx: Option<i64>,
+    last_seen_contents: Option<DbContents>,
 }
 
 impl Conn {
     pub fn new(store: Arc<KVStore>) -> Result<Conn> {
         let transactor = store.get_transactor()?;
-        Ok(Conn { transactor, store })
+        Ok(Conn { transactor, store, latest_db: None, last_known_tx: None, last_seen_contents: None })
     }
 
-    pub fn db(&self) -> Result<Db> {
+    pub fn db(&mut self) -> Result<Db> {
         let contents: DbContents = self.store.get_contents()?;
 
-        let mut db = Db {
+        if Some(&contents) != self.last_seen_contents.as_ref() {
+            // The underlying index has changed, so we need a new database. Invalidate the cache.
+            self.last_known_tx = None;
+            self.latest_db = None;
+            self.last_seen_contents = Some(contents.clone());
+        }
+
+        // In order to avoid replaying transactions over and over on subsequent calls to db(),
+        // we need to keep track of our place in the transaction log.
+        let mut last_known_tx: i64 = self.last_known_tx.unwrap_or_else(|| contents.last_indexed_tx);
+
+        let mut db = self.latest_db.clone().unwrap_or_else(|| Db {
             store: self.store.clone(),
-            idents: contents.idents,
-            schema: contents.schema,
-            eav: Index::new(contents.eav, self.store.clone(), EAVT),
-            ave: Index::new(contents.ave, self.store.clone(), AVET),
-            aev: Index::new(contents.aev, self.store.clone(), AEVT),
+            idents: contents.idents.clone(),
+            schema: contents.schema.clone(),
+            eav: Index::new(contents.eav.clone(), self.store.clone(), EAVT),
+            ave: Index::new(contents.ave.clone(), self.store.clone(), AVET),
+            aev: Index::new(contents.aev.clone(), self.store.clone(), AEVT),
             vae: Index::new(contents.vae, self.store.clone(), VAET),
-        };
+        });
 
         // Read in latest transactions from the log.
-        // FIXME: This will re-read transactions again and again each
-        // time you call db(), but it should be possible to keep track
-        // of the latest tx that this connection knows about and only
-        // read ones more recent than that, instead of using
-        // `contents.last_indexed_tx`.  (This might require some
-        // rethinking of retrieving the db contents each time db() is
-        // called.)
-        for tx in self.store.get_txs(contents.last_indexed_tx)? {
+        for tx in self.store.get_txs(last_known_tx)? {
             for record in tx.records {
+                let Entity(tx_id) = record.tx;
                 db = tx::add(&db, record)?;
+                last_known_tx = tx_id;
             }
         }
+
+        self.last_known_tx = Some(last_known_tx).clone();
+        self.latest_db = Some(db.clone());
 
         Ok(db)
     }

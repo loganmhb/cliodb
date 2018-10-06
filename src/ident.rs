@@ -3,7 +3,7 @@ use Entity;
 /// Double-mapping of ident->entity and entity->ident.
 // FIXME: Does this need to exist? Double mapping seems unnecessary,
 // in which case a hashmap is fine.
-#[derive(Default, Clone, Serialize, Deserialize, Debug)]
+#[derive(Default, Clone, Serialize, Deserialize, Debug, PartialEq, Eq)]
 pub struct IdentMap {
     mappings: Vec<(String, Entity)>,
 }

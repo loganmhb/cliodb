@@ -1,5 +1,4 @@
 #![cfg_attr(test, feature(test))]
-#![feature(slice_patterns)]
 
 extern crate itertools;
 
@@ -453,7 +452,7 @@ pub mod tests {
 
     #[test]
     fn test_retractions() {
-        let conn = test_conn();
+        let mut conn = test_conn();
         conn.transact(parse_tx("retract (11 parent 10)").unwrap())
             .unwrap();
         let db = conn.db().unwrap();
@@ -515,7 +514,7 @@ pub mod tests {
 
     fn test_db_large() -> Db {
         let store = HeapStore::new::<Record>();
-        let conn = Conn::new(Arc::new(store)).unwrap();
+        let mut conn = Conn::new(Arc::new(store)).unwrap();
         let n = 10_000;
 
         parse_tx("{db:ident name} {db:ident Hello}")
