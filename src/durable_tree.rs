@@ -66,52 +66,6 @@ pub struct InteriorNode<T> {
     pub links: Vec<Link<T>>
 }
 
-impl <'de, T> InteriorNode<T>
-    where T: Serialize + Deserialize<'de> + Clone
-{
-    // FIXME: when the directory node reaches a certain size, split
-    // and make a new parent
-    fn add_leaf(&mut self, store: &mut NodeStore<T>, items: Vec<T>) -> Result<()> {
-        let first_item = items[0].clone();
-        let leaf = LeafNode { items };
-        let leaf_link = Link::DbKey(store.add_node(&Node::Leaf(leaf))?);
-
-        if self.links.len() == 0 {
-            // This is the first leaf.
-            self.links.push(leaf_link)
-        } else {
-            // This is not the first leaf, so we need to add a
-            // key to determine which pointer to follow.
-            self.links.push(leaf_link);
-            self.keys.push(first_item);
-        }
-
-        Ok(())
-    }
-
-    /// Recursively persists the tree to the backing store, returning
-    /// a string key referencing the root node.
-    fn persist(self, store: &mut NodeStore<T>) -> Result<String> {
-        let mut new_links = vec![];
-        for link in self.links {
-            match link {
-                Link::Pointer(ptr) => {
-                    new_links.push(Link::DbKey(store.add_node(&ptr)?));
-                }
-                Link::DbKey(s) => {
-                    // This happens when the link is to a leaf node.
-                    new_links.push(Link::DbKey(s));
-                }
-            }
-        }
-
-        store.add_node(&Node::Interior(InteriorNode {
-            links: new_links,
-            keys: self.keys,
-        }))
-    }
-}
-
 #[derive(Clone)]
 pub struct DurableTree<T, C> {
     pub root: Link<T>,

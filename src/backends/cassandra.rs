@@ -150,34 +150,3 @@ impl KVStore for CassandraStore {
         }
     }
 }
-
-#[cfg(test)]
-mod tests {
-
-    use super::*;
-    use durable_tree::{LeafNode};
-    use rmp_serde::{Serializer, Deserializer};
-    use serde::{Serialize, Deserialize};
-
-    #[test]
-    #[ignore]
-    fn can_create() {
-        let _: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
-    }
-
-    #[test]
-    #[ignore]
-    fn test_get_and_set() {
-        let node = LeafNode { items: vec!["hi there".to_string()] };
-
-        let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf)).unwrap();
-        let store: CassandraStore = CassandraStore::new("127.0.0.1:9042").unwrap();
-
-        store.set("my_thing", &buf).unwrap();
-        let roundtrip_node_bytes = store.get("my_thing").expect("Could not deserialize node");
-        let mut de = Deserializer::new(&roundtrip_node_bytes[..]);
-        let deserialized = Deserialize::deserialize(&mut de).unwrap();
-        assert_eq!(node, deserialized);
-    }
-}
