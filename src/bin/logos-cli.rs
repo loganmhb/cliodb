@@ -1,8 +1,10 @@
+#![feature(duration_as_u128)]
 extern crate logos;
 extern crate rustyline;
 
 use logos::*;
 use logos::conn::{Conn, store_from_uri};
+use std::time::{Instant};
 
 use std::error::Error;
 use std::env::args;
@@ -31,9 +33,18 @@ Commands:
 
                 match parse_input(&*line) {
                     Ok(Input::Query(q)) => {
+                        let start = Instant::now();
                         let db = conn.db().unwrap();
+                        let db_fetched_at = Instant::now();
+                        let db_fetch_time = db_fetched_at.duration_since(start);
                         match query(q, &db) {
-                            Ok(res) => println!("{}", res),
+                            Ok(res) => {
+                                let end = Instant::now();
+                                let total_time = end.duration_since(start);
+                                let query_time = end.duration_since(db_fetched_at);
+                                println!("{}", res);
+                                println!("Query executed in {} ms ({} to fetch db, {} to execute query)", total_time.as_millis(), db_fetch_time.as_millis(), query_time.as_millis());
+                            },
                             Err(e) => println!("ERROR: {:?}", e),
                         }
                     }
