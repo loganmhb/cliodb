@@ -122,7 +122,6 @@ fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation>
     }
 
     let substitute_clause = |tuple: &Vec<Value>| {
-        println!("Substituting clause with tuple {:?}", tuple);
         bind_clause(
             clause,
             entity_index.map(|idx| tuple[idx].clone()),
@@ -137,17 +136,14 @@ fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation>
     let mut out_tuples: Vec<Vec<Value>> = vec![];
     for tuple in in_tuples {
         let sub_clause = substitute_clause(&tuple)?;
-        println!("sub_clause {:?}", sub_clause);
         let Relation(new_var_results, new_tuples) = db.fetch(&sub_clause)?;
 
-        println!("new tuples {:?}", new_tuples);
         new_vars.get_or_insert_with(|| new_var_results.clone());
         assert_eq!(new_vars.clone().unwrap(), new_var_results);
 
         for new_tuple in new_tuples {
             let mut out_tuple = tuple.clone();
             out_tuple.extend(new_tuple);
-            println!("Appending {:?}", out_tuple);
             out_tuples.push(out_tuple);
         }
     }
@@ -190,7 +186,6 @@ fn join(rel_a: Relation, rel_b: Relation) -> Relation {
     // The join key is a vector of vars in both a and b, ordered as they are in a.
     let join_key: Vec<Var> = derive_join_key(&rel_a, &rel_b);
     let output_key = derive_output_key(&rel_a, &rel_b);
-    println!("output key {:?}", output_key);
 
     let rel_a_vars = rel_a.0.iter().cloned().collect::<HashSet<Var>>();
     let rel_b_out_indices = rel_b.0.iter().enumerate()
@@ -198,7 +193,6 @@ fn join(rel_a: Relation, rel_b: Relation) -> Relation {
         .map(|(idx, _var)| idx)
         .collect::<Vec<usize>>();
 
-    println!("{:?}", rel_b_out_indices);
     let rel_b_map = hash_relation(&join_key, rel_b);
 
     let project = |mut tuple_a: Vec<Value>, tuple_b: &Vec<Value>| {
@@ -206,7 +200,6 @@ fn join(rel_a: Relation, rel_b: Relation) -> Relation {
             let val = tuple_b[*idx].clone();
             tuple_a.push(val);
         }
-        println!("projected {:?}", tuple_a);
 
         tuple_a
     };
@@ -320,13 +313,7 @@ mod tests {
             Term::Bound(Ident::Entity(name_entity)),
             Term::Bound(Value::String("Bob".into()))
         );
-        println!("all records {:?}", db.fetch(&Clause::new(
-            Term::Unbound("e".into()),
-            Term::Unbound("a".into()),
-            Term::Unbound("v".into())
-        )));
         let prior_relation = db.fetch(&fetch_clause).unwrap();
-        println!("prior relation {:?}", prior_relation);
         let lookup_clause = Clause::new(
             Term::Unbound("parent".into()),
             Term::Bound(Ident::Entity(parent_entity)),

@@ -50,67 +50,64 @@ pub enum Link<T> {
 /// links.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub enum Node<T> {
-    Leaf { items: Vec<T> },
-    Interior { keys: Vec<T>, links: Vec<Link<T>> },
+    Leaf(LeafNode<T>),
+    Interior(InteriorNode<T>),
 }
 
-impl<'de, T> Node<T>
-where
-    T: Serialize + Deserialize<'de> + Clone,
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+pub struct LeafNode<T> {
+    pub items: Vec<T>
+}
+
+#[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
+pub struct InteriorNode<T> {
+    pub keys: Vec<T>,
+    pub links: Vec<Link<T>>
+}
+
+impl <'de, T> InteriorNode<T>
+    where T: Serialize + Deserialize<'de> + Clone
 {
     // FIXME: when the directory node reaches a certain size, split
     // and make a new parent
     fn add_leaf(&mut self, store: &mut NodeStore<T>, items: Vec<T>) -> Result<()> {
-        match *self {
-            Node::Leaf { .. } => panic!("add_leaf called on leaf node"),
-            Node::Interior {
-                ref mut keys,
-                ref mut links,
-            } => {
-                let first_item = items[0].clone();
-                let leaf = Node::Leaf { items };
-                let leaf_link = Link::DbKey(store.add_node(&leaf)?);
+        let first_item = items[0].clone();
+        let leaf = LeafNode { items };
+        let leaf_link = Link::DbKey(store.add_node(&Node::Leaf(leaf))?);
 
-                if links.len() == 0 {
-                    // This is the first leaf.
-                    links.push(leaf_link)
-                } else {
-                    // This is not the first leaf, so we need to add a
-                    // key to determine which pointer to follow.
-                    links.push(leaf_link);
-                    keys.push(first_item);
-                }
-
-                Ok(())
-            }
+        if self.links.len() == 0 {
+            // This is the first leaf.
+            self.links.push(leaf_link)
+        } else {
+            // This is not the first leaf, so we need to add a
+            // key to determine which pointer to follow.
+            self.links.push(leaf_link);
+            self.keys.push(first_item);
         }
+
+        Ok(())
     }
 
     /// Recursively persists the tree to the backing store, returning
     /// a string key referencing the root node.
     fn persist(self, store: &mut NodeStore<T>) -> Result<String> {
-        match self {
-            Node::Leaf { .. } => panic!("persist called on leaf node"),
-            Node::Interior { links, keys } => {
-                let mut new_links = vec![];
-                for link in links {
-                    match link {
-                        Link::Pointer(ptr) => {
-                            new_links.push(Link::DbKey(store.add_node(&ptr)?));
-                        }
-                        Link::DbKey(s) => {
-                            // This happens when the link is to a leaf node.
-                            new_links.push(Link::DbKey(s));
-                        }
-                    }
+        let mut new_links = vec![];
+        for link in self.links {
+            match link {
+                Link::Pointer(ptr) => {
+                    new_links.push(Link::DbKey(store.add_node(&ptr)?));
                 }
-
-                store.add_node(&Node::Interior {
-                    links: new_links,
-                    keys,
-                })
+                Link::DbKey(s) => {
+                    // This happens when the link is to a leaf node.
+                    new_links.push(Link::DbKey(s));
+                }
             }
         }
+
+        store.add_node(&Node::Interior(InteriorNode {
+            links: new_links,
+            keys: self.keys,
+        }))
     }
 }
 
@@ -133,7 +130,7 @@ where
     where
         I: Iterator<Item = T>,
     {
-        let mut root: Node<T> = Node::Interior {
+        let mut root: InteriorNode<T> = InteriorNode {
             keys: vec![],
             links: vec![],
         };
@@ -162,25 +159,26 @@ where
         }
     }
 
-    pub fn iter(&self) -> Iter<T> {
-        Iter {
+    fn iter_leaves(&self) -> LeafIter<T> {
+        LeafIter {
             store: self.store.clone(),
-            stack: vec![
-                IterState {
-                    node_ref: self.root.clone(),
-                    link_idx: 0,
-                    item_idx: 0,
-                },
-            ],
+            stack: vec![LeafIterState {
+                node_ref: self.root.clone(),
+                link_idx: 0
+            }]
         }
     }
 
-    pub fn range_from(&self, start: T) -> Result<Iter<T>> {
+    pub fn iter(&self) -> Result<ItemIter<T>> {
+        ItemIter::from_leaves(self.iter_leaves(), 0)
+    }
+
+    pub fn range_from(&self, start: T) -> Result<ItemIter<T>> {
+        println!("ranging from {:?}", start);
         let mut stack = vec![
-            IterState {
+            LeafIterState {
                 node_ref: self.root.clone(),
                 link_idx: 0,
-                item_idx: 0,
             },
         ];
 
@@ -195,37 +193,32 @@ where
             let node = self.store.get_node(&node_ref)?;
 
             match *node {
-                Node::Leaf { ref items } => {
+                Node::Leaf(LeafNode { ref items }) => {
                     match items.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) => {
-                            stack.push(IterState {
-                                item_idx: idx,
+                            stack.push(LeafIterState {
                                 link_idx: idx + 1,
                                 ..state
                             });
 
-                            return Ok(Iter {
-                                stack,
-                                store: self.store.clone(),
-                            });
+                            println!("stack {:?}, index {:?}", stack, idx);
+                            return ItemIter::from_leaves(
+                                LeafIter { store: self.store.clone(), stack: stack },
+                                idx
+                            );
                         }
                         Err(idx) => {
-                            stack.push(IterState {
-                                item_idx: idx,
-                                ..state
-                            });
-
-                            return Ok(Iter {
-                                stack,
-                                store: self.store.clone(),
-                            });
+                            return ItemIter::from_leaves(
+                                LeafIter { stack, store: self.store.clone() },
+                                idx
+                            );
                         }
                     }
                 }
-                Node::Interior {
+                Node::Interior(InteriorNode {
                     ref keys,
                     ref links,
-                } => {
+                }) => {
                     match keys.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) | Err(idx) => {
                             // If the key is found in an interior
@@ -238,16 +231,22 @@ where
                                 // happens when the root is empty and
                                 // there are no leaves.
                                 // FIXME: Initialize the tree better to avoid this special case.
-                                return Ok(Iter { stack, store: self.store.clone() });
+                                return Ok(ItemIter {
+                                    leaves: LeafIter {
+                                        stack,
+                                        store: self.store.clone()
+                                    },
+                                    current_leaf: None,
+                                    item_idx: 0,
+                                });
                             }
-                            stack.push(IterState {
-                                item_idx: idx,
+
+                            stack.push(LeafIterState {
                                 link_idx: idx + 1,
                                 ..state
                             });
-                            stack.push(IterState {
+                            stack.push(LeafIterState {
                                 node_ref: links[idx].clone(),
-                                item_idx: 0,
                                 link_idx: 0,
                             });
                         }
@@ -258,32 +257,27 @@ where
     }
 }
 
-pub struct Iter<T> {
+struct LeafIter<T> {
     store: NodeStore<T>,
-    stack: Vec<IterState<T>>,
+    stack: Vec<LeafIterState<T>>,
 }
 
 #[derive(Debug)]
-struct IterState<T> {
+struct LeafIterState<T> {
     node_ref: Link<T>,
     link_idx: usize,
-    item_idx: usize,
 }
 
-impl<'de, T> Iterator for Iter<T>
-where
-    T: Clone + Deserialize<'de> + Serialize + Debug,
+impl<'de, T> Iterator for LeafIter<T>
+where T: Clone + Deserialize<'de> + Serialize + Debug,
 {
-    type Item = Result<T>;
+    type Item = Result<LeafNode<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
+        println!("iteration");
         loop {
-            let IterState {
-                node_ref,
-                link_idx,
-                item_idx,
-                ..
-            } = match self.stack.pop() {
+            println!("stack {:?}", self.stack);
+            let LeafIterState { node_ref, link_idx } = match self.stack.pop() {
                 Some(frame) => frame,
                 None => return None,
             };
@@ -300,37 +294,84 @@ where
             };
 
             match *node {
-                Node::Leaf { ref items } => {
-                    if item_idx < items.len() {
-                        let item: &T = items.get(item_idx).unwrap();
-                        let res: Self::Item = Ok(item.clone());
-                        self.stack.push(IterState {
-                            node_ref: node_ref,
-                            link_idx,
-                            item_idx: item_idx + 1,
-                        });
-                        return Some(res);
-
-                    }
+                Node::Leaf(ref leaf) => {
+                    // FIXME(perf): should not be necessary to clone the node
+                    println!("leaf starting with {:?}", leaf.items[0]);
+                    return Some(Ok(leaf.clone()));
                 }
-                Node::Interior { ref links, .. } => {
-                    if link_idx < links.len() {
-                        // Re-push own dir for later.
-                        self.stack.push(IterState {
-                            node_ref,
-                            link_idx: link_idx + 1,
-                            item_idx,
-                        });
-                        // Push next child dir.
-                        self.stack.push(IterState {
-                            node_ref: links[link_idx].clone(),
-                            link_idx: 0,
-                            item_idx: 0,
-                        });
-                        continue;
+                Node::Interior(InteriorNode { ref links, .. }) => {
+                    if links.len() == 0 {
+                        // Special case: empty root node
+                        return None;
                     }
+                    println!("link {:?}", link_idx);
+                    let next_link_idx = link_idx + 1;
+                    if next_link_idx < links.len() {
+                        // Re-push own dir for later.
+                        self.stack.push(LeafIterState {
+                            node_ref,
+                            link_idx: next_link_idx,
+                        });
+                    }
+                    // Push next child node and keep looking for leaves.
+                    self.stack.push(LeafIterState {
+                        node_ref: links[link_idx].clone(),
+                        link_idx: 0,
+                    });
+                    continue;
                 }
             }
+
+        }
+    }
+
+}
+
+pub struct ItemIter<T>
+{
+    leaves: LeafIter<T>,
+    current_leaf: Option<LeafNode<T>>,
+    item_idx: usize,
+}
+
+impl<'de, T> ItemIter<T> where T: Clone + Deserialize<'de> + Serialize + Debug {
+    fn from_leaves(mut leaves: LeafIter<T>, idx_in_leaf: usize) -> Result<ItemIter<T>> {
+        let first_leaf = match leaves.next() {
+            Some(Ok(leaf)) => Some(leaf),
+            Some(Err(e)) => return Err(e),
+            None => None,
+        };
+        return Ok(ItemIter {
+            leaves,
+            current_leaf: first_leaf,
+            item_idx: idx_in_leaf,
+        })
+    }
+}
+
+impl<'de, T> Iterator for ItemIter<T>
+where T: Clone + Deserialize<'de> + Serialize + Debug,
+{
+    type Item = Result<T>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        let items = match self.current_leaf.clone() {
+            Some(LeafNode { items }) => items,
+            None => return None,
+        };
+
+        if self.item_idx < items.len() {
+            let item = items[self.item_idx].clone();
+            self.item_idx += 1;
+            return Some(Ok(item));
+        } else {
+            self.current_leaf = match self.leaves.next() {
+                Some(Ok(leaf)) => Some(leaf),
+                Some(Err(e)) => return Some(Err(e)),
+                None => None,
+            };
+            self.item_idx = 0;
+            return self.next();
         }
     }
 }
@@ -349,6 +390,7 @@ where
 {
     pub fn new(store: Arc<KVStore>) -> NodeStore<T> {
         NodeStore {
+            // TODO make size configurable
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store,
         }
@@ -395,11 +437,22 @@ mod tests {
     }
 
     #[test]
+    fn test_leaf_iter() {
+        let iter = 0..10_000;
+        let tree = test_tree(iter.clone());
+
+        assert_equal(
+            tree.iter_leaves().map(|r| r.unwrap()).map(|l| l.items[0]),
+            vec![0, 1024, 2048, 3072, 4096, 5120, 6144, 7168, 8192, 9216]
+        );
+    }
+
+    #[test]
     fn test_build_and_iter() {
         let iter = 0..10_000;
         let tree = test_tree(iter.clone());
 
-        assert_equal(tree.iter().map(|r| r.unwrap()), iter);
+        assert_equal(tree.iter().unwrap().map(|r| r.unwrap()), iter);
     }
 
     #[test]

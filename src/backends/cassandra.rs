@@ -155,7 +155,7 @@ impl KVStore for CassandraStore {
 mod tests {
 
     use super::*;
-    use durable_tree::Node;
+    use durable_tree::{LeafNode};
     use rmp_serde::{Serializer, Deserializer};
     use serde::{Serialize, Deserialize};
 
@@ -168,7 +168,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_get_and_set() {
-        let node = Node::Leaf { items: vec!["hi there".to_string()] };
+        let node = LeafNode { items: vec!["hi there".to_string()] };
 
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf)).unwrap();

@@ -101,11 +101,11 @@ mod tests {
 
     use rmp_serde::Serializer;
     use serde::Serialize;
-    use durable_tree::Node;
+    use durable_tree::{Node, LeafNode};
 
     #[test]
     fn test_kv_store() {
-        let root: Node<String> = Node::Leaf { items: vec![] };
+        let root: Node<String> = Node::Leaf(LeafNode { items: vec![] });
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
         let mut buf = Vec::new();
         root.serialize(&mut Serializer::new(&mut buf)).unwrap();

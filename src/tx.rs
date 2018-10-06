@@ -449,10 +449,10 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
 fn create_db(store: Arc<KVStore>) -> Result<Db> {
     use durable_tree;
 
-    let empty_root: durable_tree::Node<Record> = durable_tree::Node::Interior {
+    let empty_root: durable_tree::Node<Record> = durable_tree::Node::Interior(durable_tree::InteriorNode {
         keys: vec![],
         links: vec![],
-    };
+    });
 
     let node_store = durable_tree::NodeStore::new(store.clone());
     let eav_root = node_store.add_node(&empty_root)?;

@@ -56,8 +56,9 @@ where
     }
 
     pub fn iter(&self) -> impl Iterator<Item = T> {
+        // FIXME: signature should allow returning Result instead of unwrapping
         self.mem_index.iter().merge_by(
-            self.durable_index.iter().map(
+            self.durable_index.iter().unwrap().map(
                 |r| r.unwrap(),
             ),
             |a, b| {
@@ -119,15 +120,15 @@ mod tests {
 
     #[test]
     fn test_rebuild() {
-        use durable_tree::Node;
+        use durable_tree::{Node, InteriorNode};
 
         let store = Arc::new(HeapStore::new::<i64>());
         let ns: NodeStore<i64> = NodeStore::new(store.clone());
-        let root_node = Node::Interior {
+        let root_node = InteriorNode {
             keys: vec![],
             links: vec![],
         };
-        let root_ref = ns.add_node(&root_node).unwrap();
+        let root_ref = ns.add_node(&Node::Interior(root_node)).unwrap();
         let mut index = Index::new(root_ref, store, NumComparator);
 
         for i in 0..1000 {
