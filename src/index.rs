@@ -84,12 +84,13 @@ where
     }
 
     pub fn rebuild(&self) -> Index<T, C> {
+        // FIXME: return a Result to avoid unwrapping
         Index {
             durable_index: DurableTree::build_from_iter(
                 self.store.clone(),
                 self.iter(),
                 self._comparator,
-            ),
+            ).unwrap(),
             mem_index: RBTree::new(self._comparator),
             ..self.clone()
         }

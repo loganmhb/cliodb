@@ -39,26 +39,27 @@ pub enum Link<T> {
     DbKey(String),
 }
 
-/// A node of the tree. Leaf nodes store data only. Interior nodes
-/// store links to other nodes (leaf or interior) and keys to
-/// determine which pointer to follow in order to find an item (but
-/// each key in an interior node is duplicated in a leaf node).
-///
-/// An empty tree is represented by an empty directory node (a node
-/// with zero leaves and zero links). Otherwise, the number of keys in
-/// the directory node is always exactly one less than the number of
-/// links.
+
+/// A node of the tree -- either leaf or interior. An empty tree is
+/// represented by an empty directory node.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub enum Node<T> {
     Leaf(LeafNode<T>),
     Interior(InteriorNode<T>),
 }
 
+
+/// A leaf node is just an array of items.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub struct LeafNode<T> {
     pub items: Vec<T>
 }
 
+
+/// An interior node doesn't contain any data itself, but contains
+/// information for navigating to a leaf node. This information is a
+/// vector of keys (the first item of each child node) and links to
+/// those children.
 #[derive(PartialEq, Eq, PartialOrd, Ord, Debug, Clone, Serialize, Deserialize)]
 pub struct InteriorNode<T> {
     pub keys: Vec<T>,
@@ -126,29 +127,117 @@ where
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    pub fn build_from_iter<I>(mut store: NodeStore<T>, iter: I, _comparator: C) -> DurableTree<T, C>
+    pub fn build_from_iter<I>(store: NodeStore<T>, iter: I, _comparator: C) -> Result<DurableTree<T, C>>
     where
         I: Iterator<Item = T>,
     {
-        let mut root: InteriorNode<T> = InteriorNode {
-            keys: vec![],
-            links: vec![],
-        };
+        // As we build up the tree, we need to keep track of the
+        // rightmost interior node on each level, so that we can
+        // append to it. At the beginning, that's just the empty root.
+        // The levels are ordered from highest to lowest, so the root
+        // of the tree is always last.
+        let mut open_nodes: Vec<InteriorNode<T>> = vec![];
 
+        // The items need to be chunked into leaf nodes.
         let chunks = iter.chunks(NODE_CAPACITY);
         let leaf_item_vecs = chunks.into_iter().map(|chunk| chunk.collect::<Vec<_>>());
 
-        for v in leaf_item_vecs {
-            root.add_leaf(&mut store, v).unwrap();
+        // The leaves themselves need to be chunked into directory nodes.
+        let closure_store = store.clone();
+        let leaf_node_links = leaf_item_vecs.map(|items| {
+            let key = items[0].clone();
+            let leaf = LeafNode { items };
+            let leaf_link: Result<(T, Link<T>)> = closure_store.add_node(&Node::Leaf(leaf))
+                .map(|db_ref| (key, Link::DbKey(db_ref)));
+            leaf_link
+        });
+
+        // error handling makes this a bit awkward; we need to process
+        // the leaf links lazily, but return an error if we encounter
+        // an error in the iterator, so instead of folding or
+        // something we have to use for loops and a bunch of mutable
+        // references
+        for result in leaf_node_links {
+            let (mut key, mut link) = result?;
+
+            let mut layer = 0;
+            loop {
+                if open_nodes.len() < layer + 1 {
+                    // The tree is full. We need to add a new root node before proceeding.
+                    open_nodes.push(InteriorNode { links: vec![], keys: vec![] });
+                }
+
+
+                let mut parent = &mut open_nodes[layer];
+                parent.keys.push(key);
+                parent.links.push(link);
+
+                if parent.links.len() == NODE_CAPACITY {
+                    // This node is full, so we need to replace it
+                    // with a new empty one, persist it, and add a
+                    // link to it to its own parent.
+                    let old_node = std::mem::replace(parent, InteriorNode { links: vec![], keys: vec![] });
+                    key = old_node.keys[0].clone();
+                    link = Link::DbKey(store.add_node(&Node::Interior(old_node))?);
+                    layer += 1;
+                    continue;
+                } else {
+                    break;
+                }
+            }
         }
 
-        let root_ref = root.persist(&mut store).unwrap();
+        // Now that the tree is built, we need to persist the remaining open nodes.
+        let mut open_node_iter = open_nodes.into_iter();
+        let first_open_node = open_node_iter.next().unwrap();
 
-        DurableTree {
+        if first_open_node.keys.len() == 0 {
+            // an empty directory node means a root
+            let link = Link::DbKey(store.add_node(&Node::Interior(first_open_node))?);
+            return Ok(
+                DurableTree {
+                    store: store,
+                    root: link,
+                    _comparator,
+                }
+            )
+        }
+
+        let mut key = first_open_node.keys[0].clone();
+        // FIXME: should be able to avoid this clone, I think, maybe requiring
+        // a change in the signature of add_node.
+        let mut link = Link::DbKey(store.add_node(&Node::Interior(first_open_node.clone()))?);
+
+        for mut node in open_node_iter {
+            if node.keys.len() == 0 {
+                // nothing ever got added to this node so it's not needed
+                continue;
+            }
+            node.keys.push(key.clone());
+            node.links.push(link);
+            key = (&node.keys[0]).clone();
+            link = Link::DbKey(store.add_node(&Node::Interior(node))?);
+        }
+
+        Ok(DurableTree {
             store: store,
-            root: Link::DbKey(root_ref),
+            root: link,
             _comparator,
-        }
+        })
+    }
+
+    pub fn rebuild_with_novelty<I>(
+        &self,
+        mut store: NodeStore<T>,
+        iter: I,
+        _comparator: C
+    ) -> DurableTree<T, C>
+        where I: Iterator<Item = T>
+    {
+        // iterate over nodes.
+        // if a node can be saved (i.e. the next item in the iterator is past the node), reuse it and move to the next node.
+        //
+        unimplemented!()
     }
 
     pub fn from_ref(db_ref: String, node_store: NodeStore<T>, _comparator: C) -> DurableTree<T, C> {
@@ -174,7 +263,6 @@ where
     }
 
     pub fn range_from(&self, start: T) -> Result<ItemIter<T>> {
-        println!("ranging from {:?}", start);
         let mut stack = vec![
             LeafIterState {
                 node_ref: self.root.clone(),
@@ -201,7 +289,6 @@ where
                                 ..state
                             });
 
-                            println!("stack {:?}, index {:?}", stack, idx);
                             return ItemIter::from_leaves(
                                 LeafIter { store: self.store.clone(), stack: stack },
                                 idx
@@ -219,38 +306,43 @@ where
                     ref keys,
                     ref links,
                 }) => {
-                    match keys.binary_search_by(|other| C::compare(other, &start)) {
-                        Ok(idx) | Err(idx) => {
-                            // If the key is found in an interior
-                            // node, that means the actual item is the
-                            // first one of the right child, so it
-                            // doesn't actually make a difference if
-                            // the key exists in this node or not.
-                            if idx == 0 && links.len() == 0 {
-                                // Hack: empty interior node only
-                                // happens when the root is empty and
-                                // there are no leaves.
-                                // FIXME: Initialize the tree better to avoid this special case.
-                                return Ok(ItemIter {
-                                    leaves: LeafIter {
-                                        stack,
-                                        store: self.store.clone()
-                                    },
-                                    current_leaf: None,
-                                    item_idx: 0,
-                                });
-                            }
+                    // If the key is found in an interior node, that
+                    // means the actual item is the first one of the
+                    // child at that index, so it doesn't actually make a
+                    // difference if the key exists in this node or
+                    // not, except for the off-by-one error.
+                    let link_idx = match keys.binary_search_by(|other| C::compare(other, &start)) {
+                        Ok(idx) => idx,
+                        // This is not elegant, but I think it can
+                        // happen when the key doesn't exist and sorts
+                        // between this node and the previous one.
+                        Err(0) => 0,
+                        Err(idx) => idx - 1,
+                    };
 
-                            stack.push(LeafIterState {
-                                link_idx: idx + 1,
-                                ..state
-                            });
-                            stack.push(LeafIterState {
-                                node_ref: links[idx].clone(),
-                                link_idx: 0,
-                            });
-                        }
+                    if link_idx == 0 && links.len() == 0 {
+                        // Hack: empty interior node only
+                        // happens when the root is empty and
+                        // there are no leaves.
+                        // FIXME: Initialize the tree better to avoid this special case.
+                        return Ok(ItemIter {
+                            leaves: LeafIter {
+                                stack,
+                                store: self.store.clone()
+                            },
+                            current_leaf: None,
+                            item_idx: 0,
+                        });
                     }
+
+                    stack.push(LeafIterState {
+                        link_idx: link_idx + 1,
+                        ..state
+                    });
+                    stack.push(LeafIterState {
+                        node_ref: links[link_idx].clone(),
+                        link_idx: 0,
+                    });
                 }
             }
         }
@@ -274,9 +366,7 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
     type Item = Result<LeafNode<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
-        println!("iteration");
         loop {
-            println!("stack {:?}", self.stack);
             let LeafIterState { node_ref, link_idx } = match self.stack.pop() {
                 Some(frame) => frame,
                 None => return None,
@@ -296,7 +386,6 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
             match *node {
                 Node::Leaf(ref leaf) => {
                     // FIXME(perf): should not be necessary to clone the node
-                    println!("leaf starting with {:?}", leaf.items[0]);
                     return Some(Ok(leaf.clone()));
                 }
                 Node::Interior(InteriorNode { ref links, .. }) => {
@@ -304,7 +393,6 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
                         // Special case: empty root node
                         return None;
                     }
-                    println!("link {:?}", link_idx);
                     let next_link_idx = link_idx + 1;
                     if next_link_idx < links.len() {
                         // Re-push own dir for later.
@@ -433,7 +521,7 @@ mod tests {
         let store = Arc::new(HeapStore::new::<i64>());
         let node_store = NodeStore::new(store.clone());
 
-        DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator)
+        DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator).unwrap()
     }
 
     #[test]
@@ -473,28 +561,32 @@ mod tests {
     }
 
     // When new parents are implemented (comes into play circa 10e5-10e6 datoms) this should pass:
-    // #[test]
-    // #[ignore]
-    // fn test_node_height() {
-    //     let store = Arc::new(HeapStore::new::<i64>());
-    //     let mut node_store = NodeStore {
-    //         cache: LruCache::new(1024),
-    //         store: store.clone(),
-    //     };
+    #[test]
+    #[ignore]
+    fn test_node_height() {
+        let store = Arc::new(HeapStore::new::<i64>());
+        let node_store = NodeStore {
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
+            store: store.clone(),
+        };
 
-    //     let iter = 0..10_000_000;
-    //     let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone());
+        let iter = 0..10_000_000;
+        let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator).unwrap();
 
-    //     let root_ref = match tree.root {
-    //         Link::DbKey(s) => s,
-    //         _ => unreachable!(),
-    //     };
+        let root_ref = match tree.root {
+            Link::DbKey(ref s) => s.clone(),
+            _ => unreachable!(),
+        };
 
-    //     let root_node_links: Vec<Link<i64>> = match node_store.get_node(&root_ref).unwrap() {
-    //         Node::Interior { links, .. } => links,
-    //         _ => unreachable!(),
-    //     };
+        let root_node_links_len: usize = match *node_store.get_node(&root_ref).unwrap() {
+            Node::Interior(InteriorNode { ref links, .. }) => links.len(),
+            _ => unreachable!(),
+        };
 
-    //     assert!(root_node_links.len() <= NODE_CAPACITY)
-    // }
+        assert!(root_node_links_len <= NODE_CAPACITY);
+        assert_equal(
+            tree.iter().unwrap().map(|r| r.unwrap()),
+            iter
+        );
+    }
 }
