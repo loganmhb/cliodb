@@ -17,8 +17,9 @@ impl MysqlStore {
 
         let empty_params: Vec<String> = vec![];
         // Set up tables to track index data
+
         pool.prep_exec(
-            "CREATE TABLE IF NOT EXISTS logos_kvs (`key` VARCHAR(36) NOT NULL PRIMARY KEY, val BLOB)",
+            "CREATE TABLE IF NOT EXISTS logos_kvs (`key` VARCHAR(36) NOT NULL PRIMARY KEY, val LONGBLOB)",
             empty_params.clone()
         )?;
         pool.prep_exec(
@@ -39,7 +40,7 @@ impl KVStore for MysqlStore {
             vec![("key", key)]
         )
             .map_err(|e| e.to_string())
-            .map(|r| r.ok_or("vale does not exist"))
+            .map(|r| r.ok_or("val does not exist"))
             .and_then(|row| {
                 // FIXME: this function should return a Result<Option<Vec<u8>>> instead
                 // of using a result as an option

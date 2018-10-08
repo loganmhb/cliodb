@@ -1,9 +1,33 @@
 # logos
 
-This is a project I'm working on while I'm at the Recurse Center. The
-idea is to implement a stripped-down version of a Datomic-style
-database: immutable facts, queried with Datalog, with scalable
-concurrent reads while writes are serialized through a transactor.
+Logos is a relational, non-SQL database patterned after Datomic. Key features:
+
+1. Records are stored as immutable, append-only triples of (entity,
+attribute, value), stored in covering indexes in a pluggable key-value
+store backend
+
+2. A declarative query language similar to Datalog or SPARQL
+
+3. CQRS-style separation of reads and writes; writes go through a
+single transactor process for ACID compliance [incomplete], while reads are
+executed independently by the client accessing the backing store, so
+that reads can be scaled independently of writes and benefit from
+pervasive caching
+
+4. Queries are executed on the client via a peer library that accesses
+the backing store, and do not go through the transactor process
+
+5. Database-as-value: because the database is immutable and
+append-only, queries can be executed against a snapshot of the
+database at a point in time -- either when the query began, or any
+arbitrary point in the past [incomplete]
+
+6. Transactions are reified as entities in the database, and can be
+queried like any other entity [incomplete]
+
+It is pre-alpha quality software, and you should not trust it with
+your data! But if you'd like to help make it better, contributions are
+very welcome.
 
 # Running
 
@@ -51,8 +75,10 @@ type the attribute's value can be):
 
     {db:ident name db:valueType db:type:string}
 
-In the future, information about the attribute's uniqueness and cardinality
-will be required as well.
+In the future, information about the attribute's uniqueness and
+cardinality will be required as well; currently, the database does not
+enforce uniqueness constraints and all attributes have an implicit
+cardinality of many.
 
 Queries look like this:
 
@@ -103,22 +129,26 @@ security -- adding a reference to a non-existent entity would fail,
 whereas a typo in a non-interned ident would just give you a new,
 different ident.
 
-2. Improvments to the query language (negation, basic comparisons;
-eventually there should be a way of extending the query language with
-a programming language, just as in Datomic you can use arbitrary
-Clojure in your queries)
+2. Improvments to the query language. The two biggest missing pieces
+are more primitive types (e.g. numbers) and user-defined
+functions. User-defined functions are not as important as they would
+be in some other database systems because it's not substantially more
+efficient to execute one big query than several small ones, since
+they're all executed clientside and make a similar number of fetches
+to the backing store, but this is critical for supporting useful
+transactions. The most obvious path is to define a `db:function`
+primitive type that stores Lua scripts or something like that which
+the transactor can execute.
 
 3. Ability to query the database as of a particular transaction or
-point in time
+point in time -- this just requires filtering records by transaction
+time and should be pretty simple to implement
 
-4. More efficient reindexing: currently, when enough new data
-accumulates in-memory in the transactor, it stops everything and
-builds a totally new index. Both of these are unnecessary; it should
-instead construct an index in the background (might require throttling
-transactions if background indexing can't keep up with new
-transactions) and the index should re-use any segments that don't need
-to change. (If you're importing sorted data, the whole index could get
-reused for at least the EAVT index.)
+4. Improved indexing strategies: not everything should be added to the
+AVET or VAET indexes, for example. These are only necessary for
+supporting indexed attributes, uniqueness constraints, and reference
+types. The query engine also does not use these indexes optimally, and
+it should for certain queries.
 
 5. Data partitions: Datomic assigns entities to partitions, which are
 encoded in the upper bits of the entity id. This causes entities in
@@ -130,6 +160,9 @@ copying needed during reindexing, I think.
 whether an attribute can have one or many values for a particular
 entity, and whether an attribute must be unique.
 
+7. Entity API -- given a database entity id, you should be able to
+access its attributes hash-map style
+
 # Known issues
 
 There are many problems, and FIXMEs littered throughout the code
@@ -138,6 +171,7 @@ base. It does not work very well!
 The biggest reliability issue right now is probably that most of the
 networking code doesn't handle failure cases or include timeouts; lots
 of `unwrap`s will need to be replaced with an actual error handling
-story. "Background" reindexing also does not occur in the background,
-so when it happens one unlucky transaction will take a long time to
-complete.
+story. There are unsound `.unwrap()` calls in a number of places as
+well, and some of the most complex code (the persistent B-tree
+implementation in durable_tree.rs) is not tested as well as it should
+be.

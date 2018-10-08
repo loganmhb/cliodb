@@ -9,7 +9,7 @@ use backends::KVStore;
 use durable_tree::{DurableTree, NodeStore};
 use rbtree::RBTree;
 
-pub trait Comparator: Clone {
+pub trait Comparator: Copy {
     type Item;
     fn compare(a: &Self::Item, b: &Self::Item) -> Ordering;
 }
@@ -86,10 +86,8 @@ where
     pub fn rebuild(&self) -> Index<T, C> {
         // FIXME: return a Result to avoid unwrapping
         Index {
-            durable_index: DurableTree::build_from_iter(
-                self.store.clone(),
-                self.iter(),
-                self._comparator,
+            durable_index: self.durable_index.rebuild_with_novelty(
+                self.mem_index.iter()
             ).unwrap(),
             mem_index: RBTree::new(self._comparator),
             ..self.clone()
@@ -136,6 +134,7 @@ mod tests {
             index = index.insert(i);
         }
 
-        assert_equal(index.iter(), index.rebuild().iter());
+        let rebuilt = index.rebuild();
+        assert_equal(index.iter(), rebuilt.iter());
     }
 }

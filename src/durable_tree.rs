@@ -1,4 +1,6 @@
 use std::fmt::Debug;
+use std::iter::Peekable;
+use std::cmp::Ordering;
 use std::sync::{Arc, Mutex};
 
 use itertools::Itertools;
@@ -9,7 +11,7 @@ use uuid::Uuid;
 
 use backends::KVStore;
 use index::Comparator;
-use Result;
+use {Result};
 
 ///! This module defines a data structure for storing facts in the
 ///! backing store. It is intended to be constructed once in a batch
@@ -28,6 +30,10 @@ use Result;
 ///! durable nodes in the backing store.
 
 const NODE_CAPACITY: usize = 1024;
+
+// TODO: leaf max size should be in bytes, not records, in order to comply
+// with backing kv store size limits (e.g. 65kb mysql blobs)
+const LEAF_CAPACITY: usize = 16384;
 
 /// A link to another node of the tree. This can be either a string
 /// key for retrieving the node from the backing store, or a pointer
@@ -81,39 +87,52 @@ where
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    pub fn build_from_iter<I>(store: NodeStore<T>, iter: I, _comparator: C) -> Result<DurableTree<T, C>>
+    pub fn build_from_iter<I>(store: NodeStore<T>, iter: I, comparator: C) -> Result<DurableTree<T, C>>
     where
         I: Iterator<Item = T>,
     {
+        // The items need to be chunked into leaf nodes.
+        let chunks = iter.chunks(LEAF_CAPACITY);
+        let leaves = chunks.into_iter()
+            .map(|chunk| chunk.collect::<Vec<_>>())
+            .map(|items| LeafNode { items });
+        let closure_store = store.clone();
+        let leaf_node_links = leaves.map(|leaf| {
+            let leaf_link = closure_store.add_node(&Node::Leaf(leaf.clone()))
+                .map(|db_key| LeafRef { node: leaf, db_key });
+            leaf_link
+        });
+
+        Self::build_from_leaves(leaf_node_links, store, comparator)
+    }
+
+    /// Builds a new durable store from an iterator of leaf nodes by
+    /// constructing a new directory tree on top.  The leaves iterator
+    /// must return items of type Result<(T, Link<T>)>, where the
+    /// first element of the tuple is the first item in the leaf and
+    /// the second element is a link to the persisted leaf. This
+    /// allows unchanged leaves to be preserved if rebuilding a tree.
+    fn build_from_leaves<I: Iterator<Item = Result<LeafRef<T>>>>(
+        leaves: I,
+        store: NodeStore<T>,
+        comparator: C
+    ) -> Result<DurableTree<T, C>> {
         // As we build up the tree, we need to keep track of the
         // rightmost interior node on each level, so that we can
         // append to it. At the beginning, that's just the empty root.
         // The levels are ordered from highest to lowest, so the root
         // of the tree is always last.
-        let mut open_nodes: Vec<InteriorNode<T>> = vec![];
+        let mut open_nodes: Vec<InteriorNode<T>> = vec![InteriorNode { links: vec![], keys: vec![] }];
 
-        // The items need to be chunked into leaf nodes.
-        let chunks = iter.chunks(NODE_CAPACITY);
-        let leaf_item_vecs = chunks.into_iter().map(|chunk| chunk.collect::<Vec<_>>());
-
-        // The leaves themselves need to be chunked into directory nodes.
-        let closure_store = store.clone();
-        let leaf_node_links = leaf_item_vecs.map(|items| {
-            let key = items[0].clone();
-            let leaf = LeafNode { items };
-            let leaf_link: Result<(T, Link<T>)> = closure_store.add_node(&Node::Leaf(leaf))
-                .map(|db_ref| (key, Link::DbKey(db_ref)));
-            leaf_link
-        });
-
+        let leaves = leaves.collect::<Vec<_>>();
         // error handling makes this a bit awkward; we need to process
         // the leaf links lazily, but return an error if we encounter
         // an error in the iterator, so instead of folding or
         // something we have to use for loops and a bunch of mutable
         // references
-        for result in leaf_node_links {
-            let (mut key, mut link) = result?;
-
+        for result in leaves {
+            let LeafRef { node, mut db_key } = result?;
+            let mut key = node.items[0].clone();
             let mut layer = 0;
             loop {
                 if open_nodes.len() < layer + 1 {
@@ -124,7 +143,7 @@ where
 
                 let mut parent = &mut open_nodes[layer];
                 parent.keys.push(key);
-                parent.links.push(link);
+                parent.links.push(Link::DbKey(db_key));
 
                 if parent.links.len() == NODE_CAPACITY {
                     // This node is full, so we need to replace it
@@ -132,7 +151,7 @@ where
                     // link to it to its own parent.
                     let old_node = std::mem::replace(parent, InteriorNode { links: vec![], keys: vec![] });
                     key = old_node.keys[0].clone();
-                    link = Link::DbKey(store.add_node(&Node::Interior(old_node))?);
+                    db_key = store.add_node(&Node::Interior(old_node))?;
                     layer += 1;
                     continue;
                 } else {
@@ -152,7 +171,7 @@ where
                 DurableTree {
                     store: store,
                     root: link,
-                    _comparator,
+                    _comparator: comparator,
                 }
             )
         }
@@ -176,22 +195,23 @@ where
         Ok(DurableTree {
             store: store,
             root: link,
-            _comparator,
+            _comparator: comparator,
         })
     }
 
     pub fn rebuild_with_novelty<I>(
         &self,
-        mut store: NodeStore<T>,
-        iter: I,
-        _comparator: C
-    ) -> DurableTree<T, C>
+        novelty: I,
+    ) -> Result<DurableTree<T, C>>
         where I: Iterator<Item = T>
     {
-        // iterate over nodes.
-        // if a node can be saved (i.e. the next item in the iterator is past the node), reuse it and move to the next node.
-        //
-        unimplemented!()
+        let rebuild_iterator = RebuildIter::new(
+            self.iter_leaves(),
+            novelty,
+            self.store.clone(),
+            self._comparator,
+        )?;
+        Self::build_from_leaves(rebuild_iterator, self.store.clone(), self._comparator)
     }
 
     pub fn from_ref(db_ref: String, node_store: NodeStore<T>, _comparator: C) -> DurableTree<T, C> {
@@ -267,9 +287,9 @@ where
                     // not, except for the off-by-one error.
                     let link_idx = match keys.binary_search_by(|other| C::compare(other, &start)) {
                         Ok(idx) => idx,
-                        // This is not elegant, but I think it can
-                        // happen when the key doesn't exist and sorts
-                        // between this node and the previous one.
+                        // This is not elegant, but it happens when
+                        // the key doesn't exist and sorts between
+                        // this node and the previous one.
                         Err(0) => 0,
                         Err(idx) => idx - 1,
                     };
@@ -289,10 +309,12 @@ where
                         });
                     }
 
-                    stack.push(LeafIterState {
-                        link_idx: link_idx + 1,
-                        ..state
-                    });
+                    if link_idx + 1 < links.len() {
+                        stack.push(LeafIterState {
+                            link_idx: link_idx + 1,
+                            ..state
+                        });
+                    }
                     stack.push(LeafIterState {
                         node_ref: links[link_idx].clone(),
                         link_idx: 0,
@@ -303,12 +325,19 @@ where
     }
 }
 
+#[derive(Debug, PartialEq, Eq)]
+struct LeafRef<T> {
+    db_key: String,
+    node: LeafNode<T>,
+}
+
+#[derive(Clone)]
 struct LeafIter<T> {
     store: NodeStore<T>,
     stack: Vec<LeafIterState<T>>,
 }
 
-#[derive(Debug)]
+#[derive(Debug, Clone)]
 struct LeafIterState<T> {
     node_ref: Link<T>,
     link_idx: usize,
@@ -317,7 +346,7 @@ struct LeafIterState<T> {
 impl<'de, T> Iterator for LeafIter<T>
 where T: Clone + Deserialize<'de> + Serialize + Debug,
 {
-    type Item = Result<LeafNode<T>>;
+    type Item = Result<LeafRef<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
         loop {
@@ -326,27 +355,31 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
                 None => return None,
             };
 
-            let db_ref = match node_ref {
+            let db_key = match node_ref {
                 Link::DbKey(ref s) => s.clone(),
                 Link::Pointer(_) => panic!("can't iterate using Link::Pointer"),
             };
 
-            let node = match self.store.get_node(&db_ref) {
+            let node = match self.store.get_node(&db_key) {
                 Ok(n) => n,
                 // FIXME: Re-push stack frame on error?
-                Err(e) => return Some(Err(e)),
+                Err(e) => {
+                    println!("Error calling get_node: {:?}", e);
+                    return Some(Err(e));
+                },
             };
 
             match *node {
                 Node::Leaf(ref leaf) => {
                     // FIXME(perf): should not be necessary to clone the node
-                    return Some(Ok(leaf.clone()));
+                    return Some(Ok(LeafRef { db_key, node: leaf.clone()}));
                 }
                 Node::Interior(InteriorNode { ref links, .. }) => {
                     if links.len() == 0 {
                         // Special case: empty root node
                         return None;
                     }
+
                     let next_link_idx = link_idx + 1;
                     if next_link_idx < links.len() {
                         // Re-push own dir for later.
@@ -360,13 +393,10 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
                         node_ref: links[link_idx].clone(),
                         link_idx: 0,
                     });
-                    continue;
                 }
             }
-
         }
     }
-
 }
 
 pub struct ItemIter<T>
@@ -379,8 +409,11 @@ pub struct ItemIter<T>
 impl<'de, T> ItemIter<T> where T: Clone + Deserialize<'de> + Serialize + Debug {
     fn from_leaves(mut leaves: LeafIter<T>, idx_in_leaf: usize) -> Result<ItemIter<T>> {
         let first_leaf = match leaves.next() {
-            Some(Ok(leaf)) => Some(leaf),
-            Some(Err(e)) => return Err(e),
+            Some(Ok(LeafRef { node: leaf, .. })) => Some(leaf),
+            Some(Err(e)) => {
+                println!("Error in from_leaves {:?}", e);
+                return Err(e);
+            },
             None => None,
         };
         return Ok(ItemIter {
@@ -408,7 +441,7 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
             return Some(Ok(item));
         } else {
             self.current_leaf = match self.leaves.next() {
-                Some(Ok(leaf)) => Some(leaf),
+                Some(Ok(LeafRef { node: leaf, .. })) => Some(leaf),
                 Some(Err(e)) => return Some(Err(e)),
                 None => None,
             };
@@ -456,11 +489,134 @@ where
             None => {
                 let serialized = self.store.get(key)?;
                 let mut de = Deserializer::new(&serialized[..]);
-                let node: Arc<Node<T>> = Arc::new(Deserialize::deserialize(&mut de)?);
+                let node: Arc<Node<T>> = Arc::new(Deserialize::deserialize(&mut de).map_err(|e| {
+                    println!("Decoding error for key {}: {:?}", key, e);
+                    e
+                })?);
                 cache.insert(key.to_string(), node.clone());
                 Ok(node.clone())
             }
         }
+    }
+}
+
+
+struct RebuildIter<T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item = T>, C: Comparator> {
+    current_leaf: Option<Result<LeafRef<T>>>,
+    next_leaf: Option<Result<LeafRef<T>>>,
+    following_leaves: L,
+    // A stack of new leaves to supply, so they're sorted backwards
+    new_leaves: Vec<Result<LeafRef<T>>>,
+    novelty: Peekable<I>,
+    store: NodeStore<T>,
+    comparator: C,
+}
+
+impl <T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item = T>, C: Comparator> RebuildIter<T, L, I, C>
+where T: Clone + Debug {
+    fn new(mut leaves: L, novelty: I, store: NodeStore<T>, comparator: C) -> Result<RebuildIter<T, L, I, C>> {
+        let first = leaves.next();
+        let second = leaves.next();
+        Ok(RebuildIter {
+            current_leaf: first,
+            next_leaf: second,
+            following_leaves: leaves,
+            new_leaves: vec![],
+            novelty: novelty.peekable(),
+            store,
+            comparator,
+        })
+    }
+}
+
+impl <'de, T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item = T>, C: Comparator<Item = T>> Iterator for RebuildIter<T, L, I, C>
+where T: Clone + Debug + Deserialize<'de> + Serialize {
+    type Item = Result<LeafRef<T>>;
+
+    fn next(&mut self) -> Option<Self::Item> {
+        // If we've already generated some new leaves, return the next one.
+        if let Some(new_leaf) = self.new_leaves.pop() {
+            return Some(new_leaf)
+        }
+
+        // Otherwise, we need to generate the next set.
+        let next_leaf = std::mem::replace(&mut self.next_leaf, self.following_leaves.next());
+        let next_leaf_first_item = match next_leaf {
+            Some(Ok(LeafRef { ref node, .. })) => Some(node.items[0].clone()),
+            Some(Err(e)) => return Some(Err(e)),
+            None => None
+        };
+        let current_leaf = std::mem::replace(&mut self.current_leaf, next_leaf);
+        match current_leaf {
+            None => {
+                // There's an edge case where there are zero leaves which we have to handle here.
+                match self.novelty.peek().cloned() {
+                    None => return None,
+                    Some(_) => {
+                        let mut remaining_novelty = vec![];
+                        while let Some(item) = self.novelty.next() {
+                            remaining_novelty.push(item);
+                        }
+                        let mut created_leaves = remaining_novelty.into_iter().chunks(LEAF_CAPACITY).into_iter().map(|items| {
+                            let node = LeafNode { items: items.collect() };
+                            self.store.add_node(&Node::Leaf(node.clone())).map(|db_key| LeafRef { node, db_key })
+                        }).collect::<Vec<_>>();
+                        while let Some(new_leaf) = created_leaves.pop() {
+                            self.new_leaves.push(new_leaf);
+                        }
+                    }
+                }
+            },
+            Some(Err(e)) => return Some(Err(e)),
+            Some(Ok(LeafRef { node, db_key })) => {
+                let last_item = &node.items[node.items.len() - 1].clone();
+                match self.novelty.peek().cloned() {
+                    None => self.new_leaves.push(Ok(LeafRef { node, db_key })),
+                    Some(first_novel_item) => {
+                        if C::compare(&first_novel_item, &last_item) == Ordering::Greater {
+                            // we can reuse this leaf, since it doesn't overlap with the novelty
+                            // TODO: check for reusability the other way as well?
+                            self.new_leaves.push(Ok(LeafRef { node, db_key }));
+                        } else {
+                            // There's overlapping novelty, so we can't reuse this leaf -- we have to rebuild a new one.
+                            // This implementation greedily takes all possible novelty before the next leaf's first item.
+                            // FIXME: the use of chunks() here can result in leafs smaller than half size, which is not ideal
+                            // (but not critical for balancing the tree because they're leaves)
+                            // There's an edge case for the last leaf, when we need to take all remaining novelty.
+
+                            // this is just take_while(|i| C::compare(&i, &next_first_item) == Ordering::Less), but take_while
+                            // consumes the rest of its iterator which we don't want
+                            let mut overlapping_novelty = vec![];
+                            // FIXME: tortured logic
+                            while self.novelty.peek().map(|i| match next_leaf_first_item.clone() {
+                                None => true,
+                                Some(item) => C::compare(&i, &item) == Ordering::Less
+                            }) == Some(true) {
+                                overlapping_novelty.push(self.novelty.next().unwrap());
+                            }
+
+                            let mut created_leaves = node.items.into_iter()
+                                .merge_by(overlapping_novelty, |a, b| C::compare(a, b) == Ordering::Less)
+                                .chunks(LEAF_CAPACITY)
+                                .into_iter()
+                                .map(|items| {
+                                    let node = LeafNode { items: items.collect() };
+                                    self.store.add_node(&Node::Leaf(node.clone())).map(|db_key| LeafRef { node, db_key })
+                                }).collect::<Vec<_>>();
+
+                            // Push new leaves onto the new leaves stack
+                            // FIXME: this shouldn't be a stack, it should be a queue of some sort
+                            while let Some(new_leaf) = created_leaves.pop() {
+                                self.new_leaves.push(new_leaf);
+                            }
+                        }
+                    }
+                }
+            }
+
+        }
+
+        return self.new_leaves.pop();
     }
 }
 
@@ -470,6 +626,8 @@ mod tests {
     use backends::mem::HeapStore;
     use itertools::assert_equal;
     use index::NumComparator;
+    extern crate test;
+    use self::test::{Bencher, black_box};
 
     fn test_tree<I: Clone + Iterator<Item = i64>>(iter: I) -> DurableTree<i64, NumComparator> {
         let store = Arc::new(HeapStore::new::<i64>());
@@ -480,12 +638,12 @@ mod tests {
 
     #[test]
     fn test_leaf_iter() {
-        let iter = 0..10_000;
+        let iter = 0..100_000;
         let tree = test_tree(iter.clone());
 
         assert_equal(
-            tree.iter_leaves().map(|r| r.unwrap()).map(|l| l.items[0]),
-            vec![0, 1024, 2048, 3072, 4096, 5120, 6144, 7168, 8192, 9216]
+            tree.iter_leaves().map(|r| r.unwrap()).map(|l| l.node.items[0]),
+            vec![0, 16384, 32768, 49152, 65536, 81920, 98304]
         );
     }
 
@@ -514,7 +672,29 @@ mod tests {
         );
     }
 
-    // When new parents are implemented (comes into play circa 10e5-10e6 datoms) this should pass:
+    #[test]
+    fn test_rebuild_with_novelty_builds_correct_iterator() {
+        let tree = test_tree((0..32767).filter(|i| i % 2 == 0));
+        let rebuild = tree.rebuild_with_novelty((0..32767).filter(|i| i % 2 != 0)).unwrap();
+        assert_equal(
+            rebuild.iter().unwrap().map(|r| r.unwrap()),
+            0..32767
+        )
+    }
+
+    #[test]
+    fn test_rebuild_with_novelty_reuses_leaves() {
+        let tree = test_tree(0..32767);
+        let rebuild = tree.rebuild_with_novelty(32767..40000).unwrap();
+        assert_equal(
+            rebuild.iter().unwrap().map(|r| r.unwrap()),
+            0..40000
+        );
+        assert_equal(
+            tree.iter_leaves().take(2).map(|r| r.unwrap()),
+            rebuild.iter_leaves().take(2).map(|r| r.unwrap())
+        )
+    }
     #[test]
     #[ignore]
     fn test_node_height() {
@@ -542,5 +722,41 @@ mod tests {
             tree.iter().unwrap().map(|r| r.unwrap()),
             iter
         );
+    }
+
+
+    #[bench]
+    fn bench_build_from_iter(b: &mut Bencher) {
+        use super::super::backends::sqlite::SqliteStore;
+        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let node_store: NodeStore<i64> = NodeStore {
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
+            store: store.clone()
+        };
+        b.iter(|| DurableTree::build_from_iter(node_store.clone(), 0..1_000_000, NumComparator))
+    }
+
+    #[bench]
+    fn bench_rebuild_with_novelty(b: &mut Bencher) {
+        use super::super::backends::sqlite::SqliteStore;
+        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let node_store: NodeStore<i64> = NodeStore {
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
+            store: store.clone()
+        };
+        let tree = DurableTree::build_from_iter(node_store.clone(), 0..1_000_000, NumComparator).unwrap();
+        b.iter(|| tree.rebuild_with_novelty(500_000..510_000).unwrap())
+    }
+
+    #[bench]
+    fn bench_rebuild_with_novelty_mostly_novelty(b: &mut Bencher) {
+        use super::super::backends::sqlite::SqliteStore;
+        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let node_store: NodeStore<i64> = NodeStore {
+            cache: Arc::new(Mutex::new(LruCache::new(1024))),
+            store: store.clone()
+        };
+        let tree = DurableTree::build_from_iter(node_store.clone(), 0..100_000, NumComparator).unwrap();
+        b.iter(|| tree.rebuild_with_novelty(0..1_000_000).unwrap())
     }
 }

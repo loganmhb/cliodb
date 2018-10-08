@@ -43,19 +43,6 @@ def print_row(num_cols, c_val_p):
 
 logos.query.argtypes = [c_void_p, c_char_p, ROW_CALLBACK]
 
-uri = c_char_p(b"logos:mem://test")
-conn = c_void_p()
-print(logos.connect(uri, byref(conn)))
-
-query = c_char_p(b"find ?e ?a where (?e ?a ?v)")
-
-# print("python -- calling query")
-# print(logos.query(conn, query))
-# logos.query.argtypes = [c_void_p, c_char_p]
-# logos.query.restype = POINTER(QueryResult)
-
-# res = logos.query(conn, query).contents
-
 class Db(object):
     def __init__(self, db_ptr):
         self.db_ptr = db_ptr

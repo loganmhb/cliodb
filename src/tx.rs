@@ -154,6 +154,7 @@ impl Transactor {
             let new_aev = aev.rebuild();
             let new_vae = vae.rebuild();
 
+            println!("Sending index rebuilt notification");
             send.send(Event::RebuiltIndex(Db {
                 eav: new_eav,
                 ave: new_ave,
@@ -172,9 +173,11 @@ impl Transactor {
         // First, replay the catchup transactions into the new DB.
         // (This function should never be called when catchup_txs is
         // None.)
-        println!("Replaying transactions on rebuilt indices...");
+        // FIXME: this part should still happen asynchronously, because it might take a while
+        println!("Replaying {} transactions on rebuilt indices...", self.catchup_txs.as_ref().map_or(0, |v| v.len()));
         let mut final_db = new_db;
-        for tx in self.catchup_txs.clone().unwrap() {
+        let catchup_txs = std::mem::replace(&mut self.catchup_txs, None);
+        for tx in catchup_txs.unwrap() {
             for rec in tx.records {
                 final_db = add(&final_db, rec)?;
             }
@@ -183,7 +186,6 @@ impl Transactor {
         println!("Switching over to rebuilt indices.");
         save_contents(&final_db, self.next_id, self.latest_tx)?;
         self.current_db = final_db;
-        self.catchup_txs = None;
 
         // If the mem index filled up during the rebuild, we need to
         // immediately kick off another.
@@ -273,7 +275,6 @@ impl Transactor {
         self.store.add_tx(&raw_tx)?;
         self.latest_tx = raw_tx.id;
         if let Some(txs) = self.catchup_txs.as_mut() {
-            println!("recording tx for catchup");
             txs.push(raw_tx.clone());
         }
 
@@ -283,7 +284,7 @@ impl Transactor {
         if self.current_db.mem_index_size() > 10000 {
             match self.catchup_txs {
                 Some(_) => {
-                    if self.current_db.mem_index_size() > 20000 {
+                    if !self.throttled && self.current_db.mem_index_size() > 20000 {
                         println!(
                             "Mem limit high water mark surpassed during reindexing -- throttling transactions."
                         );
