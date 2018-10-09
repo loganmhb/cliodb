@@ -6,6 +6,6 @@ rust:
 script:
   - cargo build
   - cargo test
-  - cargo test --ignored
+  - cargo test -- --ignored
 # Benching disabled until local store is fixed.
 #  - cargo bench

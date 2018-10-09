@@ -328,6 +328,7 @@ where
 #[derive(Debug, PartialEq, Eq)]
 struct LeafRef<T> {
     db_key: String,
+    // FIXME: don't pull the whole leaf into memory?
     node: LeafNode<T>,
 }
 

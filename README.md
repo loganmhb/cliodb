@@ -163,6 +163,12 @@ entity, and whether an attribute must be unique.
 7. Entity API -- given a database entity id, you should be able to
 access its attributes hash-map style
 
+8. Pipelined transactions -- currently transactions are processed and
+committed one at a time, but if more than one transaction is in flight
+at a time it should be possible to batch their writes to the backing
+store together. (The transactions would still commit or rollback
+individually.)
+
 # Known issues
 
 There are many problems, and FIXMEs littered throughout the code
