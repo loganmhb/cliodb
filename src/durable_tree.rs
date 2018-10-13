@@ -74,7 +74,7 @@ pub struct InteriorNode<T> {
 
 #[derive(Clone)]
 pub struct DurableTree<T, C> {
-    pub root: Link<T>,
+    pub root: String,
     store: NodeStore<T>,
     _comparator: C,
 }
@@ -84,10 +84,22 @@ where
     T: Serialize + Deserialize<'de> + Clone + Debug,
     C: Comparator<Item = T>,
 {
+    pub fn create(store: Arc<KVStore>, comparator: C) -> Result<DurableTree<T, C>> {
+        let empty_root = Node::Interior(InteriorNode { links: vec![], keys: vec![] });
+        let node_store = NodeStore::new(store.clone());
+        let root_ref = node_store.add_node(&empty_root)?;
+        Ok(DurableTree {
+            root: root_ref,
+            store: node_store,
+            _comparator: comparator,
+        })
+    }
+
     /// Builds the tree from an iterator by chunking it into an
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
-    pub fn build_from_iter<I>(store: NodeStore<T>, iter: I, comparator: C) -> Result<DurableTree<T, C>>
+    // TODO: remove
+    fn build_from_iter<I>(store: NodeStore<T>, iter: I, comparator: C) -> Result<DurableTree<T, C>>
     where
         I: Iterator<Item = T>,
     {
@@ -166,11 +178,11 @@ where
 
         if first_open_node.keys.len() == 0 {
             // an empty directory node means a root
-            let link = Link::DbKey(store.add_node(&Node::Interior(first_open_node))?);
+            let root_ref = store.add_node(&Node::Interior(first_open_node))?;
             return Ok(
                 DurableTree {
                     store: store,
-                    root: link,
+                    root: root_ref,
                     _comparator: comparator,
                 }
             )
@@ -179,7 +191,7 @@ where
         let mut key = first_open_node.keys[0].clone();
         // FIXME: should be able to avoid this clone, I think, maybe requiring
         // a change in the signature of add_node.
-        let mut link = Link::DbKey(store.add_node(&Node::Interior(first_open_node.clone()))?);
+        let mut link = store.add_node(&Node::Interior(first_open_node.clone()))?;
 
         for mut node in open_node_iter {
             if node.keys.len() == 0 {
@@ -187,9 +199,9 @@ where
                 continue;
             }
             node.keys.push(key.clone());
-            node.links.push(link);
+            node.links.push(Link::DbKey(link));
             key = (&node.keys[0]).clone();
-            link = Link::DbKey(store.add_node(&Node::Interior(node))?);
+            link = store.add_node(&Node::Interior(node))?;
         }
 
         Ok(DurableTree {
@@ -214,10 +226,10 @@ where
         Self::build_from_leaves(rebuild_iterator, self.store.clone(), self._comparator)
     }
 
-    pub fn from_ref(db_ref: String, node_store: NodeStore<T>, _comparator: C) -> DurableTree<T, C> {
+    pub fn from_ref(db_ref: String, store: Arc<KVStore>, _comparator: C) -> DurableTree<T, C> {
         DurableTree {
-            root: Link::DbKey(db_ref),
-            store: node_store,
+            root: db_ref,
+            store: NodeStore::new(store),
             _comparator,
         }
     }
@@ -226,7 +238,7 @@ where
         LeafIter {
             store: self.store.clone(),
             stack: vec![LeafIterState {
-                node_ref: self.root.clone(),
+                node_ref: Link::DbKey(self.root.clone()),
                 link_idx: 0
             }]
         }
@@ -239,7 +251,7 @@ where
     pub fn range_from(&self, start: T) -> Result<ItemIter<T>> {
         let mut stack = vec![
             LeafIterState {
-                node_ref: self.root.clone(),
+                node_ref: Link::DbKey(self.root.clone()),
                 link_idx: 0,
             },
         ];
@@ -455,7 +467,7 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
 /// Structure to cache lookups into the backing store, avoiding both
 /// network and deserialization overhead.
 #[derive(Clone)]
-pub struct NodeStore<T> {
+struct NodeStore<T> {
     cache: Arc<Mutex<LruCache<String, Arc<Node<T>>>>>,
     store: Arc<KVStore>,
 }
@@ -464,7 +476,7 @@ impl<'de, T> NodeStore<T>
 where
     T: Serialize + Deserialize<'de> + Clone,
 {
-    pub fn new(store: Arc<KVStore>) -> NodeStore<T> {
+    fn new(store: Arc<KVStore>) -> NodeStore<T> {
         NodeStore {
             // TODO make size configurable
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
@@ -472,7 +484,7 @@ where
         }
     }
 
-    pub fn add_node(&self, node: &Node<T>) -> Result<String> {
+    fn add_node(&self, node: &Node<T>) -> Result<String> {
         let mut buf = Vec::new();
         node.serialize(&mut Serializer::new(&mut buf))?;
 
@@ -628,7 +640,7 @@ mod tests {
     use itertools::assert_equal;
     use index::NumComparator;
     extern crate test;
-    use self::test::{Bencher, black_box};
+    use self::test::{Bencher};
 
     fn test_tree<I: Clone + Iterator<Item = i64>>(iter: I) -> DurableTree<i64, NumComparator> {
         let store = Arc::new(HeapStore::new::<i64>());
@@ -708,12 +720,7 @@ mod tests {
         let iter = 0..10_000_000;
         let tree = DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator).unwrap();
 
-        let root_ref = match tree.root {
-            Link::DbKey(ref s) => s.clone(),
-            _ => unreachable!(),
-        };
-
-        let root_node_links_len: usize = match *node_store.get_node(&root_ref).unwrap() {
+        let root_node_links_len: usize = match *node_store.get_node(&tree.root).unwrap() {
             Node::Interior(InteriorNode { ref links, .. }) => links.len(),
             _ => unreachable!(),
         };

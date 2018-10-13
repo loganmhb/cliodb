@@ -448,18 +448,13 @@ pub fn add(db: &Db, record: Record) -> Result<Db> {
 }
 
 fn create_db(store: Arc<KVStore>) -> Result<Db> {
+    use {EAVT, AVET, VAET, AEVT};
     use durable_tree;
 
-    let empty_root: durable_tree::Node<Record> = durable_tree::Node::Interior(durable_tree::InteriorNode {
-        keys: vec![],
-        links: vec![],
-    });
-
-    let node_store = durable_tree::NodeStore::new(store.clone());
-    let eav_root = node_store.add_node(&empty_root)?;
-    let aev_root = node_store.add_node(&empty_root)?;
-    let ave_root = node_store.add_node(&empty_root)?;
-    let vae_root = node_store.add_node(&empty_root)?;
+    let eav_root = durable_tree::DurableTree::create(store.clone(), EAVT)?.root;
+    let ave_root = durable_tree::DurableTree::create(store.clone(), AVET)?.root;
+    let aev_root = durable_tree::DurableTree::create(store.clone(), AEVT)?.root;
+    let vae_root = durable_tree::DurableTree::create(store.clone(), VAET)?.root;
 
     let contents = DbContents {
         next_id: 0,

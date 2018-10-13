@@ -6,7 +6,7 @@ use serde::{Serialize, Deserialize};
 use itertools::Itertools;
 
 use backends::KVStore;
-use durable_tree::{DurableTree, NodeStore};
+use durable_tree::{DurableTree};
 use rbtree::RBTree;
 
 pub trait Comparator: Copy {
@@ -22,7 +22,6 @@ where
 {
     mem_index: RBTree<T, C>,
     _comparator: C,
-    store: NodeStore<T>,
     durable_index: DurableTree<T, C>,
 }
 
@@ -32,12 +31,10 @@ where
     C: Comparator<Item = T> + Copy,
 {
     pub fn new(root_ref: String, store: Arc<KVStore>, comparator: C) -> Index<T, C> {
-        let node_store = NodeStore::new(store);
         Index {
             _comparator: comparator,
-            store: node_store.clone(),
             mem_index: RBTree::new(comparator),
-            durable_index: DurableTree::from_ref(root_ref, node_store, comparator),
+            durable_index: DurableTree::from_ref(root_ref, store, comparator),
         }
     }
 
@@ -55,6 +52,10 @@ where
         )
     }
 
+    pub fn durable_root(&self) -> String {
+        self.durable_index.root.clone()
+    }
+
     pub fn iter(&self) -> impl Iterator<Item = T> {
         // FIXME: signature should allow returning Result instead of unwrapping
         self.mem_index.iter().merge_by(
@@ -65,15 +66,6 @@ where
                 C::compare(a, b) == Ordering::Less
             },
         )
-    }
-
-    pub fn durable_root(&self) -> String {
-        use durable_tree::Link;
-
-        match self.durable_index.root {
-            Link::DbKey(ref s) => s.clone(),
-            _ => panic!("root reference has a boxed pointer"),
-        }
     }
 
     pub fn insert(&self, item: T) -> Index<T, C> {
@@ -119,15 +111,10 @@ mod tests {
 
     #[test]
     fn test_rebuild() {
-        use durable_tree::{Node, InteriorNode};
+        use durable_tree::{DurableTree};
 
         let store = Arc::new(HeapStore::new::<i64>());
-        let ns: NodeStore<i64> = NodeStore::new(store.clone());
-        let root_node = InteriorNode {
-            keys: vec![],
-            links: vec![],
-        };
-        let root_ref = ns.add_node(&Node::Interior(root_node)).unwrap();
+        let root_ref = DurableTree::create(store.clone(), NumComparator).unwrap().root;
         let mut index = Index::new(root_ref, store, NumComparator);
 
         for i in 0..1000 {
