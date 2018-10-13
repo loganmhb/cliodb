@@ -281,10 +281,10 @@ impl Transactor {
         save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
         self.current_db = db_after;
 
-        if self.current_db.mem_index_size() > 10000 {
+        if self.current_db.mem_index_size() > 100_000 {
             match self.catchup_txs {
                 Some(_) => {
-                    if !self.throttled && self.current_db.mem_index_size() > 20000 {
+                    if !self.throttled && self.current_db.mem_index_size() > 1_000_000 {
                         println!(
                             "Mem limit high water mark surpassed during reindexing -- throttling transactions."
                         );
