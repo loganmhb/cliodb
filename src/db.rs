@@ -239,6 +239,54 @@ impl Db {
 
         Some(new_env)
     }
+
+    pub fn add(&self, record: Record) -> Result<Db> {
+        // TODO: check schema
+        let new_eav = self.eav.insert(record.clone());
+        let new_ave = self.ave.insert(record.clone());
+        let new_aev = self.aev.insert(record.clone());
+        let new_vae = self.vae.insert(record.clone());
+
+        let new_idents = if record.attribute == self.idents.get_entity("db:ident").unwrap() {
+            match record.value {
+                Value::Ident(ref s) => self.idents.add(s.clone(), record.entity),
+                _ => return Err("db:ident value must be an ident".into()),
+            }
+        } else {
+            self.idents.clone()
+        };
+
+        let new_schema = if record.attribute == self.idents.get_entity("db:valueType").unwrap() {
+            let value_type = match record.value {
+                Value::Ident(ref s) => {
+                    match s.as_str() {
+                        "db:type:string" => ValueType::String,
+                        "db:type:ident" => ValueType::Ident,
+                        "db:type:timestamp" => ValueType::Timestamp,
+                        "db:type:entity" => ValueType::Entity,
+                        _ => return Err(format!("{} is not a valid primitive type", s).into()),
+                    }
+                },
+                _ => return Err("db:valueType must be an identifier".into()),
+            };
+
+            let mut new_schema = self.schema.clone();
+            new_schema.insert(record.entity, value_type);
+            new_schema
+        } else {
+            self.schema.clone()
+        };
+
+        Ok(Db {
+            eav: new_eav,
+            ave: new_ave,
+            aev: new_aev,
+            vae: new_vae,
+            idents: new_idents,
+            schema: new_schema,
+            store: self.store.clone(),
+        })
+    }
 }
 
 /// A structure designed to be stored in the backing store that enables

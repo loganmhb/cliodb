@@ -92,7 +92,7 @@ impl Transactor {
                         if e > next_id {
                             next_id = e + 1;
                         }
-                        db = add(&db, record)?;
+                        db = db.add(record)?;
                     }
 
                     latest_tx = tx.id;
@@ -154,7 +154,6 @@ impl Transactor {
             let new_aev = aev.rebuild();
             let new_vae = vae.rebuild();
 
-            println!("Sending index rebuilt notification");
             send.send(Event::RebuiltIndex(Db {
                 eav: new_eav,
                 ave: new_ave,
@@ -179,7 +178,7 @@ impl Transactor {
         let catchup_txs = std::mem::replace(&mut self.catchup_txs, None);
         for tx in catchup_txs.unwrap() {
             for rec in tx.records {
-                final_db = add(&final_db, rec)?;
+                final_db = final_db.add(rec)?;
             }
         }
 
@@ -216,7 +215,7 @@ impl Transactor {
                 {
                     let rec: Record = $rec.clone();
                     raw_tx.records.push(rec.clone());
-                    add($db, rec)
+                    $db.add(rec)
                 }
             }
         }
@@ -351,6 +350,7 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
 /// Checks the fact's attribute and value against the schema,
 /// returning the corresponding attribute entity if successful and an
 /// error otherwise.
+// FIXME: horribly complected, why do these at the same time?
 fn check_schema_and_get_attr(
     fact: &Fact,
     idents: &IdentMap,
@@ -400,53 +400,6 @@ fn check_schema_and_get_attr(
     }
 }
 
-pub fn add(db: &Db, record: Record) -> Result<Db> {
-    let new_eav = db.eav.insert(record.clone());
-    let new_ave = db.ave.insert(record.clone());
-    let new_aev = db.aev.insert(record.clone());
-    let new_vae = db.vae.insert(record.clone());
-
-    // If the record has a db:ident, we need to add it to the ident map.
-    let new_idents = if record.attribute == db.idents.get_entity("db:ident").unwrap() {
-        match record.value {
-            Value::Ident(ref s) => db.idents.add(s.clone(), record.entity),
-            _ => return Err("db:ident value must be an identifier".into()), // unreachable?
-        }
-    } else {
-        db.idents.clone()
-    };
-
-    let new_schema = if record.attribute == db.idents.get_entity("db:valueType").unwrap() {
-        let value_type = match record.value {
-            Value::Ident(s) => {
-                match s.as_str() {
-                    "db:type:string" => ValueType::String,
-                    "db:type:ident" => ValueType::Ident,
-                    "db:type:timestamp" => ValueType::Timestamp,
-                    "db:type:entity" => ValueType::Entity,
-                    _ => return Err(format!("{} is not a valid primitive type", s).into()),
-                }
-            }
-            _ => return Err("db:valueType must be an identifier".into()),
-        };
-        let mut new_schema = db.schema.clone();
-        new_schema.insert(record.entity, value_type);
-        new_schema
-    } else {
-        db.schema.clone()
-    };
-
-    Ok(Db {
-        eav: new_eav,
-        ave: new_ave,
-        aev: new_aev,
-        vae: new_vae,
-        idents: new_idents,
-        schema: new_schema,
-        store: db.store.clone(),
-    })
-}
-
 fn create_db(store: Arc<KVStore>) -> Result<Db> {
     use {EAVT, AVET, VAET, AEVT};
     use durable_tree;
@@ -478,8 +431,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     // because they need to reference one another.
 
     // Initial transaction entity
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(0),
             Entity(2),
@@ -489,8 +441,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     )?;
 
     // Entity for the db:ident attribute
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(1),
             Entity(1),
@@ -500,8 +451,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     )?;
 
     // Entity for the db:txInstant attribute
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(2),
             Entity(1),
@@ -511,8 +461,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     )?;
 
     // Entity for the db:valueType attribute
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(3),
             Entity(1),
@@ -523,8 +472,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
 
     // Value type for the db:ident attribute
     // FIXME: this should be a reference, not an ident.
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(1),
             Entity(3),
@@ -535,8 +483,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
 
     // Value type for the db:valueType attribute
     // FIXME: this should be a reference, not an ident.
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(3),
             Entity(3),
@@ -547,8 +494,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
 
 
     // Idents for primitive types
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(4),
             Entity(1),
@@ -556,8 +502,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
             Entity(0),
         ),
     )?;
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(5),
             Entity(1),
@@ -565,8 +510,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
             Entity(0),
         ),
     )?;
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(6),
             Entity(1),
@@ -574,8 +518,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
             Entity(0),
         ),
     )?;
-    db = add(
-        &db,
+    db = db.add(
         Record::addition(
             Entity(7),
             Entity(1),

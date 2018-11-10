@@ -72,7 +72,7 @@ impl Conn {
         for tx in self.store.get_txs(last_known_tx)? {
             for record in tx.records {
                 let Entity(tx_id) = record.tx;
-                db = tx::add(&db, record)?;
+                db = db.add(record)?;
                 last_known_tx = tx_id;
             }
         }
