@@ -198,7 +198,7 @@ impl Transactor {
     }
 
     // FIXME: make this not public (fix local transactor in conn.rs)
-    pub fn process_tx(&mut self, tx: Tx) -> Result<TxReport> {
+    pub fn process_tx(&mut self, tx: Tx) -> Result<Vec<Entity>> {
         let mut new_entities = vec![];
         let tx_id = self.get_id();
         let tx_entity = Entity(tx_id);
@@ -229,11 +229,7 @@ impl Transactor {
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => {
-                    let attr =
-                        match check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema) {
-                            Ok(attr) => attr,
-                            Err(e) => return Ok(TxReport::Failure(e.to_string())),
-                        };
+                    let attr = check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema)?;
                     db_after = add!(
                         &db_after,
                         Record::addition(f.entity, attr, f.value, tx_entity)
@@ -242,25 +238,18 @@ impl Transactor {
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.get_id());
                     for (k, v) in ht {
-                        let attr = match check_schema_and_get_attr(
+                        let attr = check_schema_and_get_attr(
                             &Fact::new(entity, k, v.clone()),
                             &db_after.idents,
                             &db_after.schema,
-                        ) {
-                            Ok(attr) => attr,
-                            Err(e) => return Ok(TxReport::Failure(e)),
-                        };
+                        )?;
 
                         db_after = add!(&db_after, Record::addition(entity, attr, v, tx_entity))?;
                     }
                     new_entities.push(entity);
                 }
                 TxItem::Retraction(f) => {
-                    let attr =
-                        match check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema) {
-                            Ok(attr) => attr,
-                            Err(e) => return Ok(TxReport::Failure(e)),
-                        };
+                    let attr = check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema)?;
                     db_after = add!(
                         &db_after,
                         Record::retraction(f.entity, attr, f.value, tx_entity)
@@ -299,7 +288,7 @@ impl Transactor {
             thread::sleep(Duration::from_millis(1000));
         }
 
-        Ok(TxReport::Success { new_entities })
+        Ok(new_entities)
     }
 
     fn get_id(&mut self) -> i64 {
@@ -315,10 +304,10 @@ impl Transactor {
             match self.recv.recv().unwrap() {
                 Event::Tx(tx, cb_chan) => {
                     // TODO: check for more txs & batch them.
-                    let result = self.process_tx(tx)?;
-                    // We don't actually care whether the client gets
-                    // the report or not.
-                    let _ = cb_chan.send(result);
+                    match self.process_tx(tx) {
+                        Ok(new_entities) => cb_chan.send(TxReport::Success { new_entities }),
+                        Err(e) => cb_chan.send(TxReport::Failure(format!("{:?}", e)))
+                    };
                 }
                 Event::RebuiltIndex(new_db) => {
                     self.switch_to_rebuilt_indexes(new_db)?;

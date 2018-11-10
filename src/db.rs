@@ -240,6 +240,8 @@ impl Db {
         Some(new_env)
     }
 
+    /// Add a fact to the database. Does not validate that the fact
+    /// fits the schema, in order to allow bootstrapping.
     pub fn add(&self, record: Record) -> Result<Db> {
         // TODO: check schema
         let new_eav = self.eav.insert(record.clone());

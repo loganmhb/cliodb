@@ -99,7 +99,10 @@ impl Conn {
                 let l = TX_LOCK.lock()?;
                 let mut transactor = tx::Transactor::new(store)?;
                 let result = transactor.process_tx(tx);
-                result
+                Ok(match result {
+                    Ok(new_entities) => TxReport::Success { new_entities },
+                    Err(e) => TxReport::Failure(format!("{:?}", e)),
+                })
             }
         }
     }
