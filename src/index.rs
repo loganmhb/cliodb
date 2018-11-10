@@ -14,10 +14,18 @@ pub trait Comparator: Copy {
     fn compare(a: &Self::Item, b: &Self::Item) -> Ordering;
 }
 
+/// The Equivalent trait is used to deduplicate facts in the
+/// database. It is like Eq, but makes no guarantees about the
+/// relationship between equivalence and ordering (i.e. A can be less
+/// than B and also equivalent to it).
+pub trait Equivalent {
+    fn equivalent(&self, other: &Self) -> bool;
+}
+
 #[derive(Clone)]
 pub struct Index<T, C>
 where
-    T: Debug + Ord + Clone,
+    T: Equivalent + Debug + Ord + Clone,
     C: Comparator<Item = T>,
 {
     mem_index: RBTree<T, C>,
@@ -27,7 +35,7 @@ where
 
 impl<'de, T, C> Index<T, C>
 where
-    T: Debug + Ord + Clone + Serialize + Deserialize<'de>,
+    T: Equivalent + Debug + Ord + Clone + Serialize + Deserialize<'de>,
     C: Comparator<Item = T> + Copy,
 {
     pub fn new(root_ref: String, store: Arc<KVStore>, comparator: C) -> Index<T, C> {
@@ -47,7 +55,9 @@ where
             self.durable_index
                 .range_from(range_start)
                 .unwrap()
-                .map(|r| r.unwrap()),
+                .map(|r| r.unwrap())
+                // deduplicate equivalent facts which may be in both the in-memory and durable index
+                .coalesce(|x, y| { if x.equivalent(&y) { Ok(x) } else { Err((x, y))} }),
             |a, b| C::compare(a, b) == Ordering::Less,
         )
     }
@@ -103,16 +113,22 @@ impl Comparator for NumComparator {
 }
 
 #[cfg(test)]
+impl Equivalent for i64 {
+    fn equivalent(&self, other: &i64) -> bool {
+        self.eq(other)
+    }
+}
+
+#[cfg(test)]
 mod tests {
     use super::*;
     use std::sync::Arc;
     use itertools::assert_equal;
     use backends::mem::HeapStore;
+    use durable_tree::{DurableTree};
 
     #[test]
     fn test_rebuild() {
-        use durable_tree::{DurableTree};
-
         let store = Arc::new(HeapStore::new::<i64>());
         let root_ref = DurableTree::create(store.clone(), NumComparator).unwrap().root;
         let mut index = Index::new(root_ref, store, NumComparator);
@@ -123,5 +139,18 @@ mod tests {
 
         let rebuilt = index.rebuild();
         assert_equal(index.iter(), rebuilt.iter());
+    }
+
+    #[test]
+    fn test_deduplication() {
+        let store = Arc::new(HeapStore::new::<i64>());
+        let root_ref = DurableTree::create(store.clone(), NumComparator).unwrap().root;
+        let index = Index::new(root_ref, store, NumComparator)
+            .insert(1)
+            .insert(2)
+            .insert(2)
+            .insert(3);
+
+        assert_equal(index.range_from(1), 1..4)
     }
 }
