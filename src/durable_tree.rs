@@ -10,7 +10,7 @@ use rmp_serde::{Serializer, Deserializer};
 use uuid::Uuid;
 
 use backends::KVStore;
-use index::Comparator;
+use index::{Equivalent, Comparator};
 use {Result};
 
 ///! This module defines a data structure for storing facts in the
@@ -81,7 +81,7 @@ pub struct DurableTree<T, C> {
 
 impl<'de, T, C> DurableTree<T, C>
 where
-    T: Serialize + Deserialize<'de> + Clone + Debug,
+    T: Equivalent + Serialize + Deserialize<'de> + Clone + Debug,
     C: Comparator<Item = T>,
 {
     pub fn create(store: Arc<KVStore>, comparator: C) -> Result<DurableTree<T, C>> {
@@ -542,8 +542,11 @@ where T: Clone + Debug {
     }
 }
 
-impl <'de, T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item = T>, C: Comparator<Item = T>> Iterator for RebuildIter<T, L, I, C>
-where T: Clone + Debug + Deserialize<'de> + Serialize {
+impl <'de, T, L, I, C> Iterator for RebuildIter<T, L, I, C>
+where T: Equivalent + Clone + Debug + Deserialize<'de> + Serialize,
+      L: Iterator<Item = Result<LeafRef<T>>>,
+      I: Iterator<Item = T>,
+      C: Comparator<Item = T> {
     type Item = Result<LeafRef<T>>;
 
     fn next(&mut self) -> Option<Self::Item> {
@@ -610,6 +613,7 @@ where T: Clone + Debug + Deserialize<'de> + Serialize {
 
                             let mut created_leaves = node.items.into_iter()
                                 .merge_by(overlapping_novelty, |a, b| C::compare(a, b) == Ordering::Less)
+                                .coalesce(|x, y| if x.equivalent(&y) { Ok(x) } else { Err((x, y)) })
                                 .chunks(LEAF_CAPACITY)
                                 .into_iter()
                                 .map(|items| {
@@ -708,6 +712,17 @@ mod tests {
             rebuild.iter_leaves().take(2).map(|r| r.unwrap())
         )
     }
+
+    #[test]
+    fn test_rebuild_with_novelty_avoids_duplicates() {
+        let tree = test_tree(0..1000);
+        let rebuild = tree.rebuild_with_novelty(900..1200).unwrap();
+        assert_equal(
+            rebuild.iter().unwrap().map(|r| r.unwrap()),
+            0..1200
+        );
+    }
+
     #[test]
     #[ignore]
     fn test_node_height() {

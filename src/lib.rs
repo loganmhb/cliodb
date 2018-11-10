@@ -58,7 +58,7 @@ mod ident;
 pub use parser::{parse_input, parse_tx, parse_query, Input};
 use queries::query::{Clause, Term, Var};
 pub use queries::execution::query;
-use index::Comparator;
+use index::{Comparator, Equivalent};
 use backends::KVStore;
 pub use ident::IdentMap;
 
@@ -81,6 +81,14 @@ pub struct Record {
     pub retracted: bool,
 }
 
+impl Equivalent for Record {
+    fn equivalent(&self, other: &Record) -> bool {
+        self.attribute == other.attribute &&
+            self.entity == other.entity &&
+            self.value == other.value &&
+            self.retracted == other.retracted
+    }
+}
 // We need a struct to represent facts that may not be in the database
 // and may not have valid attributes, for use by the parser and
 // unifier.
@@ -539,6 +547,27 @@ pub mod tests {
         conn.db().unwrap()
     }
 
+    #[test]
+    fn test_record_equivalence() {
+        // We use the Equivalent trait to deduplicate records in the database.
+        // This test ensures that doing that deduplication will not erase retractions.
+
+        let records = vec![
+            Record::addition(Entity(1), Entity(1), Value::String("someval".into()), Entity(1)),
+            Record::addition(Entity(1), Entity(1), Value::String("someval".into()), Entity(2)),
+            Record::retraction(Entity(1), Entity(1), Value::String("someval".into()), Entity(3)),
+            Record::addition(Entity(1), Entity(1), Value::String("someval".into()), Entity(4)),
+        ];
+
+        assert_equal(
+            records.into_iter().coalesce(|x, y| if x.equivalent(&y) { Ok(x) } else { Err((x, y)) }),
+            vec![
+                Record::addition(Entity(1), Entity(1), Value::String("someval".into()), Entity(1)),
+                Record::retraction(Entity(1), Entity(1), Value::String("someval".into()), Entity(3)),
+                Record::addition(Entity(1), Entity(1), Value::String("someval".into()), Entity(4)),
+            ]
+        )
+    }
 
     #[bench]
     fn bench_large_db_simple(b: &mut Bencher) {
