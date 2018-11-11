@@ -92,7 +92,7 @@ impl Transactor {
                         if e > next_id {
                             next_id = e + 1;
                         }
-                        db = db.add(record)?;
+                        db = db.add_record(record)?;
                     }
 
                     latest_tx = tx.id;
@@ -178,7 +178,7 @@ impl Transactor {
         let catchup_txs = std::mem::replace(&mut self.catchup_txs, None);
         for tx in catchup_txs.unwrap() {
             for rec in tx.records {
-                final_db = final_db.add(rec)?;
+                final_db = final_db.add_record(rec)?;
             }
         }
 
@@ -211,49 +211,33 @@ impl Transactor {
         // because it's inconvenient to mutably borrow raw_tx and then
         // drop it in time.
         macro_rules! add {
-            ( $db:expr, $rec:expr ) => {
+            ( $db:expr, $e:expr, $a: expr, $v:expr, $tx:expr ) => {
                 {
-                    let rec: Record = $rec.clone();
-                    raw_tx.records.push(rec.clone());
-                    $db.add(rec)
+                    let (nextdb, record) = $db.add(Fact::new($e, $a, $v), $tx)?;
+                    raw_tx.records.push(record);
+                    nextdb
                 }
             }
         }
 
-        let attr = self.current_db.idents.get_entity("db:txInstant").unwrap();
-        let mut db_after =
-            add!(
-                &self.current_db,
-                Record::addition(tx_entity, attr, Value::Timestamp(Utc::now()), tx_entity)
-            )?;
+        let tx_timestamp = Value::Timestamp(Utc::now());
+        let mut db_after = add!(&self.current_db, tx_entity, "db:txTimestamp".to_string(), tx_timestamp, tx_entity);
         for item in tx.items {
             match item {
                 TxItem::Addition(f) => {
-                    let attr = check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema)?;
-                    db_after = add!(
-                        &db_after,
-                        Record::addition(f.entity, attr, f.value, tx_entity)
-                    )?;
+                    db_after = add!(&db_after, f.entity, f.attribute, f.value, tx_entity);
                 }
                 TxItem::NewEntity(ht) => {
                     let entity = Entity(self.get_id());
                     for (k, v) in ht {
-                        let attr = check_schema_and_get_attr(
-                            &Fact::new(entity, k, v.clone()),
-                            &db_after.idents,
-                            &db_after.schema,
-                        )?;
-
-                        db_after = add!(&db_after, Record::addition(entity, attr, v, tx_entity))?;
+                        db_after = add!(&db_after, entity, k, v, tx_entity);
                     }
                     new_entities.push(entity);
                 }
                 TxItem::Retraction(f) => {
-                    let attr = check_schema_and_get_attr(&f, &db_after.idents, &db_after.schema)?;
-                    db_after = add!(
-                        &db_after,
-                        Record::retraction(f.entity, attr, f.value, tx_entity)
-                    )?;
+                    let (nextdb, record) = db_after.retract(Fact::new(f.entity, f.attribute, f.value), tx_entity)?;
+                    db_after = nextdb;
+                    raw_tx.records.push(record);
                 }
             }
         }
@@ -304,7 +288,10 @@ impl Transactor {
             match self.recv.recv().unwrap() {
                 Event::Tx(tx, cb_chan) => {
                     // TODO: check for more txs & batch them.
-                    match self.process_tx(tx) {
+                    // Ignoring the result because it's not important
+                    // for correctness whether or not the client
+                    // receives the response.
+                    let _ = match self.process_tx(tx) {
                         Ok(new_entities) => cb_chan.send(TxReport::Success { new_entities }),
                         Err(e) => cb_chan.send(TxReport::Failure(format!("{:?}", e)))
                     };
@@ -334,59 +321,6 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
 
     db.store.set_contents(&contents)?;
     Ok(())
-}
-
-/// Checks the fact's attribute and value against the schema,
-/// returning the corresponding attribute entity if successful and an
-/// error otherwise.
-// FIXME: horribly complected, why do these at the same time?
-fn check_schema_and_get_attr(
-    fact: &Fact,
-    idents: &IdentMap,
-    schema: &HashMap<Entity, ValueType>,
-) -> ::std::result::Result<Entity, String> {
-    let attr = match idents.get_entity(&fact.attribute) {
-        Some(a) => a,
-        None => {
-            return Err(
-                format!(
-                    "invalid attribute: ident '{}' does not exist",
-                    &fact.attribute
-                ).into(),
-            )
-        }
-    };
-
-    let actual_type = match fact.value {
-        Value::String(_) => ValueType::String,
-        Value::Entity(_) => ValueType::Entity,
-        Value::Timestamp(_) => ValueType::Timestamp,
-        Value::Ident(_) => ValueType::Ident,
-    };
-
-    match schema.get(&attr) {
-        Some(schema_type) => {
-            if *schema_type == actual_type {
-                return Ok(attr);
-            } else {
-                return Err(
-                    format!(
-                        "type mismatch: expected {:?}, got {:?}",
-                        schema_type,
-                        actual_type
-                    ).into(),
-                );
-            }
-        }
-        None => {
-            return Err(
-                format!(
-                    "invalid attribute: `{}` does not specify value type",
-                    &fact.attribute
-                ).into(),
-            );
-        }
-    }
 }
 
 fn create_db(store: Arc<KVStore>) -> Result<Db> {
@@ -420,7 +354,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     // because they need to reference one another.
 
     // Initial transaction entity
-    db = db.add(
+    db = db.add_record(
         Record::addition(
             Entity(0),
             Entity(2),
@@ -430,7 +364,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     )?;
 
     // Entity for the db:ident attribute
-    db = db.add(
+    db = db.add_record(
         Record::addition(
             Entity(1),
             Entity(1),
@@ -439,18 +373,18 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
         ),
     )?;
 
-    // Entity for the db:txInstant attribute
-    db = db.add(
+    // Entity for the db:txTimestamp attribute
+    db = db.add_record(
         Record::addition(
             Entity(2),
             Entity(1),
-            Value::Ident("db:txInstant".into()),
+            Value::Ident("db:txTimestamp".into()),
             Entity(0),
         ),
     )?;
 
     // Entity for the db:valueType attribute
-    db = db.add(
+    db = db.add_record(
         Record::addition(
             Entity(3),
             Entity(1),
@@ -459,9 +393,43 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
         ),
     )?;
 
+    // Idents for primitive types
+    db = db.add_record(
+        Record::addition(
+            Entity(4),
+            Entity(1),
+            Value::Ident("db:type:ident".into()),
+            Entity(0),
+        ),
+    )?;
+    db = db.add_record(
+        Record::addition(
+            Entity(5),
+            Entity(1),
+            Value::Ident("db:type:string".into()),
+            Entity(0),
+        ),
+    )?;
+    db = db.add_record(
+        Record::addition(
+            Entity(6),
+            Entity(1),
+            Value::Ident("db:type:timestamp".into()),
+            Entity(0),
+        ),
+    )?;
+
+    db = db.add_record(
+        Record::addition(
+            Entity(7),
+            Entity(1),
+            Value::Ident("db:type:entity".into()),
+            Entity(0),
+        ),
+    )?;
+
     // Value type for the db:ident attribute
-    // FIXME: this should be a reference, not an ident.
-    db = db.add(
+    db = db.add_record(
         Record::addition(
             Entity(1),
             Entity(3),
@@ -471,8 +439,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     )?;
 
     // Value type for the db:valueType attribute
-    // FIXME: this should be a reference, not an ident.
-    db = db.add(
+    db = db.add_record(
         Record::addition(
             Entity(3),
             Entity(3),
@@ -481,39 +448,14 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
         ),
     )?;
 
-
-    // Idents for primitive types
-    db = db.add(
+    // Value type for the db:txTimestamp attribute
+    db = db.add_record(
         Record::addition(
-            Entity(4),
-            Entity(1),
-            Value::Ident("db:type:ident".into()),
-            Entity(0),
-        ),
-    )?;
-    db = db.add(
-        Record::addition(
-            Entity(5),
-            Entity(1),
-            Value::Ident("db:type:string".into()),
-            Entity(0),
-        ),
-    )?;
-    db = db.add(
-        Record::addition(
-            Entity(6),
-            Entity(1),
+            Entity(2),
+            Entity(3),
             Value::Ident("db:type:timestamp".into()),
-            Entity(0),
-        ),
-    )?;
-    db = db.add(
-        Record::addition(
-            Entity(7),
-            Entity(1),
-            Value::Ident("db:type:entity".into()),
-            Entity(0),
-        ),
+            Entity(0)
+        )
     )?;
 
     Ok(db)

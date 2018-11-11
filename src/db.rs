@@ -240,16 +240,16 @@ impl Db {
         Some(new_env)
     }
 
-    /// Add a fact to the database. Does not validate that the fact
+    /// Add a record to the database. Does not validate that the fact
     /// fits the schema, in order to allow bootstrapping.
-    pub fn add(&self, record: Record) -> Result<Db> {
+    pub fn add_record(&self, record: Record) -> Result<Db> {
         // TODO: check schema
         let new_eav = self.eav.insert(record.clone());
         let new_ave = self.ave.insert(record.clone());
         let new_aev = self.aev.insert(record.clone());
         let new_vae = self.vae.insert(record.clone());
 
-        let new_idents = if record.attribute == self.idents.get_entity("db:ident").unwrap() {
+        let new_idents = if record.attribute == self.idents.get_entity("db:ident").expect("db:ident not in ident map") {
             match record.value {
                 Value::Ident(ref s) => self.idents.add(s.clone(), record.entity),
                 _ => return Err("db:ident value must be an ident".into()),
@@ -258,7 +258,7 @@ impl Db {
             self.idents.clone()
         };
 
-        let new_schema = if record.attribute == self.idents.get_entity("db:valueType").unwrap() {
+        let new_schema = if record.attribute == self.idents.get_entity("db:valueType").expect("db:valueType not in ident map") {
             let value_type = match record.value {
                 Value::Ident(ref s) => {
                     match s.as_str() {
@@ -288,6 +288,67 @@ impl Db {
             schema: new_schema,
             store: self.store.clone(),
         })
+    }
+
+    pub fn add(&self, fact: Fact, tx_entity: Entity) -> Result<(Db, Record)> {
+        let attr = match self.idents.get_entity(&fact.attribute) {
+            Some(a) => a,
+            None => return Err(format!("invalid attribute: ident '{:?}' does not exist", &fact.attribute).into())
+        };
+
+        let fact_value_type = match fact.value {
+            Value::String(_) => ValueType::String,
+            Value::Entity(_) => ValueType::Entity,
+            Value::Timestamp(_) => ValueType::Timestamp,
+            Value::Ident(_) => ValueType::Ident,
+        };
+
+        match self.schema.get(&attr) {
+            Some(schema_type) => {
+                if *schema_type == fact_value_type {
+                    let record = Record::addition(fact.entity, attr, fact.value, tx_entity);
+                    return self.add_record(record.clone()).map(|new_db| (new_db, record));
+                } else {
+                    return Err(format!(
+                        "type error: attribute {:?} does not match expected value type {:?}",
+                        fact.attribute,
+                        fact_value_type
+                    ).into())
+                }
+            },
+            None => return Err(format!("ident {:?} is not a valid attribute", fact.attribute).into())
+        }
+    }
+
+    pub fn retract(&self, fact: Fact, tx_entity: Entity) -> Result<(Db, Record)> {
+        // FIXME: dry
+        let attr = match self.idents.get_entity(&fact.attribute) {
+            Some(a) => a,
+            None => return Err(format!("invalid attribute: ident '{:?}' does not exist", &fact.attribute).into())
+        };
+
+        let fact_value_type = match fact.value {
+            Value::String(_) => ValueType::String,
+            Value::Entity(_) => ValueType::Entity,
+            Value::Timestamp(_) => ValueType::Timestamp,
+            Value::Ident(_) => ValueType::Ident,
+        };
+
+        match self.schema.get(&attr) {
+            Some(schema_type) => {
+                if *schema_type == fact_value_type {
+                    let record = Record::retraction(fact.entity, attr, fact.value, tx_entity);
+                    return self.add_record(record.clone()).map(|new_db| (new_db, record));
+                } else {
+                    return Err(format!(
+                        "type error: attribute {:?} does not match expected value type {:?}",
+                        fact.attribute,
+                        fact_value_type
+                    ).into())
+                }
+            },
+            None => return Err(format!("ident {:?} is not a valid attribute", fact.attribute).into())
+        }
     }
 }
 
