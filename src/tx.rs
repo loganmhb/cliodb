@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use im::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
@@ -9,7 +9,7 @@ use chrono::prelude::Utc;
 
 use backends::KVStore;
 use db::{Db, DbContents, ValueType};
-use {Tx, TxReport, Entity, Record, Value, TxItem, Result, IdentMap, Fact};
+use {Tx, TxReport, Entity, Record, Value, TxItem, Result, Fact};
 
 pub struct Transactor {
     next_id: i64,
@@ -335,7 +335,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     let contents = DbContents {
         next_id: 0,
         last_indexed_tx: 0,
-        idents: IdentMap::default(),
+        idents: HashMap::default(),
         schema: HashMap::default(),
         eav: eav_root,
         ave: ave_root,
@@ -344,8 +344,8 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     };
 
     let mut db = Db::new(contents, store);
-    db.idents = db.idents.add("db:ident".to_string(), Entity(1));
-    db.idents = db.idents.add("db:valueType".to_string(), Entity(3));
+    db.idents.insert("db:ident".to_string(), Entity(1));
+    db.idents.insert("db:valueType".to_string(), Entity(3));
 
     db.schema.insert(Entity(1), ValueType::Ident);
     db.schema.insert(Entity(3), ValueType::Ident);

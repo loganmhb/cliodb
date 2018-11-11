@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use im::HashMap;
 
 use {Entity, Value, Result, Ident};
 

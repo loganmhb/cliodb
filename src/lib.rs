@@ -13,6 +13,7 @@ extern crate serde_derive;
 extern crate serde;
 extern crate rmp_serde;
 
+extern crate im;
 extern crate cdrs;
 extern crate rusqlite;
 extern crate mysql;
@@ -38,7 +39,7 @@ extern crate proptest;
 use itertools::*;
 
 use std::fmt::{self, Display, Formatter};
-use std::collections::HashMap;
+use im::HashMap;
 use std::iter;
 use std::ops::RangeBounds;
 use std::result;
@@ -53,14 +54,12 @@ pub mod conn;
 mod queries;
 mod rbtree;
 mod durable_tree;
-mod ident;
 
 pub use parser::{parse_input, parse_tx, parse_query, Input};
 use queries::query::{Clause, Term, Var};
 pub use queries::execution::query;
 use index::{Comparator, Equivalent};
 use backends::KVStore;
-pub use ident::IdentMap;
 
 use std::collections::Bound;
 use chrono::prelude::{DateTime, Utc};

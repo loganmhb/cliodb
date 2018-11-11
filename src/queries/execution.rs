@@ -1,4 +1,4 @@
-use std::collections::{HashSet, HashMap};
+use im::{HashSet, HashMap};
 use {Result, Value, Error, Relation, Ident};
 use db::Db;
 use queries::query::{Query, Var, Clause, Term, Constraint};
@@ -306,8 +306,8 @@ mod tests {
     #[test]
     fn test_lookup_each() {
         let db = test_db();
-        let name_entity = db.idents.get_entity("name").unwrap();
-        let parent_entity = test_db().idents.get_entity("parent").unwrap();
+        let name_entity = *db.idents.get("name").unwrap();
+        let parent_entity = *test_db().idents.get("parent").unwrap();
         let fetch_clause = Clause::new(
             Term::Unbound("person".into()),
             Term::Bound(Ident::Entity(name_entity)),
@@ -335,8 +335,8 @@ mod tests {
     #[test]
     fn test_execute() {
         let db = test_db();
-        let name_entity = db.idents.get_entity("name").unwrap();
-        let parent_entity = db.idents.get_entity("parent").unwrap();
+        let name_entity = *db.idents.get("name").unwrap();
+        let parent_entity = *db.idents.get("parent").unwrap();
         let q = Query {
             find: vec!["name".into()],
             clauses: vec![
