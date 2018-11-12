@@ -1,4 +1,3 @@
-use im::HashMap;
 use std::sync::Arc;
 use std::sync::mpsc;
 use std::sync::mpsc::{Sender, Receiver};
@@ -8,7 +7,8 @@ use std::time::Duration;
 use chrono::prelude::Utc;
 
 use backends::KVStore;
-use db::{Db, DbContents, ValueType};
+use db::{Db, DbContents};
+use schema::{Schema, ValueType};
 use {Tx, TxReport, Entity, Record, Value, TxItem, Result, Fact};
 
 pub struct Transactor {
@@ -159,7 +159,6 @@ impl Transactor {
                 ave: new_ave,
                 aev: new_aev,
                 vae: new_vae,
-                idents: checkpoint.idents.clone(),
                 schema: checkpoint.schema.clone(),
                 store: checkpoint.store.clone(),
             }))
@@ -311,7 +310,6 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
     let contents = DbContents {
         next_id,
         last_indexed_tx,
-        idents: db.idents.clone(),
         schema: db.schema.clone(),
         eav: db.eav.durable_root(),
         aev: db.aev.durable_root(),
@@ -335,8 +333,7 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     let contents = DbContents {
         next_id: 0,
         last_indexed_tx: 0,
-        idents: HashMap::default(),
-        schema: HashMap::default(),
+        schema: Schema::empty(),
         eav: eav_root,
         ave: ave_root,
         aev: aev_root,
@@ -344,11 +341,11 @@ fn create_db(store: Arc<KVStore>) -> Result<Db> {
     };
 
     let mut db = Db::new(contents, store);
-    db.idents.insert("db:ident".to_string(), Entity(1));
-    db.idents.insert("db:valueType".to_string(), Entity(3));
+    db.schema = db.schema.add_ident(Entity(1), "db:ident".to_string());
+    db.schema = db.schema.add_ident(Entity(3), "db:valueType".to_string());
 
-    db.schema.insert(Entity(1), ValueType::Ident);
-    db.schema.insert(Entity(3), ValueType::Ident);
+    db.schema = db.schema.add_value_type(Entity(1), ValueType::Ident);
+    db.schema = db.schema.add_value_type(Entity(3), ValueType::Ident);
 
     // Bootstrap some attributes we need to run transactions,
     // because they need to reference one another.

@@ -60,7 +60,6 @@ impl Conn {
 
         let mut db = self.latest_db.clone().unwrap_or_else(|| Db {
             store: self.store.clone(),
-            idents: contents.idents.clone(),
             schema: contents.schema.clone(),
             eav: Index::new(contents.eav.clone(), self.store.clone(), EAVT),
             ave: Index::new(contents.ave.clone(), self.store.clone(), AVET),

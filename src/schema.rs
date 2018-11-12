@@ -1,6 +1,5 @@
-use std::collections::HashMap;
+use im::HashMap;
 use super::{Entity};
-use idents::{IdentMap};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub enum ValueType {
@@ -18,22 +17,35 @@ pub enum Cardinality {
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
 pub struct Schema {
-    idents: IdentMap,
-    value_types: HashMap<Entity, ValueType>,
-    cardinalities: HashMap<Entity, Cardinality>,
+    pub idents: HashMap<String, Entity>,
+    pub value_types: HashMap<Entity, ValueType>,
+    pub cardinalities: HashMap<Entity, Cardinality>,
 }
 
-// TODO: use persistent data structures
 impl Schema {
     pub fn add_ident(&self, entity: Entity, identifier: String) -> Schema {
         let mut new = self.clone();
-        new = new.idents.add(identifier, entity);
+        new.idents.insert(identifier, entity);
         new
     }
 
-    fn add_cardinality(entity: Entity, cardinality: Cardinality) -> Schema {
+    pub fn add_cardinality(&self, entity: Entity, cardinality: Cardinality) -> Schema {
+        let mut new = self.clone();
+        new.cardinalities.insert(entity, cardinality);
+        new
     }
 
-    fn add_value_type(entity: Entity, value_type: ValueType) -> Schema {
+    pub fn add_value_type(&self, entity: Entity, value_type: ValueType) -> Schema {
+        let mut new = self.clone();
+        new.value_types.insert(entity, value_type);
+        new
+    }
+
+    pub fn empty() -> Schema {
+        Schema {
+            idents: HashMap::new(),
+            value_types: HashMap::new(),
+            cardinalities: HashMap::new(),
+        }
     }
 }

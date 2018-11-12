@@ -5,22 +5,14 @@ use std::sync::Arc;
 use im::HashMap;
 use {Result, EAVT, AEVT, AVET, VAET};
 use index::Index;
+use schema::{Schema, ValueType};
 use queries::query;
-
-#[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
-pub enum ValueType {
-    String,
-    Ident,
-    Entity,
-    Timestamp,
-}
 
 /// An *immutable* view of the database at a point in time.
 /// Only used for querying; for transactions, you need a Conn.
 #[derive(Clone)]
 pub struct Db {
-    pub idents: HashMap<String, Entity>,
-    pub schema: HashMap<Entity, ValueType>,
+    pub schema: Schema,
     pub store: Arc<KVStore + 'static>,
     pub eav: Index<Record, EAVT>,
     pub ave: Index<Record, AVET>,
@@ -32,7 +24,6 @@ impl Db {
     pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
         let db = Db {
             store: store.clone(),
-            idents: contents.idents,
             schema: contents.schema,
             eav: Index::new(contents.eav, store.clone(), EAVT),
             ave: Index::new(contents.ave, store.clone(), AVET),
@@ -51,7 +42,7 @@ impl Db {
         match ident {
             &Ident::Entity(e) => Some(e),
             // FIXME: shouldn't need to clone, should be copyable
-            &Ident::Name(ref name) => self.idents.get(name).map(|e| e.clone())
+            &Ident::Name(ref name) => self.schema.idents.get(name).map(|e| e.clone())
         }
     }
 
@@ -251,16 +242,15 @@ impl Db {
         let new_aev = self.aev.insert(record.clone());
         let new_vae = self.vae.insert(record.clone());
 
-        let mut new_idents = self.idents.clone();
-        if record.attribute == *self.idents.get("db:ident").expect("db:ident not in ident map") {
+        let mut new_schema = self.schema.clone();
+        if record.attribute == *self.schema.idents.get("db:ident").expect("db:ident not in ident map") {
             match record.value {
-                Value::Ident(ref s) => new_idents.insert(s.clone(), record.entity),
+                Value::Ident(ref s) => new_schema = new_schema.add_ident(record.entity, s.clone()),
                 _ => return Err("db:ident value must be an ident".into()),
             };
         };
 
-        let mut new_schema = self.schema.clone();
-        if record.attribute == *self.idents.get("db:valueType").expect("db:valueType not in ident map") {
+        if record.attribute == *self.schema.idents.get("db:valueType").expect("db:valueType not in ident map") {
             let value_type = match record.value {
                 Value::Ident(ref s) => {
                     match s.as_str() {
@@ -274,7 +264,7 @@ impl Db {
                 _ => return Err("db:valueType must be an identifier".into()),
             };
 
-            new_schema.insert(record.entity, value_type);
+            new_schema = new_schema.add_value_type(record.entity, value_type);
         };
 
         Ok(Db {
@@ -282,14 +272,13 @@ impl Db {
             ave: new_ave,
             aev: new_aev,
             vae: new_vae,
-            idents: new_idents,
             schema: new_schema,
             store: self.store.clone(),
         })
     }
 
     pub fn add(&self, fact: Fact, tx_entity: Entity) -> Result<(Db, Record)> {
-        let attr = match self.idents.get(&fact.attribute) {
+        let attr = match self.schema.idents.get(&fact.attribute) {
             Some(a) => a,
             None => return Err(format!("invalid attribute: ident '{:?}' does not exist", &fact.attribute).into())
         };
@@ -301,7 +290,7 @@ impl Db {
             Value::Ident(_) => ValueType::Ident,
         };
 
-        match self.schema.get(&attr) {
+        match self.schema.value_types.get(&attr) {
             Some(schema_type) => {
                 if *schema_type == fact_value_type {
                     let record = Record::addition(fact.entity, *attr, fact.value, tx_entity);
@@ -320,7 +309,7 @@ impl Db {
 
     pub fn retract(&self, fact: Fact, tx_entity: Entity) -> Result<(Db, Record)> {
         // FIXME: dry
-        let attr = match self.idents.get(&fact.attribute) {
+        let attr = match self.schema.idents.get(&fact.attribute) {
             Some(a) => a,
             None => return Err(format!("invalid attribute: ident '{:?}' does not exist", &fact.attribute).into())
         };
@@ -332,7 +321,7 @@ impl Db {
             Value::Ident(_) => ValueType::Ident,
         };
 
-        match self.schema.get(&attr) {
+        match self.schema.value_types.get(&attr) {
             Some(schema_type) => {
                 if *schema_type == fact_value_type {
                     let record = Record::retraction(fact.entity, *attr, fact.value, tx_entity);
@@ -356,8 +345,7 @@ impl Db {
 pub struct DbContents {
     pub next_id: i64,
     pub last_indexed_tx: i64,
-    pub idents: HashMap<String, Entity>,
-    pub schema: HashMap<Entity, ValueType>,
+    pub schema: Schema,
     pub eav: String,
     pub ave: String,
     pub aev: String,
@@ -389,7 +377,7 @@ mod tests {
 
     #[test]
     fn test_fetch() {
-        let name_entity = *test_db().idents.get("name").unwrap();
+        let name_entity = *test_db().schema.idents.get("name").unwrap();
         let clause = query::Clause::new(
             Term::Unbound("e".into()),
             Term::Bound(Ident::Entity(name_entity)),

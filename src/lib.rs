@@ -51,6 +51,7 @@ pub mod backends;
 pub mod tx;
 pub mod network;
 pub mod conn;
+mod schema;
 mod queries;
 mod rbtree;
 mod durable_tree;
