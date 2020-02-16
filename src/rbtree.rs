@@ -307,6 +307,8 @@ impl<T: Clone> Iterator for Iter<T> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+//    use self::test::{Bencher};
     use index::NumComparator;
 
     fn enumerate_tree<T: Clone>(tree: Child<T>, mut vec: &mut Vec<T>) {
@@ -458,4 +460,13 @@ mod tests {
 
         assert_invariants(&t.root.unwrap());
     }
+
+    // #[bench]
+    // fn bench_insert_elements(b: &mut Bencher) {
+    //     let mut t: RBTree<i64, NumComparator> = RBTree::default();
+    //     for i in 1..100000 {
+    //         t = t.insert(i)
+    //     }
+    //     b.iter(|| t.insert(100001))
+    // }
 }

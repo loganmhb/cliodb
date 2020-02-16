@@ -38,7 +38,7 @@ where
     T: Equivalent + Debug + Ord + Clone + Serialize + Deserialize<'de>,
     C: Comparator<Item = T> + Copy,
 {
-    pub fn new(root_ref: String, store: Arc<KVStore>, comparator: C) -> Index<T, C> {
+    pub fn new(root_ref: String, store: Arc<dyn KVStore>, comparator: C) -> Index<T, C> {
         Index {
             _comparator: comparator,
             mem_index: RBTree::new(comparator),

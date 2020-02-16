@@ -14,20 +14,15 @@ extern crate serde;
 extern crate rmp_serde;
 
 extern crate im;
-extern crate cdrs;
 extern crate rusqlite;
 extern crate mysql;
-extern crate r2d2;
 
 extern crate lru_cache;
 extern crate uuid;
 
 extern crate bytes;
 extern crate futures;
-extern crate tokio_io;
-extern crate tokio_core;
-extern crate tokio_proto;
-extern crate tokio_service;
+extern crate tokio;
 
 #[macro_use]
 extern crate lazy_static;
@@ -49,7 +44,7 @@ pub mod parser;
 pub mod index;
 pub mod backends;
 pub mod tx;
-pub mod network;
+//pub mod network;
 pub mod conn;
 mod schema;
 mod queries;
@@ -324,7 +319,6 @@ pub mod tests {
         ).map_err(|e| e.into())
             .and_then(|tx| conn.transact(tx))
             .map(|tx_result| {
-                use TxReport;
                 match tx_result {
                     TxReport::Success { .. } => (),
                     TxReport::Failure(msg) => panic!(format!("failed in schema with '{}'", msg)),
@@ -338,7 +332,6 @@ pub mod tests {
                 .map(|x| TxItem::Addition(x.clone()))
                 .collect(),
         }).map(|tx_result| {
-                use TxReport;
                 match tx_result {
                     TxReport::Success { .. } => (),
                     TxReport::Failure(msg) => panic!(format!("failed in insert with '{}'", msg)),
@@ -476,7 +469,7 @@ pub mod tests {
     #[bench]
     // Parse + run a query on a small db
     fn parse_bench(b: &mut Bencher) {
-        // the implicit join query
+            // the implicit join query
         let input = black_box(
             r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
         );

@@ -20,16 +20,14 @@ impl SqliteStore {
         // Set up SQLite tables to track index data
         conn.execute(
             "CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
-            &[],
+            sql::NO_PARAMS,
         )?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS logos_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
-            &[],
+            sql::NO_PARAMS,
         )?;
 
-
         let store = SqliteStore { conn: Arc::new(Mutex::new(conn)) };
-
         Ok(store)
     }
 }
@@ -39,10 +37,12 @@ impl KVStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
-        stmt.query_row(&[&key], |row| {
-            let s: Vec<u8> = row.get(0);
-            s
-        }).map_err(|e| e.into())
+        stmt.query_map(sql::params![key], |row| {
+            let r: Option<Vec<u8>> = row.get(0).unwrap();
+            Ok(r.unwrap())
+        })
+            .and_then(|mut rows| rows.next().unwrap())
+            .map_err(|e| e.into())
     }
 
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
@@ -51,33 +51,31 @@ impl KVStore for SqliteStore {
         let mut stmt = conn.prepare(
             "INSERT OR REPLACE INTO logos_kvs (key, val) VALUES (?1, ?2)",
         ).unwrap();
-        stmt.execute(&[&key, &value])?;
+        stmt.execute(sql::params![key, value])?;
         Ok(())
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
+        // FIXME: handle errors
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
             .unwrap();
-        let results: Vec<Result<TxRaw>> = stmt.query_map(&[&from], |ref row| {
-            let bytes: Vec<u8> = row.get(1);
+        let results: Vec<TxRaw> = stmt.query_map(sql::params![&from], |ref row| {
+            let maybe_bytes: Option<Vec<u8>> = row.get(1).unwrap();
+            let bytes = maybe_bytes.unwrap();
+            println!("got bytes from row");
             let mut de = Deserializer::new(&bytes[..]);
-            let res: Vec<Record> = Deserialize::deserialize(&mut de)?;
-            let id: i64 = row.get(0);
+            let res: Vec<Record> = Deserialize::deserialize(&mut de).unwrap();
+            let id: i64 = row.get(0).unwrap();
             Ok(TxRaw {
                 id: id,
                 records: res,
             })
-            // FIXME: why does this end up as a nested result?
         }).unwrap()
             .map(|r| r.unwrap())
             .collect();
 
-        let mut txs = vec![];
-        for result in results {
-            txs.push(result?);
-        }
-        Ok(txs)
+        Ok(results)
     }
 
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
@@ -88,7 +86,7 @@ impl KVStore for SqliteStore {
         let mut stmt = conn.prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
             .unwrap();
 
-        stmt.execute(&[&tx.id, &serialized])?;
+        stmt.execute(sql::params![tx.id, &serialized])?;
 
         Ok(())
     }

@@ -1,20 +1,13 @@
 use std::net::SocketAddr;
 use std::sync::{Arc, Mutex};
 
-use futures::future::Future;
-use tokio_proto::TcpClient;
-use tokio_core::reactor::Core;
-use tokio_service::Service;
-
-use {Result, Error, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
+use {Result, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
 use backends::sqlite::SqliteStore;
 use backends::mem::HeapStore;
 use backends::mysql::MysqlStore;
-use backends::cassandra::CassandraStore;
 use db::{Db, DbContents};
 use index::Index;
-use network::LineProto;
 use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -32,14 +25,14 @@ lazy_static! {
 
 pub struct Conn {
     transactor: TxClient,
-    store: Arc<KVStore>,
+    store: Arc<dyn KVStore>,
     latest_db: Option<Db>,
     last_known_tx: Option<i64>,
     last_seen_contents: Option<DbContents>,
 }
 
 impl Conn {
-    pub fn new(store: Arc<KVStore>) -> Result<Conn> {
+    pub fn new(store: Arc<dyn KVStore>) -> Result<Conn> {
         let transactor = store.get_transactor()?;
         Ok(Conn { transactor, store, latest_db: None, last_known_tx: None, last_seen_contents: None })
     }
@@ -85,12 +78,13 @@ impl Conn {
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
         match self.transactor {
             TxClient::Network(addr) => {
-                let mut core = Core::new().unwrap();
-                let handle = core.handle();
-                let client = TcpClient::new(LineProto).connect(&addr, &handle);
+                unimplemented!()
+                // let mut core = Core::new().unwrap();
+                // let handle = core.handle();
+                // let client = TcpClient::new(LineProto).connect(&addr, &handle);
 
-                core.run(client.and_then(|client| client.call(tx)))
-                    .unwrap_or_else(|e| Err(Error(e.to_string())))
+                // core.run(client.and_then(|client| client.call(tx)))
+                //     .unwrap_or_else(|e| Err(Error(e.to_string())))
             }
             TxClient::Local => {
                 let store = self.store.clone();
@@ -107,20 +101,16 @@ impl Conn {
     }
 }
 
-pub fn store_from_uri(uri: &str) -> Result<Arc<KVStore>> {
+pub fn store_from_uri(uri: &str) -> Result<Arc<dyn KVStore>> {
     match &uri.split("//").collect::<Vec<_>>()[..] {
-        &["logos:mem:", _] => Ok(Arc::new(HeapStore::new::<Record>()) as Arc<KVStore>),
+        &["logos:mem:", _] => Ok(Arc::new(HeapStore::new::<Record>()) as Arc<dyn KVStore>),
         &["logos:sqlite:", path] => {
             let sqlite_store = SqliteStore::new(path)?;
-            Ok(Arc::new(sqlite_store) as Arc<KVStore>)
-        }
-        &["logos:cass:", url] => {
-            let cass_store = CassandraStore::new(url)?;
-            Ok(Arc::new(cass_store) as Arc<KVStore>)
+            Ok(Arc::new(sqlite_store) as Arc<dyn KVStore>)
         }
         &["logos:mysql:", url] => {
             let mysql_store = MysqlStore::new(&format!("mysql://{}", url))?;
-            Ok(Arc::new(mysql_store) as Arc<KVStore>)
+            Ok(Arc::new(mysql_store) as Arc<dyn KVStore>)
         }
         _ => Err("Invalid uri".into()),
     }

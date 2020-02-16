@@ -1,6 +1,7 @@
 use std::fmt::Debug;
 use std::iter::Peekable;
 use std::cmp::Ordering;
+// TODO: replace mutex with futures::lock
 use std::sync::{Arc, Mutex};
 
 use itertools::Itertools;
@@ -84,7 +85,7 @@ where
     T: Equivalent + Serialize + Deserialize<'de> + Clone + Debug,
     C: Comparator<Item = T>,
 {
-    pub fn create(store: Arc<KVStore>, comparator: C) -> Result<DurableTree<T, C>> {
+    pub fn create(store: Arc<dyn KVStore>, comparator: C) -> Result<DurableTree<T, C>> {
         let empty_root = Node::Interior(InteriorNode { links: vec![], keys: vec![] });
         let node_store = NodeStore::new(store.clone());
         let root_ref = node_store.add_node(&empty_root)?;
@@ -226,7 +227,7 @@ where
         Self::build_from_leaves(rebuild_iterator, self.store.clone(), self._comparator)
     }
 
-    pub fn from_ref(db_ref: String, store: Arc<KVStore>, _comparator: C) -> DurableTree<T, C> {
+    pub fn from_ref(db_ref: String, store: Arc<dyn KVStore>, _comparator: C) -> DurableTree<T, C> {
         DurableTree {
             root: db_ref,
             store: NodeStore::new(store),
@@ -469,14 +470,14 @@ where T: Clone + Deserialize<'de> + Serialize + Debug,
 #[derive(Clone)]
 struct NodeStore<T> {
     cache: Arc<Mutex<LruCache<String, Arc<Node<T>>>>>,
-    store: Arc<KVStore>,
+    store: Arc<dyn KVStore>,
 }
 
 impl<'de, T> NodeStore<T>
 where
     T: Serialize + Deserialize<'de> + Clone,
 {
-    fn new(store: Arc<KVStore>) -> NodeStore<T> {
+    fn new(store: Arc<dyn KVStore>) -> NodeStore<T> {
         NodeStore {
             // TODO make size configurable
             cache: Arc::new(Mutex::new(LruCache::new(1024))),

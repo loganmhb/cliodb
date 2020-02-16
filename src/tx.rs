@@ -14,7 +14,7 @@ use {Tx, TxReport, Entity, Record, Value, TxItem, Result, Fact};
 pub struct Transactor {
     next_id: i64,
     current_db: Db,
-    store: Arc<KVStore>,
+    store: Arc<dyn KVStore>,
     latest_tx: i64,
     last_indexed_tx: i64,
 
@@ -76,7 +76,7 @@ impl Transactor {
     /// Creates a transactor by retrieving the database metadata from
     /// the store (if it exists already) or creating the metadata for
     /// a new database (if no metadata is present in the store).
-    pub fn new(store: Arc<KVStore>) -> Result<Transactor> {
+    pub fn new(store: Arc<dyn KVStore>) -> Result<Transactor> {
         let (send, recv) = mpsc::channel();
 
         match store.get_contents() {
@@ -321,7 +321,7 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
     Ok(())
 }
 
-fn create_db(store: Arc<KVStore>) -> Result<Db> {
+fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
     use {EAVT, AVET, VAET, AEVT};
     use durable_tree;
 

@@ -13,7 +13,7 @@ use queries::query;
 #[derive(Clone)]
 pub struct Db {
     pub schema: Schema,
-    pub store: Arc<KVStore + 'static>,
+    pub store: Arc<dyn KVStore + 'static>,
     pub eav: Index<Record, EAVT>,
     pub ave: Index<Record, AVET>,
     pub aev: Index<Record, AEVT>,
@@ -21,7 +21,7 @@ pub struct Db {
 }
 
 impl Db {
-    pub fn new(contents: DbContents, store: Arc<KVStore>) -> Db {
+    pub fn new(contents: DbContents, store: Arc<dyn KVStore>) -> Db {
         let db = Db {
             store: store.clone(),
             schema: contents.schema,
@@ -108,7 +108,7 @@ impl Db {
     /// Given a clause, fetch the relation of matching records.
     pub fn fetch(&self, clause: &query::Clause) -> Result<Relation> {
         let mut vars = vec![];
-        let mut selectors: Vec<Box<Fn(&Record) -> Value>> = vec![];
+        let mut selectors: Vec<Box<dyn Fn(&Record) -> Value>> = vec![];
 
         match clause.entity {
             query::Term::Bound(_) => {},

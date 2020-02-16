@@ -1,6 +1,5 @@
 extern crate logos;
 extern crate clap;
-extern crate tokio_proto;
 
 use std::net::SocketAddr;
 use std::str::FromStr;
@@ -9,10 +8,9 @@ use std::thread;
 
 use logos::conn::{store_from_uri, TxClient};
 use logos::tx::{Transactor, TxHandle};
-use logos::network::{LineProto, TransactorService};
+//use logos::network::{LineProto, TransactorService};
 
 use clap::{Arg, App};
-use tokio_proto::TcpServer;
 
 fn main() {
     let matches = App::new("Logos transactor")
@@ -45,14 +43,16 @@ fn main() {
     let mut transactor = Transactor::new(store).expect("could not create transactor");
     let tx_handle = Arc::new(Mutex::new(TxHandle::new(&transactor)));
     thread::spawn(move || transactor.run());
-    let server = TcpServer::new(LineProto, addr);
+    unimplemented!()
+    // TODO: implement on new tokio
+    // let server = TcpServer::new(LineProto, addr);
 
-    // We provide a way to *instantiate* the service for each new
-    // connection; here, we just immediately return a new instance.
-    println!("Serving on {}", addr);
-    server.serve(move || {
-        Ok(TransactorService {
-            tx_handle: tx_handle.lock().unwrap().clone(),
-        })
-    });
+    // // We provide a way to *instantiate* the service for each new
+    // // connection; here, we just immediately return a new instance.
+    // println!("Serving on {}", addr);
+    // server.serve(move || {
+    //     Ok(TransactorService {
+    //         tx_handle: tx_handle.lock().unwrap().clone(),
+    //     })
+    // });
 }
