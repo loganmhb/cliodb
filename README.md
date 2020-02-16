@@ -25,15 +25,15 @@ arbitrary point in the past [incomplete]
 6. Transactions are reified as entities in the database, and can be
 queried like any other entity [incomplete]
 
-It is pre-alpha quality software, and you should not trust it with
-your data! But if you'd like to help make it better, contributions are
-very welcome.
+It is pre-alpha quality software, very much not done, and you should
+not trust it with your data! But if you'd like to help make it better,
+contributions are very welcome.
 
 # Running
 
 You will need a recent nightly version of Rust to compile the project,
-In order to use the SQLite backend you also need SQLite
-(`sqlite-devel`, often). Then:
+In order to use the SQLite backend you also need to have SQLite
+installed. Then:
 
     cargo build
 
@@ -138,7 +138,9 @@ they're all executed clientside and make a similar number of fetches
 to the backing store, but this is critical for supporting useful
 transactions. The most obvious path is to define a `db:function`
 primitive type that stores Lua scripts or something like that which
-the transactor can execute.
+the transactor can execute. Alternatively, implementing some kind of
+primitive 'compare-and-set' functionality would allow you to implement
+basic transactional behavior.
 
 3. Ability to query the database as of a particular transaction or
 point in time -- this just requires filtering records by transaction
@@ -167,7 +169,12 @@ access its attributes hash-map style
 committed one at a time, but if more than one transaction is in flight
 at a time it should be possible to batch their writes to the backing
 store together. (The transactions would still commit or rollback
-individually.)
+individually, so the semantics would remain unchanged but performance
+could improve considerably, especially if most transactions are
+simple.) It might even be desirable to reorder transactions received
+by the transactor in order to facilitate this batching -- for
+instance, to prioritize simple transactions over ones that do
+"compare-and-set" operations)
 
 # Known issues
 
