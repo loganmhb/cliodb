@@ -5,7 +5,6 @@ use logos::*;
 use logos::conn::{Conn, store_from_uri};
 use std::time::{Instant};
 
-use std::error::Error;
 use std::env::args;
 
 fn run(uri: &str) {
@@ -64,7 +63,7 @@ Commands:
                             r#"add (2 name "Hello")"#,
                         ];
 
-                        for tx in sample.into_iter().map(|l| parse_tx(*l).unwrap()) {
+                        for tx in sample.iter().map(|l| parse_tx(*l).unwrap()) {
                             conn.transact(tx).unwrap();
                         }
                     }
@@ -87,7 +86,7 @@ Commands:
                 if let rustyline::error::ReadlineError::Eof = e {
                     break;
                 }
-                println!("Error! {:?}", e.description())
+                println!("Error! {:?}", e.to_string())
             }
         }
     }

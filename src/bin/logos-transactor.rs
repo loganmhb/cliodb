@@ -41,7 +41,7 @@ fn main() {
         .unwrap();
 
     let mut transactor = Transactor::new(store).expect("could not create transactor");
-    let tx_handle = Arc::new(Mutex::new(TxHandle::new(&transactor)));
+    let _tx_handle = Arc::new(Mutex::new(TxHandle::new(&transactor)));
     thread::spawn(move || transactor.run());
     unimplemented!()
     // TODO: implement on new tokio

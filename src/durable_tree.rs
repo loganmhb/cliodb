@@ -100,6 +100,7 @@ where
     /// iterator of leaf nodes and then constructing the tree of
     /// directory nodes on top of that.
     // TODO: remove
+    #[cfg(test)]
     fn build_from_iter<I>(store: NodeStore<T>, iter: I, comparator: C) -> Result<DurableTree<T, C>>
     where
         I: Iterator<Item = T>,
@@ -154,7 +155,7 @@ where
                 }
 
 
-                let mut parent = &mut open_nodes[layer];
+                let parent = &mut open_nodes[layer];
                 parent.keys.push(key);
                 parent.links.push(Link::DbKey(db_key));
 
@@ -523,7 +524,7 @@ struct RebuildIter<T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item =
     new_leaves: Vec<Result<LeafRef<T>>>,
     novelty: Peekable<I>,
     store: NodeStore<T>,
-    comparator: C,
+    _comparator: C,
 }
 
 impl <T, L: Iterator<Item = Result<LeafRef<T>>>, I: Iterator<Item = T>, C: Comparator> RebuildIter<T, L, I, C>
@@ -538,7 +539,7 @@ where T: Clone + Debug {
             new_leaves: vec![],
             novelty: novelty.peekable(),
             store,
-            comparator,
+            _comparator: comparator,
         })
     }
 }

@@ -77,7 +77,7 @@ impl Conn {
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
         match self.transactor {
-            TxClient::Network(addr) => {
+            TxClient::Network(_addr) => {
                 unimplemented!()
                 // let mut core = Core::new().unwrap();
                 // let handle = core.handle();
