@@ -20,15 +20,28 @@ pub struct Db {
     pub vae: Index<Record, VAET>,
 }
 
+/// A structure designed to be stored in the backing store that enables
+/// a process to locate the indexes, tx log, etc.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct DbMetadata {
+    pub next_id: i64,
+    pub last_indexed_tx: i64,
+    pub schema: Schema,
+    pub eav: String,
+    pub ave: String,
+    pub aev: String,
+    pub vae: String,
+}
+
 impl Db {
-    pub fn new(contents: DbContents, store: Arc<dyn KVStore>) -> Db {
+    pub fn new(metadata: DbMetadata, store: Arc<dyn KVStore>) -> Db {
         let db = Db {
             store: store.clone(),
-            schema: contents.schema,
-            eav: Index::new(contents.eav, store.clone(), EAVT),
-            ave: Index::new(contents.ave, store.clone(), AVET),
-            aev: Index::new(contents.aev, store.clone(), AEVT),
-            vae: Index::new(contents.vae, store, VAET),
+            schema: metadata.schema,
+            eav: Index::new(metadata.eav, store.clone(), EAVT),
+            ave: Index::new(metadata.ave, store.clone(), AVET),
+            aev: Index::new(metadata.aev, store.clone(), AEVT),
+            vae: Index::new(metadata.vae, store, VAET),
         };
 
         db
@@ -337,19 +350,6 @@ impl Db {
             None => return Err(format!("ident {:?} is not a valid attribute", fact.attribute).into())
         }
     }
-}
-
-/// A structure designed to be stored in the backing store that enables
-/// a process to locate the indexes, tx log, etc.
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
-pub struct DbContents {
-    pub next_id: i64,
-    pub last_indexed_tx: i64,
-    pub schema: Schema,
-    pub eav: String,
-    pub ave: String,
-    pub aev: String,
-    pub vae: String,
 }
 
 #[cfg(test)]

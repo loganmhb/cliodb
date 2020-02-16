@@ -14,7 +14,7 @@ logos
 Commands:
   quit - exit the progam;
   test - load sample data (overwrites your current DB!)
-  dump - display the contents of the DB as a table.
+  dump - display the metadata of the DB as a table.
 "
     );
     let store = store_from_uri(uri).expect("Couldn't create store");

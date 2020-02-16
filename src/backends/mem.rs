@@ -23,7 +23,7 @@ impl HeapStore {
 
         store.set_transactor(&TxClient::Local).unwrap();
 
-        // Initialize the contents of the store. Gross & complected.
+        // Initialize the metadata of the store. Gross & complected.
         let _ = tx::Transactor::new(Arc::new(store.clone()));
 
         store

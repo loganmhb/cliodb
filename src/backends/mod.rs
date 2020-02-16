@@ -8,17 +8,17 @@ use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
 use conn::TxClient;
-use db::DbContents;
+use db::DbMetadata;
 use tx::TxRaw;
 use super::Result;
 
 /// Abstracts over various backends; all that's required for a Logos
 /// backend is the ability to add a key, retrieve a key, and
-/// atomically set/get the DbContents.
+/// atomically set/get the DbMetadata.
 pub trait KVStore: Send + Sync {
     /// Set a value in the store. This method implies only eventual consistency;
     /// use `compare_and_set` when consistency is required.
-    // FIXME: This is currently used for setting db_contents as well as index segments,
+    // FIXME: This is currently used for setting db_metadata as well as index segments,
     // which isn't ACID-safe.
     fn set(&self, key: &str, value: &[u8]) -> Result<()>;
 
@@ -27,18 +27,18 @@ pub trait KVStore: Send + Sync {
     /// Get a value out of the store.
     fn get(&self, key: &str) -> Result<Vec<u8>>;
 
-    fn get_contents(&self) -> Result<DbContents> {
-        let serialized = self.get("db_contents")?;
+    fn get_metadata(&self) -> Result<DbMetadata> {
+        let serialized = self.get("db_metadata")?;
         let mut de = Deserializer::new(&serialized[..]);
-        let contents: DbContents = Deserialize::deserialize(&mut de)?;
-        Ok(contents.clone())
+        let metadata: DbMetadata = Deserialize::deserialize(&mut de)?;
+        Ok(metadata.clone())
     }
 
-    fn set_contents(&self, contents: &DbContents) -> Result<()> {
+    fn set_metadata(&self, metadata: &DbMetadata) -> Result<()> {
         let mut buf = Vec::new();
-        contents.serialize(&mut Serializer::new(&mut buf))?;
+        metadata.serialize(&mut Serializer::new(&mut buf))?;
 
-        self.set("db_contents", &buf)
+        self.set("db_metadata", &buf)
     }
 
     fn get_transactor(&self) -> Result<TxClient> {

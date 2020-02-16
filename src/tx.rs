@@ -7,7 +7,7 @@ use std::time::Duration;
 use chrono::prelude::Utc;
 
 use backends::KVStore;
-use db::{Db, DbContents};
+use db::{Db, DbMetadata};
 use schema::{Schema, ValueType};
 use {Tx, TxReport, Entity, Record, Value, TxItem, Result, Fact};
 
@@ -79,12 +79,12 @@ impl Transactor {
     pub fn new(store: Arc<dyn KVStore>) -> Result<Transactor> {
         let (send, recv) = mpsc::channel();
 
-        match store.get_contents() {
-            Ok(contents) => {
-                let mut next_id = contents.next_id;
-                let last_id = contents.last_indexed_tx;
+        match store.get_metadata() {
+            Ok(metadata) => {
+                let mut next_id = metadata.next_id;
+                let last_id = metadata.last_indexed_tx;
                 let mut latest_tx = last_id;
-                let mut db = Db::new(contents, store.clone());
+                let mut db = Db::new(metadata, store.clone());
                 let novelty = store.get_txs(last_id)?;
                 for tx in novelty {
                     for record in tx.records {
@@ -110,7 +110,7 @@ impl Transactor {
                     throttled: false,
                 })
             }
-            // FIXME: this should happen if contents is None, not on error
+            // FIXME: this should happen if metadata is None, not on error
             Err(_) => {
                 let mut tx = Transactor {
                     next_id: 8,
@@ -124,7 +124,7 @@ impl Transactor {
                     throttled: false,
                 };
 
-                save_contents(&tx.current_db, tx.next_id, tx.last_indexed_tx)?;
+                save_metadata(&tx.current_db, tx.next_id, tx.last_indexed_tx)?;
                 // FIXME: Is this necessary?
                 tx.rebuild_indices()?;
                 Ok(tx)
@@ -182,7 +182,7 @@ impl Transactor {
         }
 
         println!("Switching over to rebuilt indices.");
-        save_contents(&final_db, self.next_id, self.latest_tx)?;
+        save_metadata(&final_db, self.next_id, self.latest_tx)?;
         self.current_db = final_db;
 
         // If the mem index filled up during the rebuild, we need to
@@ -242,14 +242,14 @@ impl Transactor {
         }
 
         // FIXME: Race condition. If adding the tx completes but
-        // saving the contents does not, the tx log will be polluted.
+        // saving the metadata does not, the tx log will be polluted.
         self.store.add_tx(&raw_tx)?;
         self.latest_tx = raw_tx.id;
         if let Some(txs) = self.catchup_txs.as_mut() {
             txs.push(raw_tx.clone());
         }
 
-        save_contents(&db_after, self.next_id, self.last_indexed_tx)?;
+        save_metadata(&db_after, self.next_id, self.last_indexed_tx)?;
         self.current_db = db_after;
 
         if self.current_db.mem_index_size() > 100_000 {
@@ -306,8 +306,8 @@ impl Transactor {
 /// Saves the db metadata (index root nodes, entity ID state) to
 /// storage, when implemented by the storage backend (i.e. when
 /// not using in-memory storage).
-fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
-    let contents = DbContents {
+fn save_metadata(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
+    let metadata = DbMetadata {
         next_id,
         last_indexed_tx,
         schema: db.schema.clone(),
@@ -317,7 +317,7 @@ fn save_contents(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
         vae: db.vae.durable_root(),
     };
 
-    db.store.set_contents(&contents)?;
+    db.store.set_metadata(&metadata)?;
     Ok(())
 }
 
@@ -330,7 +330,7 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
     let aev_root = durable_tree::DurableTree::create(store.clone(), AEVT)?.root;
     let vae_root = durable_tree::DurableTree::create(store.clone(), VAET)?.root;
 
-    let contents = DbContents {
+    let metadata = DbMetadata {
         next_id: 0,
         last_indexed_tx: 0,
         schema: Schema::empty(),
@@ -340,7 +340,7 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
         vae: vae_root,
     };
 
-    let mut db = Db::new(contents, store);
+    let mut db = Db::new(metadata, store);
     db.schema = db.schema.add_ident(Entity(1), "db:ident".to_string());
     db.schema = db.schema.add_ident(Entity(3), "db:valueType".to_string());
 

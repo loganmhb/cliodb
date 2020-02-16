@@ -127,20 +127,20 @@ where
     };
 
     // Clause structure
-    let constraint_contents = (comparator_term, value_term(), value_term()).map(|(c, fst, snd)| {
+    let constraint_metadata = (comparator_term, value_term(), value_term()).map(|(c, fst, snd)| {
         ClauseConstraint::Constraint(Constraint {
             comparator: c,
             left_hand_side: fst,
             right_hand_side: snd,
         })
     });
-    let clause_contents = (entity_term, ident_term, value_term()).map(|(e, a, v)| {
+    let clause_metadata = (entity_term, ident_term, value_term()).map(|(e, a, v)| {
         ClauseConstraint::Clause(Clause::new(e, a, v))
     });
     let constraint_clause = between(
         lex_char('('),
         lex_char(')'),
-        constraint_contents.or(clause_contents),
+        constraint_metadata.or(clause_metadata),
     );
 
     let find_spec = lex_string("find").and(many1(free_var())).map(|x| x.1);

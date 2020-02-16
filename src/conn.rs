@@ -6,7 +6,7 @@ use backends::KVStore;
 use backends::sqlite::SqliteStore;
 use backends::mem::HeapStore;
 use backends::mysql::MysqlStore;
-use db::{Db, DbContents};
+use db::{Db, DbMetadata};
 use index::Index;
 use tx;
 
@@ -28,36 +28,36 @@ pub struct Conn {
     store: Arc<dyn KVStore>,
     latest_db: Option<Db>,
     last_known_tx: Option<i64>,
-    last_seen_contents: Option<DbContents>,
+    last_seen_metadata: Option<DbMetadata>,
 }
 
 impl Conn {
     pub fn new(store: Arc<dyn KVStore>) -> Result<Conn> {
         let transactor = store.get_transactor()?;
-        Ok(Conn { transactor, store, latest_db: None, last_known_tx: None, last_seen_contents: None })
+        Ok(Conn { transactor, store, latest_db: None, last_known_tx: None, last_seen_metadata: None })
     }
 
     pub fn db(&mut self) -> Result<Db> {
-        let contents: DbContents = self.store.get_contents()?;
+        let metadata: DbMetadata = self.store.get_metadata()?;
 
-        if Some(&contents) != self.last_seen_contents.as_ref() {
+        if Some(&metadata) != self.last_seen_metadata.as_ref() {
             // The underlying index has changed, so we need a new database. Invalidate the cache.
             self.last_known_tx = None;
             self.latest_db = None;
-            self.last_seen_contents = Some(contents.clone());
+            self.last_seen_metadata = Some(metadata.clone());
         }
 
         // In order to avoid replaying transactions over and over on subsequent calls to db(),
         // we need to keep track of our place in the transaction log.
-        let mut last_known_tx: i64 = self.last_known_tx.unwrap_or_else(|| contents.last_indexed_tx);
+        let mut last_known_tx: i64 = self.last_known_tx.unwrap_or_else(|| metadata.last_indexed_tx);
 
         let mut db = self.latest_db.clone().unwrap_or_else(|| Db {
             store: self.store.clone(),
-            schema: contents.schema.clone(),
-            eav: Index::new(contents.eav.clone(), self.store.clone(), EAVT),
-            ave: Index::new(contents.ave.clone(), self.store.clone(), AVET),
-            aev: Index::new(contents.aev.clone(), self.store.clone(), AEVT),
-            vae: Index::new(contents.vae, self.store.clone(), VAET),
+            schema: metadata.schema.clone(),
+            eav: Index::new(metadata.eav.clone(), self.store.clone(), EAVT),
+            ave: Index::new(metadata.ave.clone(), self.store.clone(), AVET),
+            aev: Index::new(metadata.aev.clone(), self.store.clone(), AEVT),
+            vae: Index::new(metadata.vae, self.store.clone(), VAET),
         });
 
         // Read in latest transactions from the log.
