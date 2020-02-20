@@ -3,7 +3,7 @@ use std::collections::HashMap;
 use std::fmt::Debug;
 
 use super::KVStore;
-use conn::TxClient;
+use conn::TxLocation;
 use tx;
 use Result;
 
@@ -21,7 +21,7 @@ impl HeapStore {
             log: Arc::new(Mutex::new(Vec::new())),
         };
 
-        store.set_transactor(&TxClient::Local).unwrap();
+        store.set_tx_location(&TxLocation::Local).unwrap();
 
         // Initialize the metadata of the store. Gross & complected.
         let _ = tx::Transactor::new(Arc::new(store.clone()));

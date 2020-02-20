@@ -11,9 +11,46 @@ use index::Index;
 use tx;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TxClient {
+pub enum TxLocation {
     Network(SocketAddr),
     Local,
+}
+
+pub struct TxClient {
+    tx_location: TxLocation,
+    _store: Arc<dyn KVStore>,
+}
+
+impl TxClient {
+    fn new(store: Arc<dyn KVStore>) -> Result<TxClient> {
+        let tx_location = store.get_tx_location()?;
+        Ok(TxClient { tx_location, _store: store })
+    }
+
+    fn transact(&self, tx: Tx) -> Result<TxReport> {
+        match self.tx_location {
+            TxLocation::Network(_addr) => {
+                unimplemented!()
+                // let mut core = Core::new().unwrap();
+                // let handle = core.handle();
+                // let client = TcpClient::new(LineProto).connect(&addr, &handle);
+
+                // core.run(client.and_then(|client| client.call(tx)))
+                //     .unwrap_or_else(|e| Err(Error(e.to_string())))
+            }
+            TxLocation::Local => {
+                let store = self._store.clone();
+                #[allow(unused_variables)]
+                let l = TX_LOCK.lock()?;
+                let mut transactor = tx::Transactor::new(store)?;
+                let result = transactor.process_tx(tx);
+                Ok(match result {
+                    Ok(new_entities) => TxReport::Success { new_entities },
+                    Err(e) => TxReport::Failure(format!("{:?}", e)),
+                })
+            }
+        }
+    }
 }
 
 // We need a way to ensure, for local stores, that only one thread is
@@ -24,17 +61,26 @@ lazy_static! {
 }
 
 pub struct Conn {
-    transactor: TxClient,
+    tx_client: TxClient,
     store: Arc<dyn KVStore>,
     latest_db: Option<Db>,
     last_known_tx: Option<i64>,
     last_seen_metadata: Option<DbMetadata>,
 }
 
+// TODO: conn should have a way of subscribing to transactions
+// so that it can play them against the db eagerly instead of only
+// when a db is requested
 impl Conn {
     pub fn new(store: Arc<dyn KVStore>) -> Result<Conn> {
-        let transactor = store.get_transactor()?;
-        Ok(Conn { transactor, store, latest_db: None, last_known_tx: None, last_seen_metadata: None })
+        let tx_client = TxClient::new(store.clone())?;
+        Ok(Conn {
+            tx_client,
+            store,
+            latest_db: None,
+            last_known_tx: None,
+            last_seen_metadata: None
+        })
     }
 
     pub fn db(&mut self) -> Result<Db> {
@@ -76,28 +122,7 @@ impl Conn {
     }
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
-        match self.transactor {
-            TxClient::Network(_addr) => {
-                unimplemented!()
-                // let mut core = Core::new().unwrap();
-                // let handle = core.handle();
-                // let client = TcpClient::new(LineProto).connect(&addr, &handle);
-
-                // core.run(client.and_then(|client| client.call(tx)))
-                //     .unwrap_or_else(|e| Err(Error(e.to_string())))
-            }
-            TxClient::Local => {
-                let store = self.store.clone();
-                #[allow(unused_variables)]
-                let l = TX_LOCK.lock()?;
-                let mut transactor = tx::Transactor::new(store)?;
-                let result = transactor.process_tx(tx);
-                Ok(match result {
-                    Ok(new_entities) => TxReport::Success { new_entities },
-                    Err(e) => TxReport::Failure(format!("{:?}", e)),
-                })
-            }
-        }
+        self.tx_client.transact(tx)
     }
 }
 

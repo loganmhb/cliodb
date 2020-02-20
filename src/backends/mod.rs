@@ -7,7 +7,7 @@ use std::marker::{Send, Sync};
 use rmp_serde::{Serializer, Deserializer};
 use serde::{Serialize, Deserialize};
 
-use conn::TxClient;
+use conn::TxLocation;
 use db::DbMetadata;
 use tx::TxRaw;
 use super::Result;
@@ -41,15 +41,15 @@ pub trait KVStore: Send + Sync {
         self.set("db_metadata", &buf)
     }
 
-    fn get_transactor(&self) -> Result<TxClient> {
+    fn get_tx_location(&self) -> Result<TxLocation> {
         let serialized = self.get("transactor")?;
         let mut de = Deserializer::new(&serialized[..]);
-        let transactor: TxClient = Deserialize::deserialize(&mut de)?;
+        let transactor: TxLocation = Deserialize::deserialize(&mut de)?;
 
         Ok(transactor.clone())
     }
 
-    fn set_transactor(&self, transactor: &TxClient) -> Result<()> {
+    fn set_tx_location(&self, transactor: &TxLocation) -> Result<()> {
         let mut buf = Vec::new();
         transactor.serialize(&mut Serializer::new(&mut buf))?;
 

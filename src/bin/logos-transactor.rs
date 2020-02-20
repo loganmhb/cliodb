@@ -6,7 +6,7 @@ use std::str::FromStr;
 use std::sync::{Arc, Mutex};
 use std::thread;
 
-use logos::conn::{store_from_uri, TxClient};
+use logos::conn::{store_from_uri, TxLocation};
 use logos::tx::{Transactor, TxHandle};
 //use logos::network::{LineProto, TransactorService};
 
@@ -37,7 +37,7 @@ fn main() {
     let store = store_from_uri(uri).expect("could not use backing store");
     let addr = SocketAddr::from_str("127.0.0.1:10405").unwrap();
     store
-        .set_transactor(&TxClient::Network(addr.clone()))
+        .set_tx_location(&TxLocation::Network(addr.clone()))
         .unwrap();
 
     let mut transactor = Transactor::new(store).expect("could not create transactor");

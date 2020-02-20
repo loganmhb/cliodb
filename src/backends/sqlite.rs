@@ -39,6 +39,7 @@ impl KVStore for SqliteStore {
             .unwrap();
         stmt.query_map(sql::params![key], |row| {
             let r: Option<Vec<u8>> = row.get(0).unwrap();
+            // FIXME: should not unwrap here. Really get should return Result<Option<Vec<u8>>>.
             Ok(r.unwrap())
         })
             .and_then(|mut rows| rows.next().unwrap())
