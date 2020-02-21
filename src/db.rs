@@ -259,14 +259,14 @@ impl Db {
     /// Add a record to the database. Does not validate that the fact
     /// fits the schema, in order to allow bootstrapping.
     pub fn add_record(&self, record: Record) -> Result<Db> {
-        // TODO: check schema
         let new_eav = self.eav.insert(record.clone());
         let new_ave = self.ave.insert(record.clone());
         let new_aev = self.aev.insert(record.clone());
         let new_vae = self.vae.insert(record.clone());
 
+        // If the record modifies a schema attribute, we need to update the schema.
         let mut new_schema = self.schema.clone();
-        if record.attribute == *self.schema.idents.get("db:ident").expect("db:ident not in ident map") {
+        if record.attribute == *self.schema.idents.get("db:ident").expect("`db:ident` not in ident map") {
             match record.value {
                 Value::Ident(ref s) => new_schema = new_schema.add_ident(record.entity, s.clone()),
                 _ => return Err("db:ident value must be an ident".into()),
@@ -291,6 +291,19 @@ impl Db {
             new_schema = new_schema.add_value_type(record.entity, value_type);
         };
 
+        if record.attribute == *self.schema.idents.get("db:indexed").unwrap() {
+            let indexed = match record.value {
+                Value::Boolean(b) => b,
+                v => return Err(format!("invalid value type {:?} passed with db:indexed", v).into())
+            };
+
+            if indexed {
+                new_schema = new_schema.add_indexed(record.attribute);
+            } else {
+                new_schema = new_schema.remove_indexed(&record.attribute);
+            }
+        }
+
         Ok(Db {
             eav: new_eav,
             ave: new_ave,
@@ -301,6 +314,7 @@ impl Db {
         })
     }
 
+    /// Add a record to the DB, validating that it matches the schema.
     pub fn add(&self, fact: Fact, tx_entity: Entity) -> Result<(Db, Record)> {
         let attr = match self.schema.idents.get(&fact.attribute) {
             Some(a) => a,

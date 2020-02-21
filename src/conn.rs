@@ -28,7 +28,6 @@ impl Conn {
     ) -> Result<Conn> {
         let socket = context.socket(zmq::REQ)?;
         socket.connect(transactor_address)?;
-        println!("connected to {}", transactor_address);
         Ok(Conn {
             socket,
             store,

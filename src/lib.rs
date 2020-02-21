@@ -321,10 +321,10 @@ pub mod tests {
         let tx_address = "inproc://transactor";
         let conn = Conn::new(store, tx_address, context).unwrap();
         let records = vec![
-            Fact::new(Entity(10), "name", Value::String("Bob".into())),
-            Fact::new(Entity(11), "name", Value::String("John".into())),
-            Fact::new(Entity(12), "Hello", Value::String("World".into())),
-            Fact::new(Entity(11), "parent", Entity(10)),
+            Fact::new(Entity(11), "name", Value::String("Bob".into())),
+            Fact::new(Entity(12), "name", Value::String("John".into())),
+            Fact::new(Entity(13), "Hello", Value::String("World".into())),
+            Fact::new(Entity(12), "parent", Entity(11)),
         ];
 
         parse_tx(
@@ -365,7 +365,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("a")],
                 vec![
-                    vec![Value::Entity(Entity(10))],
+                    vec![Value::Entity(Entity(11))],
                 ],
             ),
         );
@@ -375,7 +375,7 @@ pub mod tests {
     fn test_query_unknown_value() {
         // find ?a where (0 name ?a)
         expect_query_result(
-            parse_query("find ?a where (10 name ?a)").unwrap(),
+            parse_query("find ?a where (11 name ?a)").unwrap(),
             Relation(
                 vec![Var::new("a")],
                 vec![vec![Value::String("Bob".into())]],
@@ -406,8 +406,8 @@ pub mod tests {
             Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
-                    vec![Value::Entity(Entity(11)), Value::String("John".into())]
+                    vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
+                    vec![Value::Entity(Entity(12)), Value::String("John".into())]
                 ],
             ),
         );
@@ -421,7 +421,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
+                    vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
                 ],
             ),
         );
@@ -434,7 +434,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(11))]
+                    vec![Value::Entity(Entity(12))]
                 ],
             ),
         );
@@ -467,7 +467,7 @@ pub mod tests {
     #[test]
     fn test_retractions() {
         with_test_conn!(conn {
-            conn.transact(parse_tx("retract (11 parent 10)").unwrap())
+            conn.transact(parse_tx("retract (12 parent 11)").unwrap())
                 .unwrap();
             let db = conn.db().unwrap();
             let q = parse_query("find ?a ?b where (?a parent ?b)").unwrap();
@@ -499,7 +499,7 @@ pub mod tests {
                 .unwrap()
                 .unwrap();
 
-            let mut e = 0;
+            let mut e = 100;
 
             b.iter(|| {
                 let entity = Entity(e);
@@ -587,7 +587,7 @@ pub mod tests {
                 .unwrap();
             assert_eq!(matching.len(), 1);
             let rec = &matching[0];
-            assert_eq!(rec.entity, Entity(10));
+            assert_eq!(rec.entity, Entity(11));
             assert_eq!(rec.value, Value::String("Bob".into()));
         })
     }
@@ -607,8 +607,8 @@ pub mod tests {
             let relation = db.fetch(&clause).unwrap();
             assert_eq!(relation.0, vec!["e".into(), "n".into()]);
             assert_eq!(relation.1, vec![
-                vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
-                vec![Value::Entity(Entity(11)), Value::String("John".into())]
+                vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
+                vec![Value::Entity(Entity(12)), Value::String("John".into())]
             ]);
         })
     }

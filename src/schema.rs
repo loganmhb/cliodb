@@ -54,6 +54,18 @@ impl Schema {
         self.indexed.contains(&entity)
     }
 
+    pub fn add_indexed(&self, entity: Entity) -> Schema {
+        let mut new = self.clone();
+        new.indexed.insert(entity);
+        new
+    }
+
+    pub fn remove_indexed(&self, entity: &Entity) -> Schema {
+        let mut new = self.clone();
+        new.indexed.remove(entity);
+        new
+    }
+
     pub fn empty() -> Schema {
         Schema {
             idents: HashMap::new(),

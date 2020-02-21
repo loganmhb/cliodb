@@ -44,10 +44,13 @@ impl TransactorService {
             loop {
                 let msg = match socket.recv_bytes(0) {
                     Ok(msg) => msg,
-                    Err(e) => {
-                        println!("error recv'ing bytes! {}", e);
+                    Err(zmq::Error::ETERM) => {
                         break;
                     },
+                    Err(e) => {
+                        println!("unexpected error recving bytes: {}", e);
+                        break;
+                    }
                 };
                 let tx_request: Tx = rmp_serde::from_read_ref(&msg).unwrap();
                 let result = tx_handle.transact(tx_request).unwrap();

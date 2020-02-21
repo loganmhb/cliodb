@@ -118,7 +118,7 @@ impl Transactor {
             // FIXME: this should happen if metadata is None, not on error
             Err(_) => {
                 let mut tx = Transactor {
-                    next_id: 8,
+                    next_id: 10,
                     store: store.clone(),
                     latest_tx: 0,
                     last_indexed_tx: -1,
@@ -351,6 +351,7 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
     let mut db = Db::new(metadata, store);
     db.schema = db.schema.add_ident(Entity(1), "db:ident".to_string());
     db.schema = db.schema.add_ident(Entity(3), "db:valueType".to_string());
+    db.schema = db.schema.add_ident(Entity(9), "db:indexed".to_string());
 
     db.schema = db.schema.add_value_type(Entity(1), ValueType::Ident);
     db.schema = db.schema.add_value_type(Entity(3), ValueType::Ident);
