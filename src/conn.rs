@@ -5,7 +5,6 @@ use rmp_serde;
 use {Result, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
 use backends::sqlite::SqliteStore;
-use backends::mem::HeapStore;
 use backends::mysql::MysqlStore;
 use db::{Db, DbMetadata};
 use index::Index;
@@ -86,7 +85,6 @@ impl Conn {
 
 pub fn store_from_uri(uri: &str) -> Result<Arc<dyn KVStore>> {
     match &uri.split("//").collect::<Vec<_>>()[..] {
-        &["logos:mem:", _] => Ok(Arc::new(HeapStore::new::<Record>()) as Arc<dyn KVStore>),
         &["logos:sqlite:", path] => {
             let sqlite_store = SqliteStore::new(path)?;
             Ok(Arc::new(sqlite_store) as Arc<dyn KVStore>)

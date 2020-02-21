@@ -1,5 +1,4 @@
 pub mod sqlite;
-pub mod mem;
 pub mod mysql;
 
 use std::marker::{Send, Sync};

@@ -125,12 +125,12 @@ mod tests {
     use super::*;
     use std::sync::Arc;
     use itertools::assert_equal;
-    use backends::mem::HeapStore;
+    use backends::sqlite::SqliteStore;
     use durable_tree::{DurableTree};
 
     #[test]
     fn test_rebuild() {
-        let store = Arc::new(HeapStore::new::<i64>());
+        let store = Arc::new(SqliteStore::new(":memory:").unwrap());
         let root_ref = DurableTree::create(store.clone(), NumComparator).unwrap().root;
         let mut index = Index::new(root_ref, store, NumComparator);
 
@@ -144,7 +144,7 @@ mod tests {
 
     #[test]
     fn test_deduplication() {
-        let store = Arc::new(HeapStore::new::<i64>());
+        let store = Arc::new(SqliteStore::new(":memory:").unwrap());
         let root_ref = DurableTree::create(store.clone(), NumComparator).unwrap().root;
         let index = Index::new(root_ref, store, NumComparator)
             .insert(1)

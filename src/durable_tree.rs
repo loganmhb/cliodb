@@ -639,14 +639,14 @@ where T: Equivalent + Clone + Debug + DeserializeOwned + Serialize,
 #[cfg(test)]
 mod tests {
     use super::*;
-    use backends::mem::HeapStore;
     use itertools::assert_equal;
     use index::NumComparator;
+    use backends::sqlite::SqliteStore;
     extern crate test;
     use self::test::{Bencher};
 
     fn test_tree<I: Clone + Iterator<Item = i64>>(iter: I) -> DurableTree<i64, NumComparator> {
-        let store = Arc::new(HeapStore::new::<i64>());
+        let store = Arc::new(SqliteStore::new(":memory:").unwrap());
         let node_store = NodeStore::new(store.clone());
 
         DurableTree::build_from_iter(node_store.clone(), iter.clone(), NumComparator).unwrap()
@@ -725,7 +725,7 @@ mod tests {
     #[test]
     #[ignore]
     fn test_node_height() {
-        let store = Arc::new(HeapStore::new::<i64>());
+        let store = Arc::new(SqliteStore::new(":memory:").unwrap());
         let node_store = NodeStore {
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store.clone(),
