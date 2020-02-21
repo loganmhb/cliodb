@@ -489,9 +489,15 @@ where
 
     fn add_node(&self, node: &Node<T>) -> Result<String> {
         let buf = rmp_serde::to_vec(node)?;
+        let mut encoded = Vec::new();
+
+        {
+            let mut encoder = snap::write::FrameEncoder::new(&mut encoded);
+            std::io::copy(&mut &buf[..], &mut encoder)?;
+        }
 
         let key: String = Uuid::new_v4().to_string();
-        self.store.set(&key, &buf)?;
+        self.store.set(&key, &encoded)?;
         Ok(key)
     }
 
@@ -502,7 +508,10 @@ where
         match res {
             Some(node) => Ok(node.clone()),
             None => {
-                let serialized = self.store.get(key)?.to_owned();
+                let compressed = self.store.get(key)?;
+                let mut serialized = Vec::new();
+                let mut decoder = snap::read::FrameDecoder::new(&compressed[..]);
+                std::io::copy(&mut decoder, &mut serialized)?;
                 let value: Node<T> = rmp_serde::from_read_ref(&serialized)?;
                 let node: Arc<Node<T>> = Arc::new(value.clone());
                 cache.insert(key.to_string(), node.clone());
