@@ -55,8 +55,7 @@ impl Db {
     fn ident_entity(&self, ident: &Ident) -> Option<Entity> {
         match ident {
             &Ident::Entity(e) => Some(e),
-            // FIXME: shouldn't need to clone, should be copyable
-            &Ident::Name(ref name) => self.schema.idents.get(name).map(|e| e.clone())
+            &Ident::Name(ref name) => self.schema.idents.get(name).map(|e| *e)
         }
     }
 
@@ -64,26 +63,35 @@ impl Db {
     pub fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
         let expanded = clause.substitute(binding)?;
         match expanded {
-            // ?e a v => use the ave index
+            // ?e a v => use the vae index if value is indexed, otherwise aev
             // FIXME: should use VAE if value is indexed
             Clause {
                 entity: Term::Unbound(_),
                 attribute: Term::Bound(a),
                 value: Term::Bound(v),
             } => {
-                match self.ident_entity(&a) {
-                    Some(attr) => {
-                        let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
-                        Ok(
-                            self.ave
-                                .range_from(range_start)
-                                .take_while(|rec| rec.attribute == attr && rec.value == v)
-                                .collect(),
-                        )
-                    }
-                    _ => return Err("invalid attribute".into()),
+                let attr = self.ident_entity(&a).ok_or(format!("invalid attribute: {:?}", a))?;
+                let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
+
+
+                if self.schema.is_indexed(attr) {
+                    Ok(
+                        self.aev
+                            .range_from(range_start)
+                            .take_while(|rec| rec.attribute == attr && rec.value == v)
+                            .collect()
+                    )
+                } else {
+                    Ok(
+                        self.vae
+                            .range_from(range_start)
+                            .take_while(|rec| rec.attribute == attr && rec.value == v)
+                            .collect()
+                    )
                 }
+
             }
+
             // e a ?v => use the eav index
             // FIXME: should use AEV index if looking up many entities with the same attribute
             // (for cache locality)
@@ -273,6 +281,7 @@ impl Db {
                         "db:type:ident" => ValueType::Ident,
                         "db:type:timestamp" => ValueType::Timestamp,
                         "db:type:entity" => ValueType::Entity,
+                        "db:type:boolean" => ValueType::Boolean,
                         _ => return Err(format!("{} is not a valid primitive type", s).into()),
                     }
                 },
@@ -303,6 +312,7 @@ impl Db {
             Value::Entity(_) => ValueType::Entity,
             Value::Timestamp(_) => ValueType::Timestamp,
             Value::Ident(_) => ValueType::Ident,
+            Value::Boolean(_) => ValueType::Boolean,
         };
 
         match self.schema.value_types.get(&attr) {
@@ -334,6 +344,7 @@ impl Db {
             Value::Entity(_) => ValueType::Entity,
             Value::Timestamp(_) => ValueType::Timestamp,
             Value::Ident(_) => ValueType::Ident,
+            Value::Boolean(_) => ValueType::Boolean,
         };
 
         match self.schema.value_types.get(&attr) {

@@ -139,6 +139,7 @@ pub enum Value {
     Entity(Entity),
     // FIXME: clock drift is an issue here
     Timestamp(DateTime<Utc>),
+    Boolean(bool),
 }
 
 impl Display for Value {
@@ -151,6 +152,7 @@ impl Display for Value {
                 Value::String(ref s) => format!("\"{}\"", s),
                 Value::Ident(ref s) => format!("{}", s),
                 Value::Timestamp(t) => format!("{}", t),
+                Value::Boolean(b) => format!("{}", b),
             }
         )
     }
@@ -285,7 +287,6 @@ pub mod tests {
     use self::test::{Bencher, black_box};
 
     use conn::{Conn, store_from_uri};
-    use db::Db;
     use queries::query::Query;
     use queries::execution::query;
     use server::TransactorService;

@@ -1,5 +1,5 @@
 use serde::{Serialize, Deserialize};
-use im::HashMap;
+use im::{HashMap, HashSet};
 use super::{Entity};
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -8,6 +8,7 @@ pub enum ValueType {
     Ident,
     Entity,
     Timestamp,
+    Boolean
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]
@@ -21,6 +22,7 @@ pub struct Schema {
     pub idents: HashMap<String, Entity>,
     pub value_types: HashMap<Entity, ValueType>,
     pub cardinalities: HashMap<Entity, Cardinality>,
+    pub indexed: HashSet<Entity>,
 }
 
 impl Schema {
@@ -42,11 +44,22 @@ impl Schema {
         new
     }
 
+    pub fn index_attribute(&self, entity: Entity) -> Schema {
+        let mut new = self.clone();
+        new.indexed.insert(entity);
+        new
+    }
+
+    pub fn is_indexed(&self, entity: Entity) -> bool {
+        self.indexed.contains(&entity)
+    }
+
     pub fn empty() -> Schema {
         Schema {
             idents: HashMap::new(),
             value_types: HashMap::new(),
             cardinalities: HashMap::new(),
+            indexed: HashSet::new(),
         }
     }
 }

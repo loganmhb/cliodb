@@ -433,6 +433,24 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
         ),
     )?;
 
+    db = db.add_record(
+        Record::addition(
+            Entity(8),
+            Entity(1),
+            Value::Ident("db:type:boolean".into()),
+            Entity(0),
+        ),
+    )?;
+
+    db = db.add_record(
+        Record::addition(
+            Entity(9),
+            Entity(1),
+            Value::Ident("db:indexed".into()),
+            Entity(0),
+        )
+    )?;
+
     // Value type for the db:ident attribute
     db = db.add_record(
         Record::addition(
@@ -459,7 +477,17 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
             Entity(2),
             Entity(3),
             Value::Ident("db:type:timestamp".into()),
-            Entity(0)
+            Entity(0),
+        )
+    )?;
+
+    // Value type for the db:indexed attribute
+    db = db.add_record(
+        Record::addition(
+            Entity(8),
+            Entity(3),
+            Value::Ident("db:type:boolean".into()),
+            Entity(0),
         )
     )?;
 

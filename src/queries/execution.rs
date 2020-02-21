@@ -10,7 +10,6 @@ pub fn query(q: Query, db: &Db) -> Result<Relation> {
 }
 
 fn execute_plan(plan: &Plan, db: &Db) -> Result<Relation> {
-    // TODO: apply constraints?
     match plan {
         Plan::Join(plan_a, plan_b) => {
             // join the two relations:
