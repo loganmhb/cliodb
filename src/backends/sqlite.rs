@@ -64,7 +64,6 @@ impl KVStore for SqliteStore {
         let results: Vec<TxRaw> = stmt.query_map(sql::params![&from], |ref row| {
             let maybe_bytes: Option<Vec<u8>> = row.get(1).unwrap();
             let bytes = maybe_bytes.unwrap();
-            println!("got bytes from row");
             let res: Vec<Record> = rmp_serde::from_read_ref(&bytes).expect("corrupt data");
             let id: i64 = row.get(0).unwrap();
             Ok(TxRaw {
