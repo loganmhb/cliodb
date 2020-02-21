@@ -2,7 +2,7 @@ use std::sync::{Arc};
 
 use rmp_serde;
 
-use {Result, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
+use {Result, Tx, TxReport, Entity, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
 use backends::sqlite::SqliteStore;
 use backends::mysql::MysqlStore;
