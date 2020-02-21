@@ -1,6 +1,7 @@
 use super::*;
 
 use std::sync::Arc;
+use serde::{Serialize, Deserialize};
 
 use im::HashMap;
 use {Result, EAVT, AEVT, AVET, VAET};
@@ -59,7 +60,8 @@ impl Db {
         }
     }
 
-    fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
+    // FIXME: make private
+    pub fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
         let expanded = clause.substitute(binding)?;
         match expanded {
             // ?e a v => use the ave index
@@ -349,45 +351,5 @@ impl Db {
             },
             None => return Err(format!("ident {:?} is not a valid attribute", fact.attribute).into())
         }
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tests::test_db;
-
-    #[test]
-    fn test_records_matching() {
-        let matching = test_db()
-            .records_matching(
-                &Clause::new(
-                    Term::Unbound("e".into()),
-                    Term::Bound(Ident::Name("name".into())),
-                    Term::Bound(Value::String("Bob".into())),
-                ),
-                &Binding::default(),
-            )
-            .unwrap();
-        assert_eq!(matching.len(), 1);
-        let rec = &matching[0];
-        assert_eq!(rec.entity, Entity(10));
-        assert_eq!(rec.value, Value::String("Bob".into()));
-    }
-
-    #[test]
-    fn test_fetch() {
-        let name_entity = *test_db().schema.idents.get("name").unwrap();
-        let clause = query::Clause::new(
-            Term::Unbound("e".into()),
-            Term::Bound(Ident::Entity(name_entity)),
-            Term::Unbound("n".into()),
-        );
-        let relation = test_db().fetch(&clause).unwrap();
-        assert_eq!(relation.0, vec!["e".into(), "n".into()]);
-        assert_eq!(relation.1, vec![
-            vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
-            vec![Value::Entity(Entity(11)), Value::String("John".into())]
-        ]);
     }
 }

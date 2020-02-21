@@ -2,7 +2,8 @@ use std::cmp::Ordering;
 use std::fmt::Debug;
 use std::sync::Arc;
 
-use serde::{Serialize, Deserialize};
+use serde::Serialize;
+use serde::de::DeserializeOwned;
 use itertools::Itertools;
 
 use backends::KVStore;
@@ -33,9 +34,9 @@ where
     durable_index: DurableTree<T, C>,
 }
 
-impl<'de, T, C> Index<T, C>
+impl<T, C> Index<T, C>
 where
-    T: Equivalent + Debug + Ord + Clone + Serialize + Deserialize<'de>,
+    T: Equivalent + Debug + Ord + Clone + Serialize + DeserializeOwned,
     C: Comparator<Item = T> + Copy,
 {
     pub fn new(root_ref: String, store: Arc<dyn KVStore>, comparator: C) -> Index<T, C> {
@@ -90,7 +91,7 @@ where
         Index {
             durable_index: self.durable_index.rebuild_with_novelty(
                 self.mem_index.iter()
-            ).unwrap(),
+            ).expect("error rebuilding durable index"),
             mem_index: RBTree::new(self._comparator),
             ..self.clone()
         }

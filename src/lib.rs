@@ -8,8 +8,6 @@ extern crate combine;
 extern crate prettytable as pt;
 extern crate chrono;
 
-#[macro_use]
-extern crate serde_derive;
 extern crate serde;
 extern crate rmp_serde;
 
@@ -20,12 +18,7 @@ extern crate mysql;
 extern crate lru_cache;
 extern crate uuid;
 
-extern crate bytes;
-extern crate futures;
-extern crate tokio;
-
-#[macro_use]
-extern crate lazy_static;
+extern crate zmq;
 
 #[cfg(test)]
 #[macro_use]
@@ -39,13 +32,15 @@ use std::iter;
 use std::ops::RangeBounds;
 use std::result;
 
+use serde::{Serialize, Deserialize};
+
 pub mod db;
 pub mod parser;
 pub mod index;
 pub mod backends;
 pub mod tx;
-//pub mod network;
 pub mod conn;
+pub mod server;
 mod schema;
 mod queries;
 mod rbtree;
@@ -288,23 +283,41 @@ pub mod tests {
     extern crate test;
     use self::test::{Bencher, black_box};
 
-    use std::sync::Arc;
-
-    use backends::mem::HeapStore;
-    use conn::Conn;
+    use conn::{Conn, store_from_uri};
     use db::Db;
     use queries::query::Query;
     use queries::execution::query;
+    use server::TransactorService;
 
-    fn expect_query_result(q: Query, expected: Relation) {
-        let db = test_db();
-        let result = query(q, &db).unwrap();
-        assert_eq!(expected, result);
+    // FIXME: conn should just have a way to run a local transactor
+    macro_rules! with_test_conn {
+        ( $conn:ident $body:block ) => { {
+            let context = zmq::Context::new();
+            let mut server = TransactorService::new("logos:sqlite://file::memory:?cache=shared", &context).unwrap();
+            let join_handle = server.listen("inproc://transactor");
+            {
+                // Need a new scope to make sure the conn is dropped
+                // before we try to close the ZMQ context.
+                let mut $conn = test_conn(context);
+                $body;
+            }
+            server.close();
+            join_handle.join().unwrap();
+        } }
     }
 
-    fn test_conn() -> Conn {
-        let store = HeapStore::new::<Record>();
-        let conn = Conn::new(Arc::new(store)).unwrap();
+    fn expect_query_result(q: Query, expected: Relation) {
+        with_test_conn!(conn {
+            let db = conn.db().unwrap();
+            let result = query(q, &db).unwrap();
+            assert_eq!(expected, result);
+        })
+    }
+
+    fn test_conn(context: zmq::Context) -> Conn {
+        let store = store_from_uri("logos:sqlite://file::memory:?cache=shared").unwrap();
+        let tx_address = "inproc://transactor";
+        let conn = Conn::new(store, tx_address, context).unwrap();
         let records = vec![
             Fact::new(Entity(10), "name", Value::String("Bob".into())),
             Fact::new(Entity(11), "name", Value::String("John".into())),
@@ -340,10 +353,6 @@ pub mod tests {
             .unwrap();
 
         conn
-    }
-
-    pub fn test_db() -> Db {
-        test_conn().db().unwrap()
     }
 
     #[test]
@@ -446,24 +455,27 @@ pub mod tests {
 
     #[test]
     fn test_type_mismatch() {
-        let db = test_db();
-        let q = parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
-        assert_equal(query(q, &db), Err("type mismatch".to_string()))
+        with_test_conn!(conn {
+            let db = conn.db().unwrap();
+            let q = parse_query("find ?e ?n where (?e name ?n) (?n name \"hi\")").unwrap();
+            assert_equal(query(q, &db), Err("type mismatch".to_string()))
+        })
     }
 
     #[test]
     fn test_retractions() {
-        let mut conn = test_conn();
-        conn.transact(parse_tx("retract (11 parent 10)").unwrap())
-            .unwrap();
-        let db = conn.db().unwrap();
-        let q = parse_query("find ?a ?b where (?a parent ?b)").unwrap();
-        let result = query(q, &db).unwrap();
+        with_test_conn!(conn {
+            conn.transact(parse_tx("retract (11 parent 10)").unwrap())
+                .unwrap();
+            let db = conn.db().unwrap();
+            let q = parse_query("find ?a ?b where (?a parent ?b)").unwrap();
+            let result = query(q, &db).unwrap();
 
-        assert_eq!(
-            result,
-            Relation(vec![Var::new("a"), Var::new("b")], vec![])
-        );
+            assert_eq!(
+                result,
+                Relation(vec![Var::new("a"), Var::new("b")], vec![])
+            );
+        })
     }
 
     #[bench]
@@ -478,66 +490,26 @@ pub mod tests {
     }
 
     #[bench]
-    // Parse + run a query on a small db
-    fn run_bench(b: &mut Bencher) {
-        // the implicit join query
-        let input = black_box(
-            r#"find ?c where (?a name "Bob") (?b name ?c) (?b parent ?a)"#,
-        );
-        let q= parse_query(input).unwrap();
-        let db = test_db();
-
-        b.iter(|| query(q.clone(), &db));
-    }
-
-    #[bench]
     fn bench_add(b: &mut Bencher) {
-        let store = HeapStore::new::<Record>();
-        let conn = Conn::new(Arc::new(store)).unwrap();
-        parse_tx("{db:ident blah}")
-            .map(|tx| conn.transact(tx))
-            .unwrap()
-            .unwrap();
+        with_test_conn!(conn {
+            parse_tx("{db:ident blah}")
+                .map(|tx| conn.transact(tx))
+                .unwrap()
+                .unwrap();
 
-        let mut e = 0;
+            let mut e = 0;
 
-        b.iter(|| {
-            let entity = Entity(e);
-            e += 1;
+            b.iter(|| {
+                let entity = Entity(e);
+                e += 1;
 
-            conn.transact(Tx {
-                items: vec![
-                    TxItem::Addition(Fact::new(entity, "blah", Value::Entity(entity))),
-                ],
-            }).unwrap();
-        });
-    }
-
-    fn test_db_large() -> Db {
-        let store = HeapStore::new::<Record>();
-        let mut conn = Conn::new(Arc::new(store)).unwrap();
-        let n = 10_000;
-
-        parse_tx("{db:ident name} {db:ident Hello}")
-            .map_err(|e| e.into())
-            .and_then(|tx| conn.transact(tx))
-            .unwrap();
-
-        for i in (0..n).into_iter() {
-            let a = if i % 23 <= 10 {
-                "name".to_string()
-            } else {
-                "Hello".to_string()
-            };
-
-            let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
-
-            conn.transact(Tx {
-                items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))],
-            }).unwrap();
-        }
-
-        conn.db().unwrap()
+                conn.transact(Tx {
+                    items: vec![
+                        TxItem::Addition(Fact::new(entity, "blah", Value::Entity(entity))),
+                    ],
+                }).unwrap();
+            });
+        })
     }
 
     #[test]
@@ -567,9 +539,75 @@ pub mod tests {
         // Don't run on 'cargo test', only 'cargo bench'
         if cfg!(not(debug_assertions)) {
             let q = black_box(parse_query(r#"find ?a where (?a name "Bob")"#).unwrap());
-            let db = test_db_large();
+            with_test_conn!(conn {
+                let n = 10_000;
 
-            b.iter(|| query(q.clone(), &db).unwrap());
+                parse_tx("{db:ident name} {db:ident Hello}")
+                    .map_err(|e| e.into())
+                    .and_then(|tx| conn.transact(tx))
+                    .unwrap();
+
+                for i in (0..n).into_iter() {
+                    let a = if i % 23 <= 10 {
+                        "name".to_string()
+                    } else {
+                        "Hello".to_string()
+                    };
+
+                    let v = if i % 1123 == 0 { "Bob" } else { "Rob" };
+
+                    conn.transact(Tx {
+                        items: vec![TxItem::Addition(Fact::new(Entity(i), a, v))],
+                    }).unwrap();
+                }
+
+                let db = conn.db().unwrap();
+
+                b.iter(|| query(q.clone(), &db).unwrap());
+            });
         }
+    }
+
+
+    // tests moved from db.rs, tbd if they can be moved back
+    #[test]
+    fn test_records_matching() {
+        with_test_conn!(conn {
+            let db = conn.db().unwrap();
+            let matching = db.records_matching(
+                    &Clause::new(
+                        Term::Unbound("e".into()),
+                        Term::Bound(Ident::Name("name".into())),
+                        Term::Bound(Value::String("Bob".into())),
+                    ),
+                    &Binding::default(),
+                )
+                .unwrap();
+            assert_eq!(matching.len(), 1);
+            let rec = &matching[0];
+            assert_eq!(rec.entity, Entity(10));
+            assert_eq!(rec.value, Value::String("Bob".into()));
+        })
+    }
+
+    #[test]
+    fn test_fetch() {
+        use queries::query;
+        with_test_conn!(conn {
+            let db = conn.db().unwrap();
+            let name_entity = *db.schema.idents.get("name").unwrap();
+            let clause = query::Clause::new(
+                Term::Unbound("e".into()),
+                Term::Bound(Ident::Entity(name_entity)),
+                Term::Unbound("n".into()),
+            );
+
+            let relation = db.fetch(&clause).unwrap();
+            assert_eq!(relation.0, vec!["e".into(), "n".into()]);
+            assert_eq!(relation.1, vec![
+                vec![Value::Entity(Entity(10)), Value::String("Bob".into())],
+                vec![Value::Entity(Entity(11)), Value::String("John".into())]
+            ]);
+        })
     }
 }

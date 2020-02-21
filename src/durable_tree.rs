@@ -7,7 +7,7 @@ use std::sync::{Arc, Mutex};
 use itertools::Itertools;
 use lru_cache::LruCache;
 use serde::{Serialize, Deserialize};
-use rmp_serde::{Serializer, Deserializer};
+use serde::de::DeserializeOwned;
 use uuid::Uuid;
 
 use backends::KVStore;
@@ -80,9 +80,9 @@ pub struct DurableTree<T, C> {
     _comparator: C,
 }
 
-impl<'de, T, C> DurableTree<T, C>
+impl<T, C> DurableTree<T, C>
 where
-    T: Equivalent + Serialize + Deserialize<'de> + Clone + Debug,
+    T: Equivalent + Serialize + DeserializeOwned + Clone + Debug,
     C: Comparator<Item = T>,
 {
     pub fn create(store: Arc<dyn KVStore>, comparator: C) -> Result<DurableTree<T, C>> {
@@ -144,8 +144,9 @@ where
         // an error in the iterator, so instead of folding or
         // something we have to use for loops and a bunch of mutable
         // references
+        // TODO: failable iterators?
         for result in leaves {
-            let LeafRef { node, mut db_key } = result?;
+            let LeafRef { node, mut db_key } = result.expect("no leaf ref");
             let mut key = node.items[0].clone();
             let mut layer = 0;
             loop {
@@ -165,7 +166,7 @@ where
                     // link to it to its own parent.
                     let old_node = std::mem::replace(parent, InteriorNode { links: vec![], keys: vec![] });
                     key = old_node.keys[0].clone();
-                    db_key = store.add_node(&Node::Interior(old_node))?;
+                    db_key = store.add_node(&Node::Interior(old_node)).expect("could not add node");
                     layer += 1;
                     continue;
                 } else {
@@ -224,7 +225,7 @@ where
             novelty,
             self.store.clone(),
             self._comparator,
-        )?;
+        ).expect("could not construct RebuildIter");
         Self::build_from_leaves(rebuild_iterator, self.store.clone(), self._comparator)
     }
 
@@ -358,8 +359,8 @@ struct LeafIterState<T> {
     link_idx: usize,
 }
 
-impl<'de, T> Iterator for LeafIter<T>
-where T: Clone + Deserialize<'de> + Serialize + Debug,
+impl<T> Iterator for LeafIter<T>
+where T: Clone + DeserializeOwned + Serialize + Debug,
 {
     type Item = Result<LeafRef<T>>;
 
@@ -421,7 +422,7 @@ pub struct ItemIter<T>
     item_idx: usize,
 }
 
-impl<'de, T> ItemIter<T> where T: Clone + Deserialize<'de> + Serialize + Debug {
+impl<T> ItemIter<T> where T: Clone + DeserializeOwned + Serialize + Debug {
     fn from_leaves(mut leaves: LeafIter<T>, idx_in_leaf: usize) -> Result<ItemIter<T>> {
         let first_leaf = match leaves.next() {
             Some(Ok(LeafRef { node: leaf, .. })) => Some(leaf),
@@ -439,8 +440,8 @@ impl<'de, T> ItemIter<T> where T: Clone + Deserialize<'de> + Serialize + Debug {
     }
 }
 
-impl<'de, T> Iterator for ItemIter<T>
-where T: Clone + Deserialize<'de> + Serialize + Debug,
+impl<T> Iterator for ItemIter<T>
+where T: Clone + DeserializeOwned + Serialize + Debug,
 {
     type Item = Result<T>;
 
@@ -474,9 +475,9 @@ struct NodeStore<T> {
     store: Arc<dyn KVStore>,
 }
 
-impl<'de, T> NodeStore<T>
+impl<T> NodeStore<T>
 where
-    T: Serialize + Deserialize<'de> + Clone,
+    T: Serialize + DeserializeOwned + Clone,
 {
     fn new(store: Arc<dyn KVStore>) -> NodeStore<T> {
         NodeStore {
@@ -487,8 +488,7 @@ where
     }
 
     fn add_node(&self, node: &Node<T>) -> Result<String> {
-        let mut buf = Vec::new();
-        node.serialize(&mut Serializer::new(&mut buf))?;
+        let buf = rmp_serde::to_vec(node)?;
 
         let key: String = Uuid::new_v4().to_string();
         self.store.set(&key, &buf)?;
@@ -502,12 +502,9 @@ where
         match res {
             Some(node) => Ok(node.clone()),
             None => {
-                let serialized = self.store.get(key)?;
-                let mut de = Deserializer::new(&serialized[..]);
-                let node: Arc<Node<T>> = Arc::new(Deserialize::deserialize(&mut de).map_err(|e| {
-                    println!("Decoding error for key {}: {:?}", key, e);
-                    e
-                })?);
+                let serialized = self.store.get(key)?.to_owned();
+                let value: Node<T> = rmp_serde::from_read_ref(&serialized)?;
+                let node: Arc<Node<T>> = Arc::new(value.clone());
                 cache.insert(key.to_string(), node.clone());
                 Ok(node.clone())
             }
@@ -544,8 +541,8 @@ where T: Clone + Debug {
     }
 }
 
-impl <'de, T, L, I, C> Iterator for RebuildIter<T, L, I, C>
-where T: Equivalent + Clone + Debug + Deserialize<'de> + Serialize,
+impl <T, L, I, C> Iterator for RebuildIter<T, L, I, C>
+where T: Equivalent + Clone + Debug + DeserializeOwned + Serialize,
       L: Iterator<Item = Result<LeafRef<T>>>,
       I: Iterator<Item = T>,
       C: Comparator<Item = T> {

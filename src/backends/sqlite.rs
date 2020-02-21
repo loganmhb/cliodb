@@ -3,8 +3,7 @@ use std::sync::{Arc, Mutex};
 
 use rusqlite as sql;
 
-use serde::{Serialize, Deserialize};
-use rmp_serde::{Serializer, Deserializer};
+use rmp_serde;
 
 use {Result, KVStore, Record};
 use tx::TxRaw;
@@ -37,13 +36,14 @@ impl KVStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT val FROM logos_kvs WHERE key = ?1")
             .unwrap();
-        stmt.query_map(sql::params![key], |row| {
+        let mut rows = stmt.query_map(sql::params![key], |row| {
             let r: Option<Vec<u8>> = row.get(0).unwrap();
-            // FIXME: should not unwrap here. Really get should return Result<Option<Vec<u8>>>.
             Ok(r.unwrap())
-        })
-            .and_then(|mut rows| rows.next().unwrap())
-            .map_err(|e| e.into())
+        })?;
+        match rows.next() {
+            Some(row) => Ok(row?),
+            None => Err("key not found".into())
+        }
     }
 
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
@@ -65,8 +65,7 @@ impl KVStore for SqliteStore {
             let maybe_bytes: Option<Vec<u8>> = row.get(1).unwrap();
             let bytes = maybe_bytes.unwrap();
             println!("got bytes from row");
-            let mut de = Deserializer::new(&bytes[..]);
-            let res: Vec<Record> = Deserialize::deserialize(&mut de).unwrap();
+            let res: Vec<Record> = rmp_serde::from_read_ref(&bytes).expect("corrupt data");
             let id: i64 = row.get(0).unwrap();
             Ok(TxRaw {
                 id: id,
@@ -80,8 +79,7 @@ impl KVStore for SqliteStore {
     }
 
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
-        let mut serialized: Vec<u8> = vec![];
-        tx.records.serialize(&mut Serializer::new(&mut serialized))?;
+        let serialized: Vec<u8> = rmp_serde::to_vec(&tx.records)?;
 
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
@@ -98,16 +96,13 @@ mod tests {
     use super::*;
     extern crate test;
 
-    use rmp_serde::Serializer;
-    use serde::Serialize;
     use durable_tree::{Node, LeafNode};
 
     #[test]
     fn test_kv_store() {
         let root: Node<String> = Node::Leaf(LeafNode { items: vec![] });
         let store = SqliteStore::new("/tmp/logos.db").unwrap();
-        let mut buf = Vec::new();
-        root.serialize(&mut Serializer::new(&mut buf)).unwrap();
+        let buf = rmp_serde::to_vec(&root).unwrap();
         store.set("my_key", &buf).unwrap();
 
         assert_eq!(store.get("my_key").unwrap(), buf)

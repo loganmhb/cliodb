@@ -4,10 +4,6 @@ pub mod mysql;
 
 use std::marker::{Send, Sync};
 
-use rmp_serde::{Serializer, Deserializer};
-use serde::{Serialize, Deserialize};
-
-use conn::TxLocation;
 use db::DbMetadata;
 use tx::TxRaw;
 use super::Result;
@@ -29,31 +25,14 @@ pub trait KVStore: Send + Sync {
 
     fn get_metadata(&self) -> Result<DbMetadata> {
         let serialized = self.get("db_metadata")?;
-        let mut de = Deserializer::new(&serialized[..]);
-        let metadata: DbMetadata = Deserialize::deserialize(&mut de)?;
-        Ok(metadata.clone())
+        let metadata: DbMetadata = rmp_serde::from_read_ref(&serialized)?;
+        Ok(metadata)
     }
 
     fn set_metadata(&self, metadata: &DbMetadata) -> Result<()> {
-        let mut buf = Vec::new();
-        metadata.serialize(&mut Serializer::new(&mut buf))?;
+        let buf = rmp_serde::to_vec(metadata)?;
 
         self.set("db_metadata", &buf)
-    }
-
-    fn get_tx_location(&self) -> Result<TxLocation> {
-        let serialized = self.get("transactor")?;
-        let mut de = Deserializer::new(&serialized[..]);
-        let transactor: TxLocation = Deserialize::deserialize(&mut de)?;
-
-        Ok(transactor.clone())
-    }
-
-    fn set_tx_location(&self, transactor: &TxLocation) -> Result<()> {
-        let mut buf = Vec::new();
-        transactor.serialize(&mut Serializer::new(&mut buf))?;
-
-        self.set("transactor", &buf)
     }
 
     fn add_tx(&self, raw_tx: &TxRaw) -> Result<()>;

@@ -7,7 +7,7 @@ use std::time::{Instant};
 
 use std::env::args;
 
-fn run(uri: &str) {
+fn run(store_uri: &str, transactor_address: &str) {
     println!(
         "
 logos
@@ -17,8 +17,9 @@ Commands:
   dump - display the metadata of the DB as a table.
 "
     );
-    let store = store_from_uri(uri).expect("Couldn't create store");
-    let mut conn = Conn::new(store.clone()).expect("Couldn't connect to DB -- does it exist?");
+    let store = store_from_uri(store_uri).expect("Couldn't create store");
+    let context = zmq::Context::new();
+    let mut conn = Conn::new(store.clone(), transactor_address, context).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");
@@ -93,12 +94,11 @@ Commands:
 }
 
 fn main() {
-
     let argv: Vec<_> = args().collect();
-    if argv.len() != 2 {
-        println!("Usage: {} <db-uri>", argv[0]);
+    if argv.len() != 3 {
+        println!("Usage: {} <db-uri> <transactor-address>", argv[0]);
         std::process::exit(1);
     }
 
-    run(&argv[1]);
+    run(&argv[1], &argv[2]);
 }

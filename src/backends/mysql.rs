@@ -1,8 +1,5 @@
 use mysql;
 
-use serde::{Serialize, Deserialize};
-use rmp_serde::{Serializer, Deserializer};
-
 use {Result, KVStore, Record};
 use tx::TxRaw;
 
@@ -69,8 +66,7 @@ impl KVStore for MysqlStore {
                     .and_then(|row| {
                         let id: i64 = row.get(0).unwrap();
                         let bytes: Vec<u8> = row.get(1).unwrap();
-                        let mut de = Deserializer::new(&bytes[..]);
-                        let res: Vec<Record> = Deserialize::deserialize(&mut de)
+                        let res: Vec<Record> = rmp_serde::from_read_ref(&bytes)
                             .map_err(|e| e.to_string())?;
 
                         Ok(TxRaw {
@@ -87,8 +83,7 @@ impl KVStore for MysqlStore {
     }
 
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
-        let mut serialized: Vec<u8> = vec![];
-        tx.records.serialize(&mut Serializer::new(&mut serialized))?;
+        let serialized = rmp_serde::to_vec(&tx.records)?;
 
         self.pool.prep_exec("INSERT INTO logos_txs (id, val) VALUES (?, ?)", (tx.id, serialized))?;
         Ok(())

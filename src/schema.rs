@@ -1,3 +1,4 @@
+use serde::{Serialize, Deserialize};
 use im::HashMap;
 use super::{Entity};
 

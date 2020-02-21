@@ -1,5 +1,6 @@
-use std::net::SocketAddr;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc};
+
+use rmp_serde;
 
 use {Result, Tx, TxReport, Entity, Record, EAVT, AEVT, AVET, VAET};
 use backends::KVStore;
@@ -8,60 +9,9 @@ use backends::mem::HeapStore;
 use backends::mysql::MysqlStore;
 use db::{Db, DbMetadata};
 use index::Index;
-use tx;
-
-#[derive(Debug, Clone, Serialize, Deserialize)]
-pub enum TxLocation {
-    Network(SocketAddr),
-    Local,
-}
-
-pub struct TxClient {
-    tx_location: TxLocation,
-    _store: Arc<dyn KVStore>,
-}
-
-impl TxClient {
-    fn new(store: Arc<dyn KVStore>) -> Result<TxClient> {
-        let tx_location = store.get_tx_location()?;
-        Ok(TxClient { tx_location, _store: store })
-    }
-
-    fn transact(&self, tx: Tx) -> Result<TxReport> {
-        match self.tx_location {
-            TxLocation::Network(_addr) => {
-                unimplemented!()
-                // let mut core = Core::new().unwrap();
-                // let handle = core.handle();
-                // let client = TcpClient::new(LineProto).connect(&addr, &handle);
-
-                // core.run(client.and_then(|client| client.call(tx)))
-                //     .unwrap_or_else(|e| Err(Error(e.to_string())))
-            }
-            TxLocation::Local => {
-                let store = self._store.clone();
-                #[allow(unused_variables)]
-                let l = TX_LOCK.lock()?;
-                let mut transactor = tx::Transactor::new(store)?;
-                let result = transactor.process_tx(tx);
-                Ok(match result {
-                    Ok(new_entities) => TxReport::Success { new_entities },
-                    Err(e) => TxReport::Failure(format!("{:?}", e)),
-                })
-            }
-        }
-    }
-}
-
-// We need a way to ensure, for local stores, that only one thread is
-// transacting at a time.
-// FIXME: Super kludgy. There must be a better way to do this.
-lazy_static! {
-    static ref TX_LOCK: Mutex<()> = Mutex::new(());
-}
 
 pub struct Conn {
-    tx_client: TxClient,
+    socket: zmq::Socket,
     store: Arc<dyn KVStore>,
     latest_db: Option<Db>,
     last_known_tx: Option<i64>,
@@ -72,10 +22,16 @@ pub struct Conn {
 // so that it can play them against the db eagerly instead of only
 // when a db is requested
 impl Conn {
-    pub fn new(store: Arc<dyn KVStore>) -> Result<Conn> {
-        let tx_client = TxClient::new(store.clone())?;
+    pub fn new(
+        store: Arc<dyn KVStore>,
+        transactor_address: &str,
+        context: zmq::Context
+    ) -> Result<Conn> {
+        let socket = context.socket(zmq::REQ)?;
+        socket.connect(transactor_address)?;
+        println!("connected to {}", transactor_address);
         Ok(Conn {
-            tx_client,
+            socket,
             store,
             latest_db: None,
             last_known_tx: None,
@@ -122,7 +78,9 @@ impl Conn {
     }
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
-        self.tx_client.transact(tx)
+        self.socket.send(&rmp_serde::to_vec(&tx)?, 0)?;
+        let reply = self.socket.recv_bytes(0)?;
+        Ok(rmp_serde::from_read_ref(&reply)?)
     }
 }
 

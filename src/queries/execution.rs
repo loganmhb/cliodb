@@ -271,90 +271,90 @@ fn hash_relation(
     )
 }
 
-#[cfg(test)]
-mod tests {
-    use super::*;
-    use tests::test_db;
-    use {Value, Entity};
-    use itertools::assert_equal;
+// #[cfg(test)]
+// mod tests {
+//     use super::*;
+//     use tests::test_db;
+//     use {Value, Entity};
+//     use itertools::assert_equal;
 
-    #[test]
-    fn test_join_on_single_field() {
-        let rel_a = Relation(vec!["name".into(), "fav_color".into()], vec![
-            vec![Value::String("Bob".into()), Value::String("red".into())],
-            vec![Value::String("Jane".into()), Value::String("blue".into())],
-            vec![Value::String("Alice".into()), Value::String("green".into())],
-        ]);
-        let rel_b = Relation(vec!["name".into(), "fav_flavor".into()], vec![
-            // fav_flavor is cardinality many
-            vec![Value::String("Bob".into()), Value::String("chocolate".into())],
-            vec![Value::String("Bob".into()), Value::String("double chocolate".into())],
-            vec![Value::String("Jane".into()), Value::String("vanilla".into())],
-            vec![Value::String("Cliff".into()), Value::String("peanut butter".into())],
-        ]);
+//     #[test]
+//     fn test_join_on_single_field() {
+//         let rel_a = Relation(vec!["name".into(), "fav_color".into()], vec![
+//             vec![Value::String("Bob".into()), Value::String("red".into())],
+//             vec![Value::String("Jane".into()), Value::String("blue".into())],
+//             vec![Value::String("Alice".into()), Value::String("green".into())],
+//         ]);
+//         let rel_b = Relation(vec!["name".into(), "fav_flavor".into()], vec![
+//             // fav_flavor is cardinality many
+//             vec![Value::String("Bob".into()), Value::String("chocolate".into())],
+//             vec![Value::String("Bob".into()), Value::String("double chocolate".into())],
+//             vec![Value::String("Jane".into()), Value::String("vanilla".into())],
+//             vec![Value::String("Cliff".into()), Value::String("peanut butter".into())],
+//         ]);
 
-        let Relation(joined_vars, joined_values) = join(rel_a, rel_b);
+//         let Relation(joined_vars, joined_values) = join(rel_a, rel_b);
 
-        assert_equal(joined_vars, vec!["name".into(), "fav_color".into(), "fav_flavor".into()]);
-        assert_equal(joined_values, vec![
-            vec![Value::String("Bob".into()), Value::String("red".into()), Value::String("chocolate".into())],
-            vec![Value::String("Bob".into()), Value::String("red".into()), Value::String("double chocolate".into())],
-            vec![Value::String("Jane".into()), Value::String("blue".into()), Value::String("vanilla".into())]
-        ]);
-    }
+//         assert_equal(joined_vars, vec!["name".into(), "fav_color".into(), "fav_flavor".into()]);
+//         assert_equal(joined_values, vec![
+//             vec![Value::String("Bob".into()), Value::String("red".into()), Value::String("chocolate".into())],
+//             vec![Value::String("Bob".into()), Value::String("red".into()), Value::String("double chocolate".into())],
+//             vec![Value::String("Jane".into()), Value::String("blue".into()), Value::String("vanilla".into())]
+//         ]);
+//     }
 
-    #[test]
-    fn test_lookup_each() {
-        let db = test_db();
-        let name_entity = *db.schema.idents.get("name").unwrap();
-        let parent_entity = *test_db().schema.idents.get("parent").unwrap();
-        let fetch_clause = Clause::new(
-            Term::Unbound("person".into()),
-            Term::Bound(Ident::Entity(name_entity)),
-            Term::Bound(Value::String("Bob".into()))
-        );
-        let prior_relation = db.fetch(&fetch_clause).unwrap();
-        let lookup_clause = Clause::new(
-            Term::Unbound("parent".into()),
-            Term::Bound(Ident::Entity(parent_entity)),
-            Term::Unbound("person".into())
-        );
+//     #[test]
+//     fn test_lookup_each() {
+//         let db = test_db();
+//         let name_entity = *db.schema.idents.get("name").unwrap();
+//         let parent_entity = *test_db().schema.idents.get("parent").unwrap();
+//         let fetch_clause = Clause::new(
+//             Term::Unbound("person".into()),
+//             Term::Bound(Ident::Entity(name_entity)),
+//             Term::Bound(Value::String("Bob".into()))
+//         );
+//         let prior_relation = db.fetch(&fetch_clause).unwrap();
+//         let lookup_clause = Clause::new(
+//             Term::Unbound("parent".into()),
+//             Term::Bound(Ident::Entity(parent_entity)),
+//             Term::Unbound("person".into())
+//         );
 
-        let result = lookup_each(&db, prior_relation, &lookup_clause).unwrap();
-        assert_eq!(
-            result,
-            Relation(
-                vec!["person".into(), "parent".into()],
-                vec![
-                    vec![Value::Entity(Entity(10)), Value::Entity(Entity(11))]
-                ]
-            )
-        )
-    }
+//         let result = lookup_each(&db, prior_relation, &lookup_clause).unwrap();
+//         assert_eq!(
+//             result,
+//             Relation(
+//                 vec!["person".into(), "parent".into()],
+//                 vec![
+//                     vec![Value::Entity(Entity(10)), Value::Entity(Entity(11))]
+//                 ]
+//             )
+//         )
+//     }
 
-    #[test]
-    fn test_execute() {
-        let db = test_db();
-        let name_entity = *db.schema.idents.get("name").unwrap();
-        let parent_entity = *db.schema.idents.get("parent").unwrap();
-        let q = Query {
-            find: vec!["name".into()],
-            clauses: vec![
-                Clause::new(Term::Unbound("person".into()), Term::Bound(Ident::Entity(name_entity)), Term::Bound(Value::String("Bob".into()))),
-                Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(name_entity)), Term::Unbound("name".into())),
-                Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(parent_entity)), Term::Unbound("person".into()))
-            ],
-            constraints: vec![]
-        };
+//     #[test]
+//     fn test_execute() {
+//         let db = test_db();
+//         let name_entity = *db.schema.idents.get("name").unwrap();
+//         let parent_entity = *db.schema.idents.get("parent").unwrap();
+//         let q = Query {
+//             find: vec!["name".into()],
+//             clauses: vec![
+//                 Clause::new(Term::Unbound("person".into()), Term::Bound(Ident::Entity(name_entity)), Term::Bound(Value::String("Bob".into()))),
+//                 Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(name_entity)), Term::Unbound("name".into())),
+//                 Clause::new(Term::Unbound("child".into()), Term::Bound(Ident::Entity(parent_entity)), Term::Unbound("person".into()))
+//             ],
+//             constraints: vec![]
+//         };
 
-        assert_eq!(
-            query(q, &db).unwrap(),
-            Relation(
-                vec!["name".into()],
-                vec![
-                    vec!["John".into()]
-                ]
-            )
-        )
-    }
-}
+//         assert_eq!(
+//             query(q, &db).unwrap(),
+//             Relation(
+//                 vec!["name".into()],
+//                 vec![
+//                     vec!["John".into()]
+//                 ]
+//             )
+//         )
+//     }
+// }

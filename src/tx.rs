@@ -39,6 +39,7 @@ pub struct Transactor {
 enum Event {
     Tx(Tx, Sender<TxReport>),
     RebuiltIndex(Db),
+    Stop,
 }
 
 /// TxHandle is a wrapper over Transactor that provides a thread-safe
@@ -63,6 +64,10 @@ impl TxHandle {
             Ok(report) => Ok(report),
             Err(msg) => Err(msg.into()),
         }
+    }
+
+    pub fn close(&self) -> Result<()>{
+        Ok(self.chan.send(Event::Stop)?)
     }
 }
 
@@ -297,9 +302,12 @@ impl Transactor {
                 }
                 Event::RebuiltIndex(new_db) => {
                     self.switch_to_rebuilt_indexes(new_db)?;
-                }
+                },
+                Event::Stop => break
             }
         }
+
+        Ok(())
     }
 }
 
