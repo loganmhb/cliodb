@@ -513,7 +513,7 @@ where
                 let mut decoder = snap::read::FrameDecoder::new(&compressed[..]);
                 std::io::copy(&mut decoder, &mut serialized)?;
                 let value: Node<T> = rmp_serde::from_read_ref(&serialized)?;
-                let node: Arc<Node<T>> = Arc::new(value.clone());
+                let node: Arc<Node<T>> = Arc::new(value);
                 cache.insert(key.to_string(), node.clone());
                 Ok(node.clone())
             }
