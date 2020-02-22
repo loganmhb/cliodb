@@ -104,7 +104,7 @@ where
 
     let entity = number_lit;
     let value = || {
-        string_lit().or(number_lit().map(|e| Value::Entity(e))).or(
+        string_lit().or(number_lit().map(|e| Value::Ref(e))).or(
             ident().map(|i| Value::Ident(i)),
         )
     };
@@ -192,7 +192,7 @@ where
     let entity = || number_lit().skip(spaces());
     let value = || {
         string_lit()
-            .or(number_lit().map(|e| Value::Entity(e)))
+            .or(number_lit().map(|e| Value::Ref(e)))
             .or(ident().map(|i| Value::Ident(i)))
             .skip(spaces())
     };
@@ -256,7 +256,7 @@ mod tests {
                     Constraint {
                         comparator: Comparator::GreaterThan,
                         left_hand_side: Term::Unbound("age".into()),
-                        right_hand_side: Term::Bound(Value::Entity(Entity(50))),
+                        right_hand_side: Term::Bound(Value::Ref(Entity(50))),
                     },
                 ],
             }

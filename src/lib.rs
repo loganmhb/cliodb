@@ -136,10 +136,11 @@ impl RangeBounds<Record> for Record {
 pub enum Value {
     String(String),
     Ident(String),
-    Entity(Entity),
+    Ref(Entity),
     // FIXME: clock drift is an issue here
     Timestamp(DateTime<Utc>),
     Boolean(bool),
+    Long(i64),
 }
 
 impl Display for Value {
@@ -148,11 +149,12 @@ impl Display for Value {
             f,
             "{}",
             match *self {
-                Value::Entity(e) => format!("{}", e.0),
+                Value::Ref(e) => format!("{}", e.0),
                 Value::String(ref s) => format!("\"{}\"", s),
                 Value::Ident(ref s) => format!("{}", s),
                 Value::Timestamp(t) => format!("{}", t),
                 Value::Boolean(b) => format!("{}", b),
+                Value::Long(l) => format!("{}", l),
             }
         )
     }
@@ -169,7 +171,7 @@ where
 
 impl From<Entity> for Value {
     fn from(x: Entity) -> Self {
-        Value::Entity(x.into())
+        Value::Ref(x.into())
     }
 }
 
@@ -329,7 +331,7 @@ pub mod tests {
 
         parse_tx(
             "{db:ident name db:valueType db:type:string}
-                  {db:ident parent db:valueType db:type:entity}
+                  {db:ident parent db:valueType db:type:ref}
                   {db:ident Hello db:valueType db:type:string}",
         ).map_err(|e| e.into())
             .and_then(|tx| conn.transact(tx))
@@ -365,7 +367,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("a")],
                 vec![
-                    vec![Value::Entity(Entity(11))],
+                    vec![Value::Ref(Entity(11))],
                 ],
             ),
         );
@@ -406,8 +408,8 @@ pub mod tests {
             Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
-                    vec![Value::Entity(Entity(12)), Value::String("John".into())]
+                    vec![Value::Ref(Entity(11)), Value::String("Bob".into())],
+                    vec![Value::Ref(Entity(12)), Value::String("John".into())]
                 ],
             ),
         );
@@ -421,7 +423,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("a"), Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
+                    vec![Value::Ref(Entity(11)), Value::String("Bob".into())],
                 ],
             ),
         );
@@ -434,7 +436,7 @@ pub mod tests {
             Relation(
                 vec![Var::new("b")],
                 vec![
-                    vec![Value::Entity(Entity(12))]
+                    vec![Value::Ref(Entity(12))]
                 ],
             ),
         );
@@ -507,7 +509,7 @@ pub mod tests {
 
                 conn.transact(Tx {
                     items: vec![
-                        TxItem::Addition(Fact::new(entity, "blah", Value::Entity(entity))),
+                        TxItem::Addition(Fact::new(entity, "blah", Value::Ref(entity))),
                     ],
                 }).unwrap();
             });
@@ -607,8 +609,8 @@ pub mod tests {
             let relation = db.fetch(&clause).unwrap();
             assert_eq!(relation.0, vec!["e".into(), "n".into()]);
             assert_eq!(relation.1, vec![
-                vec![Value::Entity(Entity(11)), Value::String("Bob".into())],
-                vec![Value::Entity(Entity(12)), Value::String("John".into())]
+                vec![Value::Ref(Entity(11)), Value::String("Bob".into())],
+                vec![Value::Ref(Entity(12)), Value::String("John".into())]
             ]);
         })
     }

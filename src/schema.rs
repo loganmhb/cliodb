@@ -6,9 +6,10 @@ use super::{Entity};
 pub enum ValueType {
     String,
     Ident,
-    Entity,
+    Ref,
     Timestamp,
-    Boolean
+    Boolean,
+    Long
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq, Eq)]

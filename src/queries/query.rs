@@ -69,7 +69,7 @@ impl Clause {
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match *val {
-                        Value::Entity(e) => Term::Bound(e),
+                        Value::Ref(e) => Term::Bound(e),
                         _ => return Err("type mismatch".into()),
                     }
                 } else {
@@ -83,7 +83,7 @@ impl Clause {
             &Term::Unbound(ref var) => {
                 if let Some(val) = env.get(&var) {
                     match val {
-                        &Value::Entity(e) => Term::Bound(Ident::Entity(e)),
+                        &Value::Ref(e) => Term::Bound(Ident::Entity(e)),
                         _ => return Err("type mismatch".into()),
                     }
                 } else {

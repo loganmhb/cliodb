@@ -101,14 +101,14 @@ fn lookup_each(db: &Db, relation: Relation, clause: &Clause) -> Result<Relation>
     fn bind_clause(clause: &Clause, entity: Option<Value>, attribute: Option<Value>, value: Option<Value>) -> Result<Clause> {
         let entity = if let Some(entity_val) = entity {
             match entity_val {
-                Value::Entity(e) => Some(e),
+                Value::Ref(e) => Some(e),
                 other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in entity position for clause {:?}", other_value, clause]))
             }
         } else { None };
 
         let attribute = if let Some(attr_val) = attribute {
             match attr_val {
-                Value::Entity(e) => Some(Ident::Entity(e)),
+                Value::Ref(e) => Some(Ident::Entity(e)),
                 other_value => return Err(Error(format!["Attempted to bind non-entity {:?} in attribute position for clause {:?}", other_value, clause]))
             }
         } else { None };

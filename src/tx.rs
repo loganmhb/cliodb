@@ -429,7 +429,7 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
         Record::addition(
             Entity(7),
             Entity(1),
-            Value::Ident("db:type:entity".into()),
+            Value::Ident("db:type:ref".into()),
             Entity(0),
         ),
     )?;

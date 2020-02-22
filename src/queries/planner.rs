@@ -271,9 +271,10 @@ mod tests {
         }
     }
 
+    #[allow(dead_code)]
     fn arb_value() -> BoxedStrategy<Value> {
         prop_oneof![
-            any::<i64>().prop_map(|i| Value::Entity(Entity(i))),
+            any::<i64>().prop_map(|i| Value::Ref(Entity(i))),
             any::<String>().prop_map(|s| Value::String(s))
         ].boxed()
     }

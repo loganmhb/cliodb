@@ -137,7 +137,7 @@ impl Db {
             query::Term::Bound(_) => {},
             query::Term::Unbound(ref var) => {
                 vars.push(query::Var::new(var.name.clone()));
-                selectors.push(Box::new(|record: &Record| Value::Entity(record.entity)));
+                selectors.push(Box::new(|record: &Record| Value::Ref(record.entity)));
             }
         };
 
@@ -145,7 +145,7 @@ impl Db {
             query::Term::Bound(_) => {},
             query::Term::Unbound(ref var) => {
                 vars.push(query::Var::new(var.name.clone()));
-                selectors.push(Box::new(|record: &Record| Value::Entity(record.attribute)));
+                selectors.push(Box::new(|record: &Record| Value::Ref(record.attribute)));
             }
         };
         match clause.value {
@@ -195,12 +195,12 @@ impl Db {
             Term::Unbound(ref var) => {
                 match env.get(var) {
                     Some(e) => {
-                        if *e != Value::Entity(record.entity) {
+                        if *e != Value::Ref(record.entity) {
                             return None;
                         }
                     }
                     _ => {
-                        new_env.insert(var.clone(), Value::Entity(record.entity));
+                        new_env.insert(var.clone(), Value::Ref(record.entity));
                     }
                 }
             }
@@ -222,12 +222,12 @@ impl Db {
             Term::Unbound(ref var) => {
                 match env.get(var) {
                     Some(e) => {
-                        if *e != Value::Entity(record.attribute) {
+                        if *e != Value::Ref(record.attribute) {
                             return None;
                         }
                     }
                     _ => {
-                        new_env.insert(var.clone(), Value::Entity(record.attribute));
+                        new_env.insert(var.clone(), Value::Ref(record.attribute));
                     }
                 }
             }
@@ -280,7 +280,7 @@ impl Db {
                         "db:type:string" => ValueType::String,
                         "db:type:ident" => ValueType::Ident,
                         "db:type:timestamp" => ValueType::Timestamp,
-                        "db:type:entity" => ValueType::Entity,
+                        "db:type:ref" => ValueType::Ref,
                         "db:type:boolean" => ValueType::Boolean,
                         _ => return Err(format!("{} is not a valid primitive type", s).into()),
                     }
@@ -323,10 +323,11 @@ impl Db {
 
         let fact_value_type = match fact.value {
             Value::String(_) => ValueType::String,
-            Value::Entity(_) => ValueType::Entity,
+            Value::Ref(_) => ValueType::Ref,
             Value::Timestamp(_) => ValueType::Timestamp,
             Value::Ident(_) => ValueType::Ident,
             Value::Boolean(_) => ValueType::Boolean,
+            Value::Long(_) => ValueType::Long,
         };
 
         match self.schema.value_types.get(&attr) {
@@ -355,10 +356,11 @@ impl Db {
 
         let fact_value_type = match fact.value {
             Value::String(_) => ValueType::String,
-            Value::Entity(_) => ValueType::Entity,
+            Value::Ref(_) => ValueType::Ref,
             Value::Timestamp(_) => ValueType::Timestamp,
             Value::Ident(_) => ValueType::Ident,
             Value::Boolean(_) => ValueType::Boolean,
+            Value::Long(_) => ValueType::Long,
         };
 
         match self.schema.value_types.get(&attr) {
