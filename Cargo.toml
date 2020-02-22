@@ -2,23 +2,36 @@
 authors = ["Logan Buckley <logan.buckley@gmail.com>"]
 name = "logos"
 version = "0.1.0"
-
 [dependencies]
-chrono = { version = "0.4.9", features = ["serde"] }
 clap = "2.25.0"
 combine = "2.3.2"
+env_logger = "*"
 itertools = "0.6.0"
-im = { version = "12.2.0", features = ["serde"] }
+log = "*"
 lru-cache = "0.1.1"
 mysql = "14.1.0"
 prettytable-rs = "0.6.6"
 rmp-serde = "0.14.3"
 rusqlite = "0.21.0"
 rustyline = "1.0.0"
-serde = { version = "1.0.104", features = ["derive"] }
 snap = "1"
-uuid = { version = "0.5.0", features = ["v4"] }
 zmq = "0.9"
+
+[dependencies.chrono]
+features = ["serde"]
+version = "0.4.9"
+
+[dependencies.im]
+features = ["serde"]
+version = "12.2.0"
+
+[dependencies.serde]
+features = ["derive"]
+version = "1.0.104"
+
+[dependencies.uuid]
+features = ["v4"]
+version = "0.5.0"
 
 [dev-dependencies]
 proptest = "0.8.7"

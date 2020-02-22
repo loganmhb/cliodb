@@ -2,6 +2,7 @@ use std::thread;
 
 use zmq;
 use rmp_serde;
+use log::{info, error};
 
 use {Result, Tx};
 use conn::store_from_uri;
@@ -41,6 +42,7 @@ impl TransactorService {
             // FIXME: less unwrapping!
             let socket = context.socket(zmq::REP).unwrap();
             socket.bind(&addr).unwrap();
+            info!("Listening on {}", addr);
             loop {
                 let msg = match socket.recv_bytes(0) {
                     Ok(msg) => msg,
@@ -48,7 +50,7 @@ impl TransactorService {
                         break;
                     },
                     Err(e) => {
-                        println!("unexpected error recving bytes: {}", e);
+                        error!("unexpected error recving bytes: {}", e);
                         break;
                     }
                 };

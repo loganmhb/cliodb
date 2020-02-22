@@ -15,6 +15,7 @@ extern crate im;
 extern crate rusqlite;
 extern crate mysql;
 
+extern crate log;
 extern crate lru_cache;
 extern crate snap;
 extern crate uuid;

@@ -1,10 +1,13 @@
 extern crate logos;
 extern crate clap;
+extern crate log;
+extern crate env_logger;
 
 use logos::server::TransactorService;
 use clap::{Arg, App};
 
 fn main() {
+    env_logger::init();
     let matches = App::new("Logos transactor")
         .version("0.1.0")
         .arg(

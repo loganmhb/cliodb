@@ -3,6 +3,7 @@ use std::iter::Peekable;
 use std::cmp::Ordering;
 // TODO: replace mutex with futures::lock
 use std::sync::{Arc, Mutex};
+use log::{error};
 
 use itertools::Itertools;
 use lru_cache::LruCache;
@@ -380,7 +381,7 @@ where T: Clone + DeserializeOwned + Serialize + Debug,
                 Ok(n) => n,
                 // FIXME: Re-push stack frame on error?
                 Err(e) => {
-                    println!("Error calling get_node: {:?}", e);
+                    error!("Error calling get_node: {:?}", e);
                     return Some(Err(e));
                 },
             };
@@ -427,7 +428,7 @@ impl<T> ItemIter<T> where T: Clone + DeserializeOwned + Serialize + Debug {
         let first_leaf = match leaves.next() {
             Some(Ok(LeafRef { node: leaf, .. })) => Some(leaf),
             Some(Err(e)) => {
-                println!("Error in from_leaves {:?}", e);
+                error!("Error in from_leaves {:?}", e);
                 return Err(e);
             },
             None => None,

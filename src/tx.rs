@@ -4,6 +4,7 @@ use std::sync::mpsc::{Sender, Receiver};
 use std::thread;
 use std::time::Duration;
 
+use log::{debug, info, warn, error};
 use chrono::prelude::Utc;
 
 use backends::KVStore;
@@ -140,7 +141,7 @@ impl Transactor {
     /// Builds a new set of durable indices by combining the existing
     /// durable indices and the in-memory indices.
     pub fn rebuild_indices(&mut self) -> Result<()> {
-        println!("Rebuilding indices...");
+        info!("Rebuilding indices...");
         let checkpoint = self.current_db.clone();
         let send = self.send.clone();
         self.catchup_txs = Some(Vec::new());
@@ -177,7 +178,7 @@ impl Transactor {
         // (This function should never be called when catchup_txs is
         // None.)
         // FIXME: this part should still happen asynchronously, because it might take a while
-        println!("Replaying {} transactions on rebuilt indices...", self.catchup_txs.as_ref().map_or(0, |v| v.len()));
+        info!("Replaying {} transactions on rebuilt indices...", self.catchup_txs.as_ref().map_or(0, |v| v.len()));
         let mut final_db = new_db;
         let catchup_txs = std::mem::replace(&mut self.catchup_txs, None);
         for tx in catchup_txs.unwrap() {
@@ -186,7 +187,7 @@ impl Transactor {
             }
         }
 
-        println!("Switching over to rebuilt indices.");
+        info!("Switching over to rebuilt indices.");
         save_metadata(&final_db, self.next_id, self.latest_tx)?;
         self.current_db = final_db;
 
@@ -261,7 +262,7 @@ impl Transactor {
             match self.catchup_txs {
                 Some(_) => {
                     if !self.throttled && self.current_db.mem_index_size() > 1_000_000 {
-                        println!(
+                        warn!(
                             "Mem limit high water mark surpassed during reindexing -- throttling transactions."
                         );
                         self.throttled = true;
@@ -272,7 +273,7 @@ impl Transactor {
         }
 
         if self.throttled {
-            println!("throttled - sleeping");
+            debug!("throttled - sleeping");
             thread::sleep(Duration::from_millis(1000));
         }
 

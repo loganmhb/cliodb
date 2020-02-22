@@ -1,10 +1,12 @@
 extern crate logos;
 extern crate rustyline;
+extern crate log;
+extern crate env_logger;
 
 use logos::*;
 use logos::conn::{Conn, store_from_uri};
 use std::time::{Instant};
-
+use log::info;
 use std::env::args;
 
 fn run(store_uri: &str, transactor_address: &str) {
@@ -42,7 +44,7 @@ Commands:
                                 let total_time = end.duration_since(start);
                                 let query_time = end.duration_since(db_fetched_at);
                                 println!("{}", res);
-                                println!("Query executed in {} ms ({} to fetch db, {} to execute query)", total_time.as_millis(), db_fetch_time.as_millis(), query_time.as_millis());
+                                info!("Query executed in {} ms ({} to fetch db, {} to execute query)", total_time.as_millis(), db_fetch_time.as_millis(), query_time.as_millis());
                             },
                             Err(e) => println!("ERROR: {:?}", e),
                         }
@@ -94,6 +96,7 @@ Commands:
 }
 
 fn main() {
+    env_logger::init();
     let argv: Vec<_> = args().collect();
     if argv.len() != 3 {
         println!("Usage: {} <db-uri> <transactor-address>", argv[0]);
