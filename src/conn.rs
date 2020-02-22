@@ -20,6 +20,7 @@ pub struct Conn {
 // TODO: conn should have a way of subscribing to transactions
 // so that it can play them against the db eagerly instead of only
 // when a db is requested
+// FIXME: storing the socket here makes this, I think, not thread-safe?
 impl Conn {
     pub fn new(
         store: Arc<dyn KVStore>,
@@ -49,7 +50,7 @@ impl Conn {
 
         // In order to avoid replaying transactions over and over on subsequent calls to db(),
         // we need to keep track of our place in the transaction log.
-        let mut last_known_tx: i64 = self.last_known_tx.unwrap_or_else(|| metadata.last_indexed_tx);
+        let mut last_known_tx: i64 = self.last_known_tx.unwrap_or(metadata.last_indexed_tx);
 
         let mut db = self.latest_db.clone().unwrap_or_else(|| Db {
             store: self.store.clone(),

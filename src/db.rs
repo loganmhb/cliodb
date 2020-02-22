@@ -60,11 +60,11 @@ impl Db {
     }
 
     // FIXME: make private
+    // FIXME: should return a fallible iterator instead of a vec
     pub fn records_matching(&self, clause: &Clause, binding: &Binding) -> Result<Vec<Record>> {
         let expanded = clause.substitute(binding)?;
         match expanded {
-            // ?e a v => use the vae index if value is indexed, otherwise aev
-            // FIXME: should use VAE if value is indexed
+            // ?e a v => use the VAE index if value type is ref, AVET if indexed, otherwise AEV
             Clause {
                 entity: Term::Unbound(_),
                 attribute: Term::Bound(a),
@@ -74,27 +74,32 @@ impl Db {
                 let range_start = Record::addition(Entity(0), attr, v.clone(), Entity(0));
 
 
-                if self.schema.is_indexed(attr) {
-                    Ok(
-                        self.aev
-                            .range_from(range_start)
-                            .take_while(|rec| rec.attribute == attr && rec.value == v)
-                            .collect()
-                    )
-                } else {
+                if let Value::Ref(_) = v {
+                    // Since the value type is Ref, we can use the VAE index.
                     Ok(
                         self.vae
                             .range_from(range_start)
                             .take_while(|rec| rec.attribute == attr && rec.value == v)
                             .collect()
                     )
+                } else if self.schema.is_indexed(attr) {
+                    Ok(
+                        self.ave
+                            .range_from(range_start)
+                            .take_while(|rec| rec.attribute == attr && rec.value == v)
+                            .collect()
+                    )
+                } else {
+                    Ok(
+                        self.aev
+                            .range_from(range_start)
+                            .take_while(|rec| rec.attribute == attr && rec.value == v)
+                            .collect()
+                    )
                 }
-
             }
 
             // e a ?v => use the eav index
-            // FIXME: should use AEV index if looking up many entities with the same attribute
-            // (for cache locality)
             Clause {
                 entity: Term::Bound(e),
                 attribute: Term::Bound(a),
@@ -115,7 +120,7 @@ impl Db {
                     _ => return Err("invalid attribute".into()),
                 }
             }
-            // FIXME: Implement other optimized index use cases? (multiple unknowns? refs?)
+            // FIXME: Implement other optimized index use cases? (multiple unknowns?)
             // Fallthrough case: just scan the EAV index. Correct but slow.
             _ => {
                 Ok(
@@ -260,9 +265,15 @@ impl Db {
     /// fits the schema, in order to allow bootstrapping.
     pub fn add_record(&self, record: Record) -> Result<Db> {
         let new_eav = self.eav.insert(record.clone());
-        let new_ave = self.ave.insert(record.clone());
         let new_aev = self.aev.insert(record.clone());
-        let new_vae = self.vae.insert(record.clone());
+
+        let mut new_vae = self.vae.clone();
+        // TODO: only add to AVET if db:indexed is true
+        let new_ave = self.ave.insert(record.clone());
+
+        if let Record { value: Value::Ref(_), .. } = record {
+            new_vae = new_vae.insert(record.clone());
+        }
 
         // If the record modifies a schema attribute, we need to update the schema.
         let mut new_schema = self.schema.clone();
