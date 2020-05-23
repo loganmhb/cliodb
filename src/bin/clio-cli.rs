@@ -21,7 +21,7 @@ Commands:
     );
     let store = store_from_uri(store_uri).expect("Couldn't create store");
     let context = zmq::Context::new();
-    let mut conn = Conn::new(store.clone(), transactor_address, context).expect("Couldn't connect to DB -- does it exist?");
+    let mut conn = Conn::new(store.clone(), transactor_address, &context).expect("Couldn't connect to DB -- does it exist?");
     let mut rl = rustyline::Editor::<()>::new();
     loop {
         let readline = rl.readline("> ");

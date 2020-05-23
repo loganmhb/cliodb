@@ -61,8 +61,7 @@ impl TransactorService {
         })
     }
 
-    pub fn close(mut self) {
-        self.context.destroy().unwrap();
+    pub fn close(self) {
         self.tx_handle.close().unwrap();
         self.tx_join_handle.join().unwrap().unwrap();
     }

@@ -1,4 +1,4 @@
-use std::sync::{Arc};
+use std::sync::{Arc, Mutex};
 
 use rmp_serde;
 
@@ -9,8 +9,9 @@ use backends::mysql::MysqlStore;
 use db::{Db, DbMetadata};
 use index::Index;
 
+
 pub struct Conn {
-    socket: zmq::Socket,
+    socket: Arc<Mutex<zmq::Socket>>, // FIXME: is this actually necessary?
     store: Arc<dyn KVStore>,
     latest_db: Option<Db>,
     last_known_tx: Option<i64>,
@@ -20,17 +21,16 @@ pub struct Conn {
 // TODO: conn should have a way of subscribing to transactions
 // so that it can play them against the db eagerly instead of only
 // when a db is requested
-// FIXME: storing the socket here makes this, I think, not thread-safe?
 impl Conn {
     pub fn new(
         store: Arc<dyn KVStore>,
         transactor_address: &str,
-        context: zmq::Context
+        context: &zmq::Context
     ) -> Result<Conn> {
         let socket = context.socket(zmq::REQ)?;
         socket.connect(transactor_address)?;
         Ok(Conn {
-            socket,
+            socket: Arc::new(Mutex::new(socket)),
             store,
             latest_db: None,
             last_known_tx: None,
@@ -77,8 +77,9 @@ impl Conn {
     }
 
     pub fn transact(&self, tx: Tx) -> Result<TxReport> {
-        self.socket.send(&rmp_serde::to_vec(&tx)?, 0)?;
-        let reply = self.socket.recv_bytes(0)?;
+        let sock = self.socket.lock()?;
+        sock.send(&rmp_serde::to_vec(&tx)?, 0)?;
+        let reply = sock.recv_bytes(0)?;
         Ok(rmp_serde::from_read_ref(&reply)?)
     }
 }
