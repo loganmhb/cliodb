@@ -1,4 +1,4 @@
-# Emit commands to load /usr/share/dict/words into logos.
+# Emit commands to load /usr/share/dict/words into cliodb.
 
 print('{db:ident word}')
 

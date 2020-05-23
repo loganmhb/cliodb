@@ -18,11 +18,11 @@ impl SqliteStore {
 
         // Set up SQLite tables to track index data
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS logos_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
+            "CREATE TABLE IF NOT EXISTS cliodb_kvs (key TEXT NOT NULL PRIMARY KEY, val BLOB)",
             sql::NO_PARAMS,
         )?;
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS logos_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
+            "CREATE TABLE IF NOT EXISTS cliodb_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
             sql::NO_PARAMS,
         )?;
 
@@ -34,7 +34,7 @@ impl SqliteStore {
 impl KVStore for SqliteStore {
     fn get(&self, key: &str) -> Result<Vec<u8>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT val FROM logos_kvs WHERE key = ?1")
+        let mut stmt = conn.prepare("SELECT val FROM cliodb_kvs WHERE key = ?1")
             .unwrap();
         let mut rows = stmt.query_map(sql::params![key], |row| {
             let r: Option<Vec<u8>> = row.get(0).unwrap();
@@ -50,7 +50,7 @@ impl KVStore for SqliteStore {
         let conn = self.conn.lock().unwrap();
         // We can't assume the key isn't already set, so need INSERT OR REPLACE.
         let mut stmt = conn.prepare(
-            "INSERT OR REPLACE INTO logos_kvs (key, val) VALUES (?1, ?2)",
+            "INSERT OR REPLACE INTO cliodb_kvs (key, val) VALUES (?1, ?2)",
         ).unwrap();
         stmt.execute(sql::params![key, value])?;
         Ok(())
@@ -59,7 +59,7 @@ impl KVStore for SqliteStore {
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
         // FIXME: handle errors
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT id, val FROM logos_txs WHERE id > ?1")
+        let mut stmt = conn.prepare("SELECT id, val FROM cliodb_txs WHERE id > ?1")
             .unwrap();
         let results: Vec<TxRaw> = stmt.query_map(sql::params![&from], |ref row| {
             let maybe_bytes: Option<Vec<u8>> = row.get(1).unwrap();
@@ -81,7 +81,7 @@ impl KVStore for SqliteStore {
         let serialized: Vec<u8> = rmp_serde::to_vec(&tx.records)?;
 
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("INSERT INTO logos_txs (id, val) VALUES (?1, ?2)")
+        let mut stmt = conn.prepare("INSERT INTO cliodb_txs (id, val) VALUES (?1, ?2)")
             .unwrap();
 
         stmt.execute(sql::params![tx.id, &serialized])?;
@@ -100,7 +100,7 @@ mod tests {
     #[test]
     fn test_kv_store() {
         let root: Node<String> = Node::Leaf(LeafNode { items: vec![] });
-        let store = SqliteStore::new("/tmp/logos.db").unwrap();
+        let store = SqliteStore::new("/tmp/cliodb.db").unwrap();
         let buf = rmp_serde::to_vec(&root).unwrap();
         store.set("my_key", &buf).unwrap();
 

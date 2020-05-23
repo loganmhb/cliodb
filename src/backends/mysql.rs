@@ -16,11 +16,11 @@ impl MysqlStore {
         // Set up tables to track index data
 
         pool.prep_exec(
-            "CREATE TABLE IF NOT EXISTS logos_kvs (`key` VARCHAR(36) NOT NULL PRIMARY KEY, val LONGBLOB)",
+            "CREATE TABLE IF NOT EXISTS cliodb_kvs (`key` VARCHAR(36) NOT NULL PRIMARY KEY, val LONGBLOB)",
             empty_params.clone()
         )?;
         pool.prep_exec(
-            "CREATE TABLE IF NOT EXISTS logos_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
+            "CREATE TABLE IF NOT EXISTS cliodb_txs (id INTEGER NOT NULL PRIMARY KEY, val BLOB)",
             empty_params
         )?;
 
@@ -33,7 +33,7 @@ impl MysqlStore {
 impl KVStore for MysqlStore {
     fn get(&self, key: &str) -> Result<Vec<u8>> {
         self.pool.first_exec(
-            "SELECT val FROM logos_kvs WHERE `key` = :key",
+            "SELECT val FROM cliodb_kvs WHERE `key` = :key",
             vec![("key", key)]
         )
             .map_err(|e| e.to_string())
@@ -53,13 +53,13 @@ impl KVStore for MysqlStore {
     fn set(&self, key: &str, value: &[u8]) -> Result<()> {
         // We can't assume the key isn't already set, so need INSERT OR REPLACE.
         self.pool.prep_exec(
-            "INSERT INTO logos_kvs (`key`, val) VALUES (?, ?) ON DUPLICATE KEY UPDATE val = ?",
+            "INSERT INTO cliodb_kvs (`key`, val) VALUES (?, ?) ON DUPLICATE KEY UPDATE val = ?",
             (key, value, value)
         ) .map(|_| ()).map_err(|e| e.into())
     }
 
     fn get_txs(&self, from: i64) -> Result<Vec<TxRaw>> {
-        let results = self.pool.prep_exec("SELECT id, val FROM logos_txs WHERE id > ?", (from,))?
+        let results = self.pool.prep_exec("SELECT id, val FROM cliodb_txs WHERE id > ?", (from,))?
             .map(|row_result| {
                 row_result
                     .map_err(|e| e.to_string())
@@ -85,7 +85,7 @@ impl KVStore for MysqlStore {
     fn add_tx(&self, tx: &TxRaw) -> Result<()> {
         let serialized = rmp_serde::to_vec(&tx.records)?;
 
-        self.pool.prep_exec("INSERT INTO logos_txs (id, val) VALUES (?, ?)", (tx.id, serialized))?;
+        self.pool.prep_exec("INSERT INTO cliodb_txs (id, val) VALUES (?, ?)", (tx.id, serialized))?;
         Ok(())
     }
 }

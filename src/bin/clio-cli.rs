@@ -1,10 +1,10 @@
-extern crate logos;
+extern crate cliodb;
 extern crate rustyline;
 extern crate log;
 extern crate env_logger;
 
-use logos::*;
-use logos::conn::{Conn, store_from_uri};
+use cliodb::*;
+use cliodb::conn::{Conn, store_from_uri};
 use std::time::{Instant};
 use log::info;
 use std::env::args;
@@ -12,7 +12,7 @@ use std::env::args;
 fn run(store_uri: &str, transactor_address: &str) {
     println!(
         "
-logos
+cliodb
 Commands:
   quit - exit the progam;
   test - load sample data (overwrites your current DB!)

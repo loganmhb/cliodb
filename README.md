@@ -1,6 +1,6 @@
-# logos
+# cliodb
 
-Logos is a relational, non-SQL database patterned after Datomic. Key features:
+ClioDB is a relational, non-SQL database patterned after Datomic. Key features:
 
 1. Records are stored as immutable, append-only triples of (entity,
 attribute, value), stored in covering indexes in a pluggable key-value
@@ -40,11 +40,11 @@ installed. Then:
 To start a repl where you can add facts and query a SQLite-backed
 database, first run the transactor:
 
-    target/debug/logos-transactor --uri logos:sqlite:///path/to/sqlite/file.db
+    target/debug/clio-transactor --uri cliodb:sqlite:///path/to/sqlite/file.db
 
 Then, in a different terminal:
 
-    target/debug/logos-cli logos:sqlite:///path/to/sqlite/file.db
+    target/debug/clio-cli cliodb:sqlite:///path/to/sqlite/file.db
 
 Adding a fact looks like this:
 
@@ -65,7 +65,7 @@ earlier point in time, leaving an auditable trail of changes to the DB.
 You can simultaneously create a new entity and add a number of
 attributes about it using this dictionary-style syntax:
 
-    {name "Logan" github:username "loganmhb" project "Logos"}
+    {name "Logan" github:username "loganmhb" project "ClioDB"}
 
 In order to use an attribute in a fact, you must first register it in
 the database. You do this by adding an entity with the `db:ident` and

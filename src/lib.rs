@@ -298,7 +298,7 @@ pub mod tests {
     macro_rules! with_test_conn {
         ( $conn:ident $body:block ) => { {
             let context = zmq::Context::new();
-            let mut server = TransactorService::new("logos:sqlite://file::memory:?cache=shared", &context).unwrap();
+            let mut server = TransactorService::new("cliodb:sqlite://file::memory:?cache=shared", &context).unwrap();
             let join_handle = server.listen("inproc://transactor");
             {
                 // Need a new scope to make sure the conn is dropped
@@ -320,7 +320,7 @@ pub mod tests {
     }
 
     fn test_conn(context: zmq::Context) -> Conn {
-        let store = store_from_uri("logos:sqlite://file::memory:?cache=shared").unwrap();
+        let store = store_from_uri("cliodb:sqlite://file::memory:?cache=shared").unwrap();
         let tx_address = "inproc://transactor";
         let conn = Conn::new(store, tx_address, context).unwrap();
         let records = vec![

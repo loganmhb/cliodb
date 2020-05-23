@@ -1,12 +1,12 @@
 from ctypes import *
 
-logos = cdll.LoadLibrary("logos-ffi/target/debug/liblogosffi.so")
+cliodb = cdll.LoadLibrary("cliodb-ffi/target/debug/libcliodbffi.so")
 
-logos.connect.argtypes = [c_char_p, c_void_p]
-logos.connect.restype = c_int
+cliodb.connect.argtypes = [c_char_p, c_void_p]
+cliodb.connect.restype = c_int
 
-logos.transact.argtypes = [c_void_p, c_char_p]
-logos.transact.restype = c_int
+cliodb.transact.argtypes = [c_void_p, c_char_p]
+cliodb.transact.restype = c_int
 
 # ValueTag enum
 (VAL_ENTITY, VAL_IDENT, VAL_STRING, VAL_TIMESTAMP) = (0, 1, 2, 3)
@@ -41,24 +41,24 @@ def print_row(num_cols, c_val_p):
         row.append(c_val_p[i].value())
     print(row)
 
-logos.query.argtypes = [c_void_p, c_char_p, ROW_CALLBACK]
+cliodb.query.argtypes = [c_void_p, c_char_p, ROW_CALLBACK]
 
 class Db(object):
     def __init__(self, db_ptr):
         self.db_ptr = db_ptr
 
     def __del__(self):
-        logos.drop_db(self.db_ptr)
+        cliodb.drop_db(self.db_ptr)
 
-class Logos(object):
+class ClioDB(object):
     def __init__(self, uri):
-        """Takes a Logos URL and returns a connection."""
+        """Takes a ClioDB URL and returns a connection."""
         self.conn_ptr = c_void_p()
-        logos.connect(uri.encode('utf-8'), byref(self.conn_ptr))
+        cliodb.connect(uri.encode('utf-8'), byref(self.conn_ptr))
 
     def db(self):
         db_ptr = c_void_p()
-        err = logos.get_db(self.conn_ptr, byref(db_ptr))
+        err = cliodb.get_db(self.conn_ptr, byref(db_ptr))
         if err < 0:
             # TODO: Set an error string
             raise Exception("Error opening db")
@@ -66,14 +66,14 @@ class Logos(object):
 
     def transact(self, tx_string):
         tx_bytes = tx_string.encode('utf-8')
-        ret = logos.transact(self.conn_ptr, tx_bytes)
+        ret = cliodb.transact(self.conn_ptr, tx_bytes)
         if ret < 0:
             # TODO: Set an error string
             print("return value {}".format(ret))
             raise Exception("Error executing transaction")
 
     def close(self):
-        logos.close(self.conn_ptr)
+        cliodb.close(self.conn_ptr)
 
 
 class Query(object):
@@ -90,5 +90,5 @@ class Query(object):
                 row.append(row_ptr[i].value())
             self.results.append(row)
 
-        logos.query(db.db_ptr, self.query_string, ROW_CALLBACK(row_cb))
+        cliodb.query(db.db_ptr, self.query_string, ROW_CALLBACK(row_cb))
         return self.results

@@ -85,11 +85,11 @@ impl Conn {
 
 pub fn store_from_uri(uri: &str) -> Result<Arc<dyn KVStore>> {
     match &uri.split("//").collect::<Vec<_>>()[..] {
-        &["logos:sqlite:", path] => {
+        &["cliodb:sqlite:", path] => {
             let sqlite_store = SqliteStore::new(path)?;
             Ok(Arc::new(sqlite_store) as Arc<dyn KVStore>)
         }
-        &["logos:mysql:", url] => {
+        &["cliodb:mysql:", url] => {
             let mysql_store = MysqlStore::new(&format!("mysql://{}", url))?;
             Ok(Arc::new(mysql_store) as Arc<dyn KVStore>)
         }

@@ -1,14 +1,14 @@
-extern crate logos;
+extern crate cliodb;
 extern crate clap;
 extern crate log;
 extern crate env_logger;
 
-use logos::server::TransactorService;
+use cliodb::server::TransactorService;
 use clap::{Arg, App};
 
 fn main() {
     env_logger::init();
-    let matches = App::new("Logos transactor")
+    let matches = App::new("ClioDB transactor")
         .version("0.1.0")
         .arg(
             Arg::with_name("uri")

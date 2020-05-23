@@ -1,12 +1,12 @@
-extern crate logos;
+extern crate cliodb;
 
 use std::ffi::{CStr, CString};
 use std::mem;
 use std::os::raw::{c_char, c_int, c_long};
 
-use logos::{Result, Value, Relation, TxReport};
-use logos::conn::{Conn, store_from_uri};
-use logos::db::Db;
+use cliodb::{Result, Value, Relation, TxReport};
+use cliodb::conn::{Conn, store_from_uri};
+use cliodb::db::Db;
 
 fn conn_from_c_string(uri: &CStr) -> Result<Conn> {
     let uri = uri.to_str()?;
@@ -75,7 +75,7 @@ impl<'a> From<&'a Value> for CValue {
     fn from(v: &Value) -> CValue {
         match *v {
             Value::String(ref s) => CValue::string(s),
-            Value::Entity(logos::Entity(e)) => CValue::entity(e),
+            Value::Entity(cliodb::Entity(e)) => CValue::entity(e),
             Value::Ident(ref i) => CValue::string(i),
             Value::Timestamp(t) => CValue::string(&t.to_string()),
         }
@@ -119,7 +119,7 @@ pub extern "C" fn query(
 ) -> c_int {
     let db: &Db = unsafe { &*db_ptr };
     let query_str = unsafe { CStr::from_ptr(query_string_ptr) };
-    let q = match logos::parse_query(query_str.to_str().unwrap()) {
+    let q = match cliodb::parse_query(query_str.to_str().unwrap()) {
         Ok(q) => q,
         Err(err) => {
             // FIXME: implement a more robust way to retrieve error msgs
@@ -128,7 +128,7 @@ pub extern "C" fn query(
         }
     };
 
-    match logos::query(q, &db) {
+    match cliodb::query(q, &db) {
         Ok(Relation(vars, rows)) => {
             for row in rows {
                 let row_vec: Vec<CValue> = row.iter().map(|v| v.into()).collect();
@@ -153,7 +153,7 @@ pub extern "C" fn query(
 pub extern "C" fn transact(conn_ptr: *mut Conn, tx_ptr: *const c_char) -> c_int {
     let conn: &Conn = unsafe { &*conn_ptr };
     let tx_str = unsafe { CStr::from_ptr(tx_ptr) };
-    let tx = match logos::parse_tx(tx_str.to_str().unwrap()) {
+    let tx = match cliodb::parse_tx(tx_str.to_str().unwrap()) {
         Ok(tx) => tx,
         // FIXME: signal error
         Err(e) => {

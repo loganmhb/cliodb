@@ -7,7 +7,7 @@ use db::DbMetadata;
 use tx::TxRaw;
 use super::Result;
 
-/// Abstracts over various backends; all that's required for a Logos
+/// Abstracts over various backends; all that's required for a ClioDB
 /// backend is the ability to add a key, retrieve a key, and
 /// atomically set/get the DbMetadata.
 pub trait KVStore: Send + Sync {

@@ -760,7 +760,7 @@ mod tests {
     #[bench]
     fn bench_build_from_iter(b: &mut Bencher) {
         use super::super::backends::sqlite::SqliteStore;
-        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let store = Arc::new(SqliteStore::new("/tmp/cliodb_bench.db").unwrap());
         let node_store: NodeStore<i64> = NodeStore {
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store.clone()
@@ -771,7 +771,7 @@ mod tests {
     #[bench]
     fn bench_rebuild_with_novelty(b: &mut Bencher) {
         use super::super::backends::sqlite::SqliteStore;
-        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let store = Arc::new(SqliteStore::new("/tmp/cliodb_bench.db").unwrap());
         let node_store: NodeStore<i64> = NodeStore {
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store.clone()
@@ -783,7 +783,7 @@ mod tests {
     #[bench]
     fn bench_rebuild_with_novelty_mostly_novelty(b: &mut Bencher) {
         use super::super::backends::sqlite::SqliteStore;
-        let store = Arc::new(SqliteStore::new("/tmp/logos_bench.db").unwrap());
+        let store = Arc::new(SqliteStore::new("/tmp/cliodb_bench.db").unwrap());
         let node_store: NodeStore<i64> = NodeStore {
             cache: Arc::new(Mutex::new(LruCache::new(1024))),
             store: store.clone()

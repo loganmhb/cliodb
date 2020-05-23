@@ -1,6 +1,6 @@
 [package]
 authors = ["Logan Buckley <logan.buckley@gmail.com>"]
-name = "logos"
+name = "cliodb"
 version = "0.1.0"
 [dependencies]
 clap = "2.25.0"
