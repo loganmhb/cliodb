@@ -172,6 +172,7 @@ name = "cliodb-ffi"
 version = "0.1.0"
 dependencies = [
  "cliodb 0.1.0",
+ "zmq 0.9.2 (registry+https://github.com/rust-lang/crates.io-index)",
 ]
 
 [[package]]

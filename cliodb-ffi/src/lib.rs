@@ -1,4 +1,5 @@
 extern crate cliodb;
+extern crate zmq;
 
 use std::ffi::{CStr, CString};
 use std::mem;
@@ -8,17 +9,18 @@ use cliodb::{Result, Value, Relation, TxReport};
 use cliodb::conn::{Conn, store_from_uri};
 use cliodb::db::Db;
 
-fn conn_from_c_string(uri: &CStr) -> Result<Conn> {
-    let uri = uri.to_str()?;
-    let store = store_from_uri(uri)?;
-    let conn = Conn::new(store)?;
+fn conn_from_c_strings(store_uri: &CStr, tx_addr: &CStr) -> Result<Conn> {
+    let store = store_from_uri(store_uri.to_str()?)?;
+    let context = zmq::Context::new();
+    let conn = Conn::new(store, tx_addr.to_str()?, context)?;
     Ok(conn)
 }
 
 #[no_mangle]
-pub extern "C" fn connect(uri_ptr: *mut c_char, ret_ptr: *mut *mut Conn) -> c_int {
+pub extern "C" fn connect(uri_ptr: *mut c_char, tx_ptr: *mut c_char, ret_ptr: *mut *mut Conn) -> c_int {
     let uri = unsafe { CStr::from_ptr(uri_ptr) };
-    match conn_from_c_string(uri) {
+    let tx_addr = unsafe { CStr::from_ptr(tx_ptr) };
+    match conn_from_c_strings(uri, tx_addr) {
         Ok(conn) => {
             unsafe { *ret_ptr = mem::transmute(Box::new(conn)) };
             return 0;
@@ -69,15 +71,19 @@ pub enum ValueTag {
     Ident = 1,
     String = 2,
     Timestamp = 3,
+    Boolean = 4,
+    Long = 5,
 }
 
 impl<'a> From<&'a Value> for CValue {
     fn from(v: &Value) -> CValue {
         match *v {
             Value::String(ref s) => CValue::string(s),
-            Value::Entity(cliodb::Entity(e)) => CValue::entity(e),
+            Value::Ref(cliodb::Entity(e)) => CValue::entity(e),
             Value::Ident(ref i) => CValue::string(i),
             Value::Timestamp(t) => CValue::string(&t.to_string()),
+            Value::Boolean(b) => CValue::boolean(b),
+            Value::Long(l) => CValue::long(l),
         }
     }
 }
@@ -103,6 +109,22 @@ impl CValue {
     }
 
     fn entity(val: i64) -> CValue {
+        CValue {
+            tag: ValueTag::Entity,
+            string_val: CString::default().into_raw(),
+            int_val: val as c_long,
+        }
+    }
+
+    fn boolean(val: bool) -> CValue {
+        CValue {
+            tag: ValueTag::Boolean,
+            string_val: CString::default().into_raw(),
+            int_val: if val { 1 } else { 0 },
+        }
+    }
+
+    fn long(val: i64) -> CValue {
         CValue {
             tag: ValueTag::Entity,
             string_val: CString::default().into_raw(),

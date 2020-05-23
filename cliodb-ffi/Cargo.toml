@@ -9,3 +9,4 @@ crate-type = ["dylib"]
 
 [dependencies]
 cliodb = { version = "0.1.0", path = ".." }
+zmq = "0.9"
