@@ -1,6 +1,6 @@
 before_install:
   - sudo apt-get -qq update
-  - sudo apt-get install libzmq-dev
+  - sudo apt-get install libzmq5-dev
 language: rust
 rust:
   - nightly
