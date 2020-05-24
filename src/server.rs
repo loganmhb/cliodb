@@ -16,7 +16,7 @@ use tx::{TxHandle, Transactor};
 pub struct TransactorService {
     tx_handle: TxHandle,
     context: zmq::Context,
-    tx_join_handle: std::thread::JoinHandle<Result<()>>,
+    tx_join_handle: thread::JoinHandle<Result<()>>,
 }
 
 impl TransactorService {
@@ -31,18 +31,18 @@ impl TransactorService {
         Ok(TransactorService { tx_handle, context: context.clone(), tx_join_handle: join_handle })
     }
 
-    pub fn listen(&self, bind_address: &str) -> std::thread::JoinHandle<()> {
+    pub fn listen(&self, bind_address: &str) -> Result<thread::JoinHandle<()>> {
         let tx_handle = self.tx_handle.clone();
         let context = self.context.clone();
         let addr = bind_address.to_string();
-        thread::spawn(move || {
+        let socket = context.socket(zmq::REP)?;
+        socket.bind(&addr)?;
+        info!("Listening on {}", addr);
 
+        Ok(thread::spawn(move || {
             // TODO: support multiple simultaneous transactions using zmq::ROUTER socket
             // or an asynchronous transaction mechanism
             // FIXME: less unwrapping!
-            let socket = context.socket(zmq::REP).unwrap();
-            socket.bind(&addr).unwrap();
-            info!("Listening on {}", addr);
             loop {
                 let msg = match socket.recv_bytes(0) {
                     Ok(msg) => msg,
@@ -58,7 +58,7 @@ impl TransactorService {
                 let result = tx_handle.transact(tx_request).unwrap();
                 socket.send(rmp_serde::to_vec(&result).unwrap(), 0).unwrap();
             }
-        })
+        }))
     }
 
     pub fn close(self) {

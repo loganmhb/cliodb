@@ -299,7 +299,7 @@ pub mod tests {
         ( $conn:ident $body:block ) => { {
             let mut context = zmq::Context::new();
             let server = TransactorService::new("cliodb:sqlite://file::memory:?cache=shared", &context).unwrap();
-            let join_handle = server.listen("inproc://transactor");
+            let join_handle = server.listen("inproc://transactor").unwrap();
             {
                 // Need a new scope to make sure the conn is dropped
                 // before we try to close the ZMQ context.

@@ -3,6 +3,9 @@ extern crate clap;
 extern crate log;
 extern crate env_logger;
 
+use std::process;
+use log::error;
+
 use cliodb::server::TransactorService;
 use clap::{Arg, App};
 
@@ -34,5 +37,8 @@ fn main() {
 
     let context = zmq::Context::new();
     let server = TransactorService::new(backing_store_uri, &context).unwrap();
-    server.listen(bind_address).join().unwrap();
+    server.listen(bind_address).unwrap_or_else(|e| {
+        error!("Failed to start server: {:?}", e);
+        process::exit(1);
+    }).join();
 }
