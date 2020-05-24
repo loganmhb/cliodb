@@ -40,11 +40,11 @@ installed. Then:
 To start a repl where you can add facts and query a SQLite-backed
 database, first run the transactor:
 
-    target/debug/clio-transactor --uri cliodb:sqlite:///path/to/sqlite/file.db
+    target/debug/clio-transactor --store cliodb:sqlite:///path/to/sqlite/file.db
 
 Then, in a different terminal:
 
-    target/debug/clio-cli cliodb:sqlite:///path/to/sqlite/file.db
+    target/debug/clio-cli cliodb:sqlite:///path/to/sqlite/file.db tcp://localhost:10405
 
 Adding a fact looks like this:
 
