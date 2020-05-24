@@ -51,10 +51,14 @@ class Db(object):
         cliodb.drop_db(self.db_ptr)
 
 class ClioDB(object):
-    def __init__(self, uri):
+    def __init__(self, store_uri, tx_uri):
         """Takes a ClioDB URL and returns a connection."""
+        if not store_uri:
+            raise Exception("store_uri must be provided")
+        if not tx_uri:
+            raise Exception("tx_uri must be provided")
         self.conn_ptr = c_void_p()
-        cliodb.connect(uri.encode('utf-8'), byref(self.conn_ptr))
+        cliodb.connect(store_uri.encode('utf-8'), tx_uri.encode('utf-8'), byref(self.conn_ptr))
 
     def db(self):
         db_ptr = c_void_p()

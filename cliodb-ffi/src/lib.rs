@@ -12,7 +12,7 @@ use cliodb::db::Db;
 fn conn_from_c_strings(store_uri: &CStr, tx_addr: &CStr) -> Result<Conn> {
     let store = store_from_uri(store_uri.to_str()?)?;
     let context = zmq::Context::new();
-    let conn = Conn::new(store, tx_addr.to_str()?, context)?;
+    let conn = Conn::new(store, tx_addr.to_str()?, &context)?;
     Ok(conn)
 }
 
