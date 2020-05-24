@@ -616,4 +616,15 @@ pub mod tests {
             ]);
         })
     }
+
+    #[test]
+    fn test_aev_usage() {
+        // Regression.
+        with_test_conn!(conn {
+            let db = conn.db().unwrap();
+            let q = parse_query("find ?e where (?e db:ident db:type:string)").unwrap();
+            let result = query(q, &db).unwrap();
+            assert_eq!(result.1, vec![vec![Value::Ref(Entity(5))]]);
+        });
+    }
 }

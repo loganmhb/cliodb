@@ -93,7 +93,8 @@ impl Db {
                     Ok(
                         self.aev
                             .range_from(range_start)
-                            .take_while(|rec| rec.attribute == attr && rec.value == v)
+                            .take_while(|rec| rec.attribute == attr)
+                            .filter(|rec| rec.value == v)
                             .collect()
                     )
                 }
