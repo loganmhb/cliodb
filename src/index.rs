@@ -10,7 +10,7 @@ use backends::KVStore;
 use durable_tree::{DurableTree};
 use rbtree::RBTree;
 
-pub trait Comparator: Copy {
+pub trait Comparator: Copy + Debug {
     type Item;
     fn compare(a: &Self::Item, b: &Self::Item) -> Ordering;
 }
@@ -55,6 +55,7 @@ where
         self.mem_index.range_from(range_start.clone()).merge_by(
             self.durable_index
                 .range_from(range_start)
+                // FIXME: handle all these errors
                 .unwrap()
                 .map(|r| r.unwrap())
                 // deduplicate equivalent facts which may be in both the in-memory and durable index
@@ -101,7 +102,7 @@ where
 
 
 #[cfg(test)]
-#[derive(Clone, Default, Copy)]
+#[derive(Clone, Default, Copy, Debug)]
 pub struct NumComparator;
 
 #[cfg(test)]

@@ -22,6 +22,7 @@ pub trait KVStore: Send + Sync {
     /// Get a value out of the store.
     fn get(&self, key: &str) -> Result<Vec<u8>>;
 
+    // FIXME: return a Result<Option<DbMetadata>>
     fn get_metadata(&self) -> Result<DbMetadata> {
         let serialized = self.get("db_metadata")?;
         let metadata: DbMetadata = rmp_serde::from_read_ref(&serialized)?;

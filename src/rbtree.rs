@@ -362,7 +362,7 @@ mod tests {
         use std::cmp::Ordering;
         use itertools::assert_equal;
 
-        #[derive(Clone, Default, Copy)]
+        #[derive(Clone, Default, Copy, Debug)]
         struct RevComparator;
 
         impl Comparator for RevComparator {

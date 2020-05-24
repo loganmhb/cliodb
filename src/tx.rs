@@ -131,8 +131,22 @@ impl Transactor {
                 };
 
                 save_metadata(&tx.current_db, tx.next_id, tx.last_indexed_tx)?;
-                // FIXME: Is this necessary?
-                tx.rebuild_indices()?;
+
+                // We need to persist the bootstrapping data because
+                // it's not in the transaction log.
+                // FIXME: unwind this from the channel communication code
+                // which isn't needed here
+                tx.rebuild_indices();
+                match tx.recv.recv().unwrap() {
+                    Event::RebuiltIndex(new_db) => {
+                        tx.switch_to_rebuilt_indexes(new_db)?;
+                    },
+                    // no one can send messages on this channel before
+                    // we return the transactor, so the only message
+                    // that can arrive is the one notifying that the
+                    // rebuild is complete
+                    _ => unreachable!()
+                }
                 Ok(tx)
             }
         }
@@ -140,7 +154,7 @@ impl Transactor {
 
     /// Builds a new set of durable indices by combining the existing
     /// durable indices and the in-memory indices.
-    pub fn rebuild_indices(&mut self) -> Result<()> {
+    pub fn rebuild_indices(&mut self) -> () {
         info!("Rebuilding indices...");
         let checkpoint = self.current_db.clone();
         let send = self.send.clone();
@@ -169,8 +183,6 @@ impl Transactor {
                 store: checkpoint.store.clone(),
             }))
         });
-
-        Ok(())
     }
 
     fn switch_to_rebuilt_indexes(&mut self, new_db: Db) -> Result<()> {
@@ -194,7 +206,7 @@ impl Transactor {
         // If the mem index filled up during the rebuild, we need to
         // immediately kick off another.
         if self.throttled {
-            self.rebuild_indices()?;
+            self.rebuild_indices();
             println!("Unthrottling.");
             self.throttled = false;
         }
@@ -268,7 +280,7 @@ impl Transactor {
                         self.throttled = true;
                     }
                 }
-                None => self.rebuild_indices()?,
+                None => self.rebuild_indices(),
             }
         }
 

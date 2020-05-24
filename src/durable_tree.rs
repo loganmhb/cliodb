@@ -285,6 +285,10 @@ where
                             );
                         }
                         Err(idx) => {
+                            stack.push(LeafIterState {
+                                link_idx: 0,
+                                ..state
+                            });
                             return ItemIter::from_leaves(
                                 LeafIter { stack, store: self.store.clone() },
                                 idx
@@ -682,7 +686,7 @@ mod tests {
     }
 
     #[test]
-    fn test_range_from() {
+    fn test_range_from_present_item() {
         use std::ops::Range;
 
         let tree = test_tree(0..10_000);
@@ -697,6 +701,27 @@ mod tests {
             second_range,
         );
     }
+
+    #[test]
+    fn test_range_from_absent_item() {
+        use std::ops::Range;
+
+        let even_numbers = || (0..10_000).filter(|i| i % 2 == 0);
+        let tree = test_tree(even_numbers());
+
+        let first_range = even_numbers().skip_while(|i| i < &501);
+        assert_equal(
+            tree.range_from(501).unwrap().map(|r| r.unwrap()),
+            first_range,
+        );
+
+        let second_range = even_numbers().skip_while(|i| i < &8459);
+        assert_equal(
+            tree.range_from(8459).unwrap().map(|r| r.unwrap()),
+            second_range,
+        );
+    }
+
 
     #[test]
     fn test_rebuild_with_novelty_builds_correct_iterator() {
