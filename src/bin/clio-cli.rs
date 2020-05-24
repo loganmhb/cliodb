@@ -9,6 +9,8 @@ use std::time::{Instant};
 use log::info;
 use std::env::args;
 
+use rustyline::error::ReadlineError;
+
 fn run(store_uri: &str, transactor_address: &str) {
     println!(
         "
@@ -85,10 +87,10 @@ Commands:
                     Err(e) => println!("Oh no! {}", e),
                 };
             }
+            Err(ReadlineError::Eof) | Err(ReadlineError::Interrupted) => {
+                break;
+            },
             Err(e) => {
-                if let rustyline::error::ReadlineError::Eof = e {
-                    break;
-                }
                 println!("Error! {:?}", e.to_string())
             }
         }
