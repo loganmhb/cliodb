@@ -632,7 +632,7 @@ pub mod tests {
             let db = conn.db().unwrap();
             let q = parse_query("find ?e where (?e db:ident db:type:string)").unwrap();
             let result = query(q, &db).unwrap();
-            assert_eq!(result.1, vec![vec![Value::Ref(Entity(5))]]);
+            assert_eq!(result.1, vec![vec![Value::Ref(Entity(6))]]);
         });
     }
 }

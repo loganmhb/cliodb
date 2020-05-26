@@ -118,12 +118,13 @@ impl Transactor {
             }
             // FIXME: this should happen if metadata is None, not on error
             Err(_) => {
+                let (current_db, next_id) = create_db(store.clone())?;
                 let mut tx = Transactor {
-                    next_id: 10,
-                    store: store.clone(),
+                    next_id,
+                    store: store,
                     latest_tx: 0,
                     last_indexed_tx: -1,
-                    current_db: create_db(store)?,
+                    current_db,
                     send,
                     recv,
                     catchup_txs: None,
@@ -154,7 +155,7 @@ impl Transactor {
 
     /// Builds a new set of durable indices by combining the existing
     /// durable indices and the in-memory indices.
-    pub fn rebuild_indices(&mut self) -> () {
+    fn rebuild_indices(&mut self) -> () {
         info!("Rebuilding indices...");
         let checkpoint = self.current_db.clone();
         let send = self.send.clone();
@@ -162,17 +163,20 @@ impl Transactor {
 
         thread::spawn(move || {
             let Db {
-                ref eav,
-                ref ave,
-                ref aev,
-                ref vae,
+                eav,
+                ave,
+                aev,
+                vae,
                 ..
             } = checkpoint;
 
+            let new_ave_handle = thread::spawn(move || ave.rebuild());
+            let new_aev_handle = thread::spawn(move || aev.rebuild());
+            let new_vae_handle = thread::spawn(move || vae.rebuild());
             let new_eav = eav.rebuild();
-            let new_ave = ave.rebuild();
-            let new_aev = aev.rebuild();
-            let new_vae = vae.rebuild();
+            let new_ave = new_ave_handle.join().unwrap();
+            let new_aev = new_aev_handle.join().unwrap();
+            let new_vae = new_vae_handle.join().unwrap();
 
             send.send(Event::RebuiltIndex(Db {
                 eav: new_eav,
@@ -189,7 +193,13 @@ impl Transactor {
         // First, replay the catchup transactions into the new DB.
         // (This function should never be called when catchup_txs is
         // None.)
-        // FIXME: this part should still happen asynchronously, because it might take a while
+        //
+        // FIXME: this part should still happen asynchronously,
+        // because it might take a while (Really what would be better
+        // is to maintain an extra in-memory tree of the new facts as
+        // they are added and then just swap that in, but that would
+        // require some big changes to the index api exposing its
+        // externals. Worthwhile?)
         info!("Replaying {} transactions on rebuilt indices...", self.catchup_txs.as_ref().map_or(0, |v| v.len()));
         let mut final_db = new_db;
         let catchup_txs = std::mem::replace(&mut self.catchup_txs, None);
@@ -207,15 +217,15 @@ impl Transactor {
         // immediately kick off another.
         if self.throttled {
             self.rebuild_indices();
-            println!("Unthrottling.");
+            info!("Unthrottling.");
             self.throttled = false;
         }
 
         Ok(())
     }
 
-    // FIXME: make this not public (fix local transactor in conn.rs)
-    pub fn process_tx(&mut self, tx: Tx) -> Result<Vec<Entity>> {
+    fn process_tx(&mut self, tx: Tx) -> Result<Vec<Entity>> {
+        debug!("processing tx {:?}", tx);
         let mut new_entities = vec![];
         let tx_id = self.get_id();
         let tx_entity = Entity(tx_id);
@@ -342,7 +352,7 @@ fn save_metadata(db: &Db, next_id: i64, last_indexed_tx: i64) -> Result<()> {
     Ok(())
 }
 
-fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
+fn create_db(store: Arc<dyn KVStore>) -> Result<(Db, i64)> {
     use {EAVT, AVET, VAET, AEVT};
     use durable_tree;
 
@@ -350,6 +360,13 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
     let ave_root = durable_tree::DurableTree::create(store.clone(), AVET)?.root;
     let aev_root = durable_tree::DurableTree::create(store.clone(), AEVT)?.root;
     let vae_root = durable_tree::DurableTree::create(store.clone(), VAET)?.root;
+
+    let mut next_id = 0;
+    let mut get_next_id = || {
+        let result = next_id;
+        next_id += 1;
+        return result;
+    };
 
     let metadata = DbMetadata {
         next_id: 0,
@@ -362,148 +379,53 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<Db> {
     };
 
     let mut db = Db::new(metadata, store);
-    db.schema = db.schema.add_ident(Entity(1), "db:ident".to_string());
-    db.schema = db.schema.add_ident(Entity(3), "db:valueType".to_string());
-    db.schema = db.schema.add_ident(Entity(9), "db:indexed".to_string());
+    let initial_tx_entity = Entity(get_next_id());
+    let attr_db_ident_entity = Entity(get_next_id());
+    let attr_db_tx_timestamp_entity = Entity(get_next_id());
+    let attr_db_value_type_entity = Entity(get_next_id());
+    let attr_db_indexed_entity = Entity(get_next_id());
 
-    db.schema = db.schema.add_value_type(Entity(1), ValueType::Ident);
-    db.schema = db.schema.add_value_type(Entity(3), ValueType::Ident);
+    let ident_type_ident = Entity(get_next_id());
+    let ident_type_string = Entity(get_next_id());
+    let ident_type_timestamp = Entity(get_next_id());
+    let ident_type_ref = Entity(get_next_id());
+    let ident_type_boolean = Entity(get_next_id());
+
+    db.schema = db.schema.add_ident(attr_db_ident_entity, "db:ident".to_string());
+    db.schema = db.schema.add_ident(attr_db_value_type_entity, "db:valueType".to_string());
+    db.schema = db.schema.add_ident(attr_db_indexed_entity, "db:indexed".to_string());
+
+    db.schema = db.schema.add_value_type(attr_db_ident_entity, ValueType::Ident);
+    db.schema = db.schema.add_value_type(attr_db_value_type_entity, ValueType::Ident);
 
     // Bootstrap some attributes we need to run transactions,
     // because they need to reference one another.
+    let records = vec![
+        // Initial tx
+        (initial_tx_entity, attr_db_tx_timestamp_entity, Value::Timestamp(Utc::now())),
 
-    // Initial transaction entity
-    db = db.add_record(
-        Record::addition(
-            Entity(0),
-            Entity(2),
-            Value::Timestamp(Utc::now()),
-            Entity(0),
-        ),
-    )?;
+        // Entities for the idents we're using
+        (attr_db_ident_entity, attr_db_ident_entity, Value::Ident("db:ident".into())),
+        (attr_db_tx_timestamp_entity, attr_db_ident_entity, Value::Ident("db:txTimestamp".into())),
+        (attr_db_value_type_entity, attr_db_ident_entity, Value::Ident("db:valueType".into())),
+        (attr_db_indexed_entity, attr_db_ident_entity, Value::Ident("db:indexed".into())),
 
-    // Entity for the db:ident attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(1),
-            Entity(1),
-            Value::Ident("db:ident".into()),
-            Entity(0),
-        ),
-    )?;
+        (ident_type_ident, attr_db_ident_entity, Value::Ident("db:type:ident".into())),
+        (ident_type_string, attr_db_ident_entity, Value::Ident("db:type:string".into())),
+        (ident_type_timestamp, attr_db_ident_entity, Value::Ident("db:type:timestamp".into())),
+        (ident_type_ref, attr_db_ident_entity, Value::Ident("db:type:ref".into())),
+        (ident_type_boolean, attr_db_ident_entity, Value::Ident("db:type:boolean".into())),
 
-    // Entity for the db:txTimestamp attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(2),
-            Entity(1),
-            Value::Ident("db:txTimestamp".into()),
-            Entity(0),
-        ),
-    )?;
+        // Setting value type for db:ident
+        (attr_db_ident_entity, attr_db_value_type_entity, Value::Ident("db:type:ident".into())),
+        (attr_db_value_type_entity, attr_db_value_type_entity, Value::Ident("db:type:ident".into())),
+        (attr_db_tx_timestamp_entity, attr_db_value_type_entity, Value::Ident("db:type:timestamp".into())),
+        (attr_db_indexed_entity, attr_db_value_type_entity, Value::Ident("db:type:boolean".into())),
+    ];
 
-    // Entity for the db:valueType attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(3),
-            Entity(1),
-            Value::Ident("db:valueType".into()),
-            Entity(0),
-        ),
-    )?;
+    db = records.into_iter().fold(db, move |db, (e, a, v)| {
+        db.add_record(Record::addition(e, a, v, initial_tx_entity)).unwrap()
+    });
 
-    // Idents for primitive types
-    db = db.add_record(
-        Record::addition(
-            Entity(4),
-            Entity(1),
-            Value::Ident("db:type:ident".into()),
-            Entity(0),
-        ),
-    )?;
-    db = db.add_record(
-        Record::addition(
-            Entity(5),
-            Entity(1),
-            Value::Ident("db:type:string".into()),
-            Entity(0),
-        ),
-    )?;
-    db = db.add_record(
-        Record::addition(
-            Entity(6),
-            Entity(1),
-            Value::Ident("db:type:timestamp".into()),
-            Entity(0),
-        ),
-    )?;
-
-    db = db.add_record(
-        Record::addition(
-            Entity(7),
-            Entity(1),
-            Value::Ident("db:type:ref".into()),
-            Entity(0),
-        ),
-    )?;
-
-    db = db.add_record(
-        Record::addition(
-            Entity(8),
-            Entity(1),
-            Value::Ident("db:type:boolean".into()),
-            Entity(0),
-        ),
-    )?;
-
-    db = db.add_record(
-        Record::addition(
-            Entity(9),
-            Entity(1),
-            Value::Ident("db:indexed".into()),
-            Entity(0),
-        )
-    )?;
-
-    // Value type for the db:ident attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(1),
-            Entity(3),
-            Value::Ident("db:type:ident".into()),
-            Entity(0),
-        ),
-    )?;
-
-    // Value type for the db:valueType attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(3),
-            Entity(3),
-            Value::Ident("db:type:ident".into()),
-            Entity(0),
-        ),
-    )?;
-
-    // Value type for the db:txTimestamp attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(2),
-            Entity(3),
-            Value::Ident("db:type:timestamp".into()),
-            Entity(0),
-        )
-    )?;
-
-    // Value type for the db:indexed attribute
-    db = db.add_record(
-        Record::addition(
-            Entity(8),
-            Entity(3),
-            Value::Ident("db:type:boolean".into()),
-            Entity(0),
-        )
-    )?;
-
-    Ok(db)
+    Ok((db, get_next_id()))
 }
