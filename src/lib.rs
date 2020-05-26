@@ -26,6 +26,9 @@ extern crate zmq;
 #[macro_use]
 extern crate proptest;
 
+#[cfg(test)]
+extern crate test;
+
 use itertools::*;
 
 use std::fmt::{self, Display, Formatter};
