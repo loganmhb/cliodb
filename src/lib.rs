@@ -286,6 +286,9 @@ comparator!(VAET, value, attribute, entity, tx);
 #[cfg(test)]
 pub mod tests {
     use super::*;
+
+    use uuid::Uuid;
+
     extern crate test;
     use self::test::{Bencher, black_box};
 
@@ -298,12 +301,14 @@ pub mod tests {
     macro_rules! with_test_conn {
         ( $conn:ident $body:block ) => { {
             let mut context = zmq::Context::new();
-            let server = TransactorService::new("cliodb:sqlite://file::memory:?cache=shared", &context).unwrap();
+            let db_name = Uuid::new_v4();
+            let store_uri = format!("cliodb:sqlite://file:{}?mode=memory&cache=shared", db_name);
+            let server = TransactorService::new(&store_uri, &context).unwrap();
             let join_handle = server.listen("inproc://transactor").unwrap();
             {
                 // Need a new scope to make sure the conn is dropped
                 // before we try to close the ZMQ context.
-                let mut $conn = test_conn(&context);
+                let mut $conn = test_conn(&context, &store_uri);
                 $body;
             }
             server.close();
@@ -320,8 +325,8 @@ pub mod tests {
         })
     }
 
-    fn test_conn(context: &zmq::Context) -> Conn {
-        let store = store_from_uri("cliodb:sqlite://file::memory:?cache=shared").unwrap();
+    fn test_conn(context: &zmq::Context, store_uri: &str) -> Conn {
+        let store = store_from_uri(store_uri).unwrap();
         let tx_address = "inproc://transactor";
         let conn = Conn::new(store, tx_address, context).unwrap();
         let records = vec![
