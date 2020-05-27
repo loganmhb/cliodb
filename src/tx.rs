@@ -378,52 +378,58 @@ fn create_db(store: Arc<dyn KVStore>) -> Result<(Db, i64)> {
         vae: vae_root,
     };
 
-    let mut db = Db::new(metadata, store);
-    let initial_tx_entity = Entity(get_next_id());
-    let attr_db_ident_entity = Entity(get_next_id());
-    let attr_db_tx_timestamp_entity = Entity(get_next_id());
-    let attr_db_value_type_entity = Entity(get_next_id());
-    let attr_db_indexed_entity = Entity(get_next_id());
-
-    let ident_type_ident = Entity(get_next_id());
-    let ident_type_string = Entity(get_next_id());
-    let ident_type_timestamp = Entity(get_next_id());
-    let ident_type_ref = Entity(get_next_id());
-    let ident_type_boolean = Entity(get_next_id());
-
-    db.schema = db.schema.add_ident(attr_db_ident_entity, "db:ident".to_string());
-    db.schema = db.schema.add_ident(attr_db_value_type_entity, "db:valueType".to_string());
-    db.schema = db.schema.add_ident(attr_db_indexed_entity, "db:indexed".to_string());
-
-    db.schema = db.schema.add_value_type(attr_db_ident_entity, ValueType::Ident);
-    db.schema = db.schema.add_value_type(attr_db_value_type_entity, ValueType::Ident);
-
-    // Bootstrap some attributes we need to run transactions,
-    // because they need to reference one another.
-    let records = vec![
-        // Initial tx
-        (initial_tx_entity, attr_db_tx_timestamp_entity, Value::Timestamp(Utc::now())),
-
-        // Entities for the idents we're using
-        (attr_db_ident_entity, attr_db_ident_entity, Value::Ident("db:ident".into())),
-        (attr_db_tx_timestamp_entity, attr_db_ident_entity, Value::Ident("db:txTimestamp".into())),
-        (attr_db_value_type_entity, attr_db_ident_entity, Value::Ident("db:valueType".into())),
-        (attr_db_indexed_entity, attr_db_ident_entity, Value::Ident("db:indexed".into())),
-
-        (ident_type_ident, attr_db_ident_entity, Value::Ident("db:type:ident".into())),
-        (ident_type_string, attr_db_ident_entity, Value::Ident("db:type:string".into())),
-        (ident_type_timestamp, attr_db_ident_entity, Value::Ident("db:type:timestamp".into())),
-        (ident_type_ref, attr_db_ident_entity, Value::Ident("db:type:ref".into())),
-        (ident_type_boolean, attr_db_ident_entity, Value::Ident("db:type:boolean".into())),
-
-        // Setting value type for db:ident
-        (attr_db_ident_entity, attr_db_value_type_entity, Value::Ident("db:type:ident".into())),
-        (attr_db_value_type_entity, attr_db_value_type_entity, Value::Ident("db:type:ident".into())),
-        (attr_db_tx_timestamp_entity, attr_db_value_type_entity, Value::Ident("db:type:timestamp".into())),
-        (attr_db_indexed_entity, attr_db_value_type_entity, Value::Ident("db:type:boolean".into())),
+    let idents = &[
+        "db:ident",
+        "db:txTimestamp",
+        "db:valueType",
+        "db:indexed",
+        "db:type:ident",
+        "db:type:string",
+        "db:type:timestamp",
+        "db:type:ref",
+        "db:type:boolean",
     ];
 
-    db = records.into_iter().fold(db, move |db, (e, a, v)| {
+    let value_types = &[
+        ("db:ident", "db:type:ident"),
+        ("db:valueType", "db:type:ident"),
+        ("db:txTimestamp", "db:type:timestamp"),
+        ("db:indexed", "db:type:boolean"),
+    ];
+
+    let initial_tx_entity = Entity(get_next_id());
+    let ident_entities = idents.iter().map(|i| (i, Entity(get_next_id()))).collect::<Vec<_>>();
+
+    let mut db = Db::new(metadata, store);
+
+    for (name, entity) in ident_entities.iter() {
+        db.schema = db.schema.add_ident(*entity, name.to_string());
+    }
+
+    let entity_for_ident = |name| {
+        let (i, e) = ident_entities.iter().find(|(i, e)| *i == name).unwrap();
+        *e
+    };
+
+    for (name, valueType) in value_types {
+        db.schema = db.schema.add_ident(entity_for_ident(name), valueType.to_string());
+    }
+
+    // Add entity for initial transaction
+    let timestamp_ident_entity = entity_for_ident(&"db:txTimestamp");
+    let mut facts = vec![(initial_tx_entity, timestamp_ident_entity, Value::Timestamp(Utc::now()))];
+
+    // Add all the idents
+    for name in idents {
+        facts.push((entity_for_ident(name), entity_for_ident(&"db:ident"), Value::Ident((*name).into())))
+    }
+
+    // Add all the value types
+    for (name, value_type) in value_types {
+        facts.push((entity_for_ident(name), entity_for_ident(&"db:valueType"), Value::Ident((*value_type).into())));
+    }
+
+    db = facts.into_iter().fold(db, move |db, (e, a, v)| {
         db.add_record(Record::addition(e, a, v, initial_tx_entity)).unwrap()
     });
 
